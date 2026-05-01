@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odoo-erpnet-fp"
+version = "0.1.0"
+description = "Python drop-in replacement for ErpNet.FP HTTP fiscal-printer server, oriented for the Bulgarian POS market"
+readme = "README.md"
+license = { text = "LGPL-3.0-or-later" }
+authors = [{ name = "Rosen Vladimirov", email = "vladimirov.rosen@gmail.com" }]
+keywords = ["odoo", "erpnet", "fiscal-printer", "bulgaria", "datecs", "pos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.5",
+    "PyYAML>=6.0",
+    "evdev>=1.6 ; sys_platform == 'linux'",
+    "httpx>=0.26",  # used by webhook poster + tests
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.26",
+    "ruff>=0.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/rosenvladimirov/Odoo.ErpNet.FP"
+Repository = "https://github.com/rosenvladimirov/Odoo.ErpNet.FP"
+Issues = "https://github.com/rosenvladimirov/Odoo.ErpNet.FP/issues"
+
+[project.scripts]
+odoo-erpnet-fp = "odoo_erpnet_fp.server.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["odoo_erpnet_fp*"]
+exclude = ["tests*", "docs*", "docker*"]
+
+[tool.setuptools.package-data]
+"odoo_erpnet_fp.drivers.fiscal.datecs_pm" = ["data/*.csv"]
+"odoo_erpnet_fp.server" = ["static/*.html", "static/*.css", "static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "--import-mode=importlib"

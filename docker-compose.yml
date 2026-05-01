@@ -1,0 +1,69 @@
+---
+# Example deployment for a single shop machine.
+#
+# Adjust the volumes section to point at your actual:
+#   • COM device (/dev/ttyUSB0 on Linux, "COM5" path translation on Windows)
+#   • config file location (config.yaml or ErpNet.FP-style configuration.json)
+#   • TLS cert/key files — Cloudflare Origin Certificate, Let's Encrypt,
+#     Step-CA, or any other PEM source.
+#
+# Quick start:
+#   docker compose up -d
+#   curl http://localhost:8001/printers
+#
+# After enabling TLS in config.yaml:
+#   curl --cacert /path/to/origin-pull-ca.pem https://localhost:8443/printers
+
+services:
+  odoo-erpnet-fp:
+    image: rosenvladimirov/odoo-erpnet-fp:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: odoo-erpnet-fp
+    restart: unless-stopped
+
+    # Group `dialout` (Linux) gives access to /dev/ttyUSB*. On Windows
+    # / macOS, swap this for the equivalent device passthrough mechanism.
+    group_add:
+      - dialout
+
+    # Pass through the actual device(s) as needed
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      # USB-HID barcode reader passthrough — uncomment + adjust path
+      # (use a stable /dev/input/by-id/... symlink in production)
+      # - /dev/input/event5:/dev/input/event5
+
+    # HID readers need access to /dev/input/by-id/ for stable device
+    # naming across reboots. Uncomment and bind-mount when using HID:
+    # volumes:
+    #   - /dev/input/by-id:/dev/input/by-id:ro
+
+    volumes:
+      # Configuration — pick ONE of:
+      #   ./config/config.yaml             (recommended; supports TLS)
+      #   ./config/configuration.json      (ErpNet.FP-compat, no TLS opts)
+      - ./config:/app/config:ro
+
+      # TLS certs — Cloudflare Origin Certificate or any other PEM source
+      - ./certs:/app/certs:ro
+
+    ports:
+      # HTTP — leave open in development; CLOSE in production once TLS works
+      - "8001:8001"
+      # HTTPS — uncomment when config.yaml has tls.enabled: true
+      # - "8443:8443"
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

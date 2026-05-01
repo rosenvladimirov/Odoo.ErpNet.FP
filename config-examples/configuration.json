@@ -1,0 +1,14 @@
+{
+  "_comment": "ErpNet.FP-compatible config. Drop-in replacement for an existing ErpNet.FP installation. Note: this format does NOT carry TLS settings — for HTTPS use config.yaml instead, or run behind a reverse proxy (Traefik / Caddy / Nginx).",
+
+  "AutoDetect": false,
+
+  "Printers": {
+    "fp1": {
+      "Uri": "bg.dt.pm.com:///dev/ttyUSB0",
+      "BaudRate": 115200,
+      "Operator": "1",
+      "OperatorPassword": "0000"
+    }
+  }
+}

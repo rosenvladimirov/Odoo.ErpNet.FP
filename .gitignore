@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Local config / certs — never commit secrets
+/config/
+/certs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Proprietary native libs (e.g. DatecsPay pinpad C library) — must
+# stay on the deployment host but never be published. Build separately
+# from the upstream source repo (see INSTALL_PINPAD.md).
+*.so
+*.a
+*.o
+*.dylib
+*.dll

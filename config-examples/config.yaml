@@ -1,0 +1,77 @@
+# Native YAML configuration for Odoo.ErpNet.FP.
+#
+# Use this format for new deployments — it supports TLS, log-level, and
+# explicit driver/transport hints. For compatibility with existing
+# ErpNet.FP installations, configuration.json is also accepted (see
+# config-examples/configuration.json).
+
+server:
+  host: "0.0.0.0"
+  port: 8001
+  log_level: info  # debug | info | warning | error
+
+  # ─── TLS / HTTPS ────────────────────────────────────────────────
+  # Any PEM-encoded cert/key pair works:
+  #   • Cloudflare Origin Certificate (15-year validity, free —
+  #     download from Cloudflare dashboard → SSL/TLS → Origin Server)
+  #   • Let's Encrypt (use certbot or Caddy, or provision externally)
+  #   • Step-CA self-issued (see odoo-iot-docker/docker/step-ca/...)
+  #   • OpenSSL self-signed (only for testing — clients will warn)
+  #
+  # When enabled, the server listens on `port` with TLS instead of HTTP.
+  # Change `port: 8443` to mark it explicitly as HTTPS.
+  tls:
+    enabled: false
+    certfile: /app/certs/origin-cert.pem
+    keyfile: /app/certs/origin-key.pem
+    keyfile_password: null  # only if your private key is encrypted
+    ca_certs: null          # path to CA bundle for client-cert auth (mTLS)
+    require_client_cert: false
+
+# Auto-detect connected fiscal devices on startup (probe COM ports).
+# When false (default), only printers explicitly listed below are loaded.
+auto_detect: false
+
+# ─── Printers ─────────────────────────────────────────────────────
+#
+# Each entry registers one logical printer. The `id` field becomes the
+# printerId in URLs (e.g. /printers/fp1/status). It should be stable —
+# clients store it and use it forever.
+#
+# Supported drivers:
+#   datecs.pm   — Datecs FP-700 MX and other PM v2.11.4 (NEW MX series)
+#   datecs.isl  — Datecs ISL family (full coverage):
+#                   P/C : DP-25, DP-05, WP-50, DP-35
+#                   X   : FP-700X, WP-500X, DP-150X, FMP-350X, FMP-55X
+#                   FP  : FP-800, FP-2000, FP-650
+# Coming later:
+#   daisy / tremol.zfp / tremol.icp / eltrade / incotex
+
+printers:
+  - id: fp1
+    driver: datecs.pm
+    transport: serial
+    port: /dev/ttyUSB0
+    baudrate: 115200
+    operator: "1"
+    operator_password: "0000"
+    till_number: 1
+    nsale_prefix: DT  # 2-letter prefix for Unique Sale Numbers (UNS)
+
+  # Datecs DP-150X (X-series ISL) over serial:
+  # - id: dp150
+  #   driver: datecs.isl
+  #   transport: serial
+  #   port: /dev/ttyUSB1
+  #   baudrate: 115200
+  #   operator: "1"
+  #   operator_password: "0000"
+
+  # TCP printer over local network or VPN:
+  # - id: fp2
+  #   driver: datecs.pm        # or datecs.isl for older Datecs over TCP
+  #   transport: tcp
+  #   tcp_host: 192.168.1.77
+  #   tcp_port: 9100
+  #   operator: "1"
+  #   operator_password: "0000"

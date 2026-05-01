@@ -1,0 +1,5 @@
+Place the compiled `libdatecs_pinpad.so` here.
+
+The `_native.py` module loads it from this directory. The .so itself
+is proprietary and is NOT shipped with this repo — see
+`INSTALL_PINPAD.md` at the repo root for build instructions.

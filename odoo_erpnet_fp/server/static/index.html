@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Odoo.ErpNet.FP — Dashboard</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-hi: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --err: #ef4444;
+    --muted: #64748b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                  "Inter", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--surface-hi);
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  header h1 {
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+  header .version {
+    color: var(--text-dim);
+    font-size: 0.875rem;
+    margin-left: auto;
+  }
+  .container {
+    max-width: 1200px;
+    margin: 1.5rem auto;
+    padding: 0 1.5rem;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .toolbar .ago {
+    color: var(--text-dim);
+    font-size: 0.875rem;
+    margin-left: auto;
+  }
+  button {
+    background: var(--surface-hi);
+    color: var(--text);
+    border: 1px solid var(--muted);
+    border-radius: 6px;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #475569; }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button.primary:hover { background: #0ea5e9; }
+  button.danger { background: var(--err); border-color: var(--err); }
+  button.warn { background: var(--warn); color: var(--bg); border-color: var(--warn); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 1rem;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--surface-hi);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--surface-hi);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .card-header .uri {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    margin-left: auto;
+  }
+  .card-body {
+    padding: 1rem 1.25rem;
+  }
+  .card-body dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.375rem 1rem;
+    font-size: 0.875rem;
+  }
+  .card-body dt {
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+  .card-body dd {
+    word-break: break-word;
+  }
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    background: rgba(0,0,0,0.15);
+    border-top: 1px solid var(--surface-hi);
+  }
+  .card-actions button {
+    flex: 1;
+    min-width: 100px;
+    font-size: 0.8125rem;
+    padding: 0.4375rem 0.625rem;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.1875rem 0.625rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge.ok { background: rgba(16,185,129,0.15); color: var(--ok); }
+  .badge.warn { background: rgba(245,158,11,0.15); color: var(--warn); }
+  .badge.err { background: rgba(239,68,68,0.15); color: var(--err); }
+  .badge.muted { background: rgba(100,116,139,0.15); color: var(--text-dim); }
+
+  .messages {
+    margin-top: 0.75rem;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 8rem;
+    overflow-y: auto;
+  }
+  .messages li {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.2);
+  }
+  .messages li.error { color: var(--err); }
+  .messages li.warning { color: var(--warn); }
+  .messages li.info { color: var(--text-dim); }
+
+  .empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-dim);
+  }
+
+  #toast {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    background: var(--surface-hi);
+    color: var(--text);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    transform: translateY(120%);
+    transition: transform 0.25s;
+    max-width: 22rem;
+    font-size: 0.875rem;
+  }
+  #toast.show { transform: translateY(0); }
+  #toast.ok { border-left: 4px solid var(--ok); }
+  #toast.err { border-left: 4px solid var(--err); }
+
+  footer {
+    margin-top: 2rem;
+    padding: 1rem 1.5rem;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header>
+  <span style="font-size: 1.5rem;">🧾</span>
+  <h1>Odoo.ErpNet.FP</h1>
+  <span class="version" id="version">…</span>
+</header>
+
+<div class="container">
+  <div class="toolbar">
+    <button class="primary" onclick="refreshAll()">↻ Refresh all</button>
+    <span class="ago" id="last-refresh">never</span>
+  </div>
+
+  <div class="grid" id="printers">
+    <div class="empty">Loading…</div>
+  </div>
+</div>
+
+<footer>
+  Python drop-in replacement for ErpNet.FP — BG market.
+  <a href="/docs" target="_blank">API docs</a> ·
+  <a href="/healthz" target="_blank">/healthz</a>
+</footer>
+
+<div id="toast"></div>
+
+<script>
+const ENDPOINT = window.location.origin;
+let state = {};
+
+function toast(msg, kind = "ok") {
+  const el = document.getElementById("toast");
+  el.className = "show " + kind;
+  el.textContent = msg;
+  setTimeout(() => { el.className = el.className.replace("show", ""); }, 3500);
+}
+
+function badgeFor(status) {
+  if (!status) return '<span class="badge muted">unknown</span>';
+  if (status.fetchError) return '<span class="badge err">unreachable</span>';
+  if (status.ok === true) return '<span class="badge ok">online</span>';
+  if (status.ok === false) return '<span class="badge err">error</span>';
+  return '<span class="badge muted">…</span>';
+}
+
+function fmtAgo(date) {
+  if (!date) return "never";
+  const sec = Math.floor((Date.now() - date) / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return sec + "s ago";
+  if (sec < 3600) return Math.floor(sec / 60) + "m ago";
+  return new Date(date).toLocaleTimeString();
+}
+
+async function fetchJSON(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+async function loadPrinters() {
+  const grid = document.getElementById("printers");
+  try {
+    const printers = await fetchJSON(ENDPOINT + "/printers");
+    if (!Object.keys(printers).length) {
+      grid.innerHTML = '<div class="empty">No printers configured. Edit <code>config.yaml</code> and restart.</div>';
+      return;
+    }
+    state.printers = printers;
+    render();
+    fetchAllStatuses();  // fire-and-forget after initial render
+  } catch (e) {
+    grid.innerHTML = `<div class="empty">Cannot reach proxy: ${e.message}</div>`;
+  }
+}
+
+async function fetchStatus(id) {
+  try {
+    const r = await fetchJSON(ENDPOINT + "/printers/" + encodeURIComponent(id) + "/status");
+    state.statuses = state.statuses || {};
+    state.statuses[id] = { ...r, fetchedAt: Date.now() };
+  } catch (e) {
+    state.statuses = state.statuses || {};
+    state.statuses[id] = { fetchError: e.message, fetchedAt: Date.now() };
+  }
+  render();
+}
+
+async function fetchAllStatuses() {
+  const ids = Object.keys(state.printers || {});
+  await Promise.all(ids.map(fetchStatus));
+  document.getElementById("last-refresh").textContent = "Refreshed " + fmtAgo(Date.now());
+}
+
+function render() {
+  const grid = document.getElementById("printers");
+  const printers = state.printers || {};
+  const statuses = state.statuses || {};
+
+  grid.innerHTML = Object.entries(printers).map(([id, info]) => {
+    const status = statuses[id];
+    const messages = status?.messages || [];
+    return `
+      <div class="card">
+        <div class="card-header">
+          <h2>${id}</h2>
+          ${badgeFor(status)}
+          <span class="uri">${info.uri || ""}</span>
+        </div>
+        <div class="card-body">
+          <dl>
+            <dt>Manufacturer</dt><dd>${info.manufacturer || "—"}</dd>
+            <dt>Model</dt><dd>${info.model || "—"}</dd>
+            <dt>Serial #</dt><dd>${info.serialNumber || "—"}</dd>
+            <dt>Fiscal mem #</dt><dd>${info.fiscalMemorySerialNumber || "—"}</dd>
+            <dt>Tax #</dt><dd>${info.taxIdentificationNumber || "—"}</dd>
+            <dt>Firmware</dt><dd>${info.firmwareVersion || "—"}</dd>
+            ${status?.deviceDateTime ? `<dt>Device clock</dt><dd>${status.deviceDateTime}</dd>` : ""}
+          </dl>
+          ${messages.length ? `
+            <ul class="messages">
+              ${messages.slice(0, 6).map(m => `<li class="${m.type}">${m.code ? `[${m.code}] ` : ""}${m.text || ""}</li>`).join("")}
+            </ul>
+          ` : ""}
+        </div>
+        <div class="card-actions">
+          <button onclick="action('${id}', 'status', 'GET')">⟳ Status</button>
+          <button onclick="action('${id}', 'cash', 'GET')">💰 Cash</button>
+          <button onclick="action('${id}', 'xreport', 'POST')">📄 X</button>
+          <button class="warn" onclick="action('${id}', 'zreport', 'POST', true)">🗄 Z</button>
+          <button onclick="action('${id}', 'duplicate', 'POST')">📋 Duplicate</button>
+          <button class="danger" onclick="action('${id}', 'reset', 'POST', true)">⊘ Reset</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function action(id, op, method, confirmRequired = false) {
+  if (confirmRequired && !confirm(`Run ${op} on ${id}?`)) return;
+  try {
+    const r = await fetchJSON(
+      ENDPOINT + "/printers/" + encodeURIComponent(id) + "/" + op,
+      { method, headers: { Accept: "application/json" } }
+    );
+    if (op === "status") {
+      state.statuses = state.statuses || {};
+      state.statuses[id] = { ...r, fetchedAt: Date.now() };
+      render();
+      toast(`Status refreshed for ${id}`, r.ok ? "ok" : "err");
+      return;
+    }
+    if (op === "cash") {
+      toast(`${id}: cash in safe = ${(r.amount ?? 0).toFixed(2)}`, r.ok ? "ok" : "err");
+      return;
+    }
+    if (r?.ok) {
+      toast(`${op} succeeded on ${id}`, "ok");
+    } else {
+      const errMsg = (r?.messages || []).filter(m => m.type === "error").map(m => m.text).join("; ");
+      toast(`${op} on ${id}: ${errMsg || "failed"}`, "err");
+    }
+    fetchStatus(id);
+  } catch (e) {
+    toast(`${op} on ${id}: ${e.message}`, "err");
+  }
+}
+
+function refreshAll() {
+  fetchAllStatuses();
+}
+
+async function loadVersion() {
+  try {
+    const r = await fetchJSON(ENDPOINT + "/healthz");
+    document.getElementById("version").textContent = `${r.printers.length} printer(s)`;
+  } catch (e) {
+    document.getElementById("version").textContent = "offline";
+  }
+}
+
+// Init
+loadVersion();
+loadPrinters();
+setInterval(fetchAllStatuses, 30000);  // auto-refresh every 30s
+</script>
+</body>
+</html>
