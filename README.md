@@ -114,10 +114,21 @@ deployments. **No browser warnings** when the request originates from
 Cloudflare's proxy network — the `Cf-Connecting-IP` header carries the
 real client.
 
+### Let's Encrypt wildcard via Cloudflare DNS-01 (browser-trusted, auto-renew)
+
+Best for in-shop installs that sit behind NAT — no inbound port needed,
+no manual cert acceptance per device. The bundled Traefik stack
+auto-issues + auto-renews `*.lan.mcpworks.net` from Let's Encrypt.
+
+See [`docs/TLS_CLOUDFLARE.md`](docs/TLS_CLOUDFLARE.md) for the full
+setup (token scope, `.env` layout, `acme.json` storage, troubleshooting,
+on-prem vs centralized cert distribution models).
+
 ### Other PEM sources
 
-- **Let's Encrypt** — provision externally with `certbot`/`Caddy` and
-  copy the `fullchain.pem` + `privkey.pem` into `certs/`
+- **Let's Encrypt (HTTP-01 / external)** — provision externally with
+  `certbot`/`Caddy` and copy the `fullchain.pem` + `privkey.pem` into
+  `certs/`
 - **Step-CA** — point at the IoT box's Step-CA (see
   [`odoo-iot-docker`](https://github.com/odoo-iot-docker) reference
   setup) and use `step certificate` to issue
