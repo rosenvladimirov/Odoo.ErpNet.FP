@@ -29,3 +29,5 @@ dist/
 # Headers, sources, pre-built binaries — none of it ships in the repo.
 odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/*
 !odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/.gitkeep
+.env
+letsencrypt/

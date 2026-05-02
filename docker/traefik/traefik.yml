@@ -1,16 +1,41 @@
 # Traefik static config — same as the original ErpNet.FP stack.
 # HTTPS-only entrypoint on :443; loads certs and middlewares from
 # dynamic.yml.
+#
+# certResolver `cf` issues + auto-renews wildcard certs from
+# Let's Encrypt using DNS-01 challenge via Cloudflare. Requires:
+#   CLOUDFLARE_DNS_API_TOKEN env var (Zone:DNS:Edit on the target zone)
+# Storage: /letsencrypt/acme.json (mode 0600 — Traefik enforces).
 
 entryPoints:
   websecure:
     address: ":443"
+    http:
+      tls:
+        certResolver: cf
+        domains:
+          - main: "*.lan.mcpworks.net"
+            sans:
+              - "lan.mcpworks.net"
 
 providers:
   docker:
     exposedByDefault: false
   file:
     filename: /etc/traefik/dynamic.yml
+
+certificatesResolvers:
+  cf:
+    acme:
+      email: "vladimirov.rosen@gmail.com"
+      storage: "/letsencrypt/acme.json"
+      dnsChallenge:
+        provider: cloudflare
+        # Resolvers used to validate the challenge propagation —
+        # Cloudflare's own + Google as cross-check.
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
 
 log:
   level: INFO

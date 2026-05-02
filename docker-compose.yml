@@ -33,11 +33,16 @@ services:
       # Bind only to loopback by default — same as ErpNet.FP.
       # Open to all interfaces by changing to "443:443" if needed.
       - "127.0.0.1:443:443"
+    environment:
+      # Cloudflare DNS-01 ACME challenge — Zone:DNS:Edit on the zone
+      # holding *.lan.mcpworks.net (currently the parent mcpworks.net).
+      CLOUDFLARE_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./docker/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ./certs:/certs:ro
+      - ./letsencrypt:/letsencrypt
     networks:
       - erpnet
 
@@ -68,10 +73,20 @@ services:
       - "traefik.enable=true"
       # Same hostnames as the original ErpNet.FP stack — clients need
       # NO change to the host URL configured on l10n_bg_erp_net_fp.
+      # Two routers — one for legacy hostnames (uses static cert),
+      # one for the new lan.mcpworks.net subdomain (uses ACME wildcard
+      # cert, auto-renewed by the `cf` resolver).
       - "traefik.http.routers.erpnet.rule=Host(`erpnet.local`) || Host(`localhost`) || Host(`erpnet-fp.odoo-shell.space`)"
       - "traefik.http.routers.erpnet.entrypoints=websecure"
       - "traefik.http.routers.erpnet.tls=true"
       - "traefik.http.routers.erpnet.middlewares=cors@file"
+      - "traefik.http.routers.erpnet-lan.rule=Host(`erpnet.lan.mcpworks.net`) || HostRegexp(`{sub:[a-z0-9-]+}.lan.mcpworks.net`)"
+      - "traefik.http.routers.erpnet-lan.entrypoints=websecure"
+      - "traefik.http.routers.erpnet-lan.tls=true"
+      - "traefik.http.routers.erpnet-lan.tls.certresolver=cf"
+      - "traefik.http.routers.erpnet-lan.tls.domains[0].main=*.lan.mcpworks.net"
+      - "traefik.http.routers.erpnet-lan.tls.domains[0].sans=lan.mcpworks.net"
+      - "traefik.http.routers.erpnet-lan.middlewares=cors@file"
       - "traefik.http.services.erpnet.loadbalancer.server.port=8001"
 
     healthcheck:
