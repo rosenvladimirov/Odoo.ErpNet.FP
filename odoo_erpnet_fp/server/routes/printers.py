@@ -135,25 +135,41 @@ async def printer_info(id: str, request: Request):
 async def printer_status(id: str, request: Request):
     registry = _require_printer(request, id)
     is_pm = registry.is_pm(id)
+    # Hard ceiling — status check must always resolve quickly so the
+    # Odoo POS UI / backend buttons can react. With a paper-out or
+    # otherwise unresponsive device the underlying ISL frame timeout
+    # is 5s; we cap at 8s total and surface E101 on overrun rather
+    # than wedging the calling browser.
     try:
-        async with registry.with_driver(id) as drv:
-            if is_pm:
-                fs = await asyncio.to_thread(drv.read_status)
+        async def _do():
+            async with registry.with_driver(id) as drv:
+                if is_pm:
+                    fs = await asyncio.to_thread(drv.read_status)
+                    return DeviceStatusWithDateTime(
+                        ok=not fs.has_critical_error(),
+                        device_date_time=_now_iso(),
+                        messages=msg_adapter.from_status(fs),
+                    )
+                isl_status = await asyncio.to_thread(drv.get_status)
                 return DeviceStatusWithDateTime(
-                    ok=not fs.has_critical_error(),
+                    ok=isl_status.ok,
                     device_date_time=_now_iso(),
-                    messages=msg_adapter.from_status(fs),
+                    messages=[
+                        StatusMessage(type=m.type.value, code=m.code, text=m.text)
+                        for m in (isl_status.messages + isl_status.errors)
+                    ],
                 )
-            # datecs.isl
-            isl_status = await asyncio.to_thread(drv.get_status)
-            return DeviceStatusWithDateTime(
-                ok=isl_status.ok,
-                device_date_time=_now_iso(),
-                messages=[
-                    StatusMessage(type=m.type.value, code=m.code, text=m.text)
-                    for m in (isl_status.messages + isl_status.errors)
-                ],
-            )
+        return await asyncio.wait_for(_do(), timeout=8.0)
+    except asyncio.TimeoutError:
+        _logger.warning("status check timed out for %s — likely paper-out / "
+                        "cover-open / cable", id)
+        return DeviceStatusWithDateTime(
+            ok=False,
+            messages=[StatusMessage(
+                type="error", code="E101",
+                text="Device unreachable — check paper, cover, cable",
+            )],
+        )
     except Exception as exc:
         _logger.exception("status check failed for %s", id)
         return DeviceStatusWithDateTime(
