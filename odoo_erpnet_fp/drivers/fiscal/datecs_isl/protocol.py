@@ -79,6 +79,22 @@ class IslDeviceInfo:
     operator_password_max_length: int = 8
     tax_identification_number: str = ""
 
+    @property
+    def supports_native_invoice(self) -> bool:
+        """Datecs ISL invoice support landed in the BG Naredba H-18
+        firmware family (FW 3.00+, 2024+). Older firmware can still
+        produce a 'looks-like-an-invoice' fiscal receipt by injecting
+        free-text comments before the sale lines (CMD 0x36).
+        """
+        # firmware_version is "<major.minor> <build-date>", e.g.
+        # "3.00 22Jul25 1109" — take the leading numeric part.
+        head = self.firmware_version.strip().split()[0] if self.firmware_version else ""
+        try:
+            major, minor = head.split(".")[:2]
+            return (int(major), int(minor)) >= (3, 0)
+        except (ValueError, IndexError):
+            return False
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "manufacturer": self.manufacturer,
@@ -91,6 +107,7 @@ class IslDeviceInfo:
             "commentTextMaxLength": self.comment_text_max_length,
             "operatorPasswordMaxLength": self.operator_password_max_length,
             "taxIdentificationNumber": self.tax_identification_number,
+            "supportsNativeInvoice": self.supports_native_invoice,
         }
 
 
@@ -437,6 +454,45 @@ class IslDevice:
         # BgDatecsCIslFiscalPrinter); subclasses (vendors.py) override
         # for X-style devices.
         header = ",".join([op, pw, unique_sale_number, "1"])
+        _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
+        return status
+
+    def open_invoice_receipt(
+        self,
+        unique_sale_number: str,
+        recipient_name: str,
+        recipient_eik: str,
+        recipient_eik_type: str = "0",       # 0=BULSTAT, 1=EGN, 2=Foreign, 3=Service
+        recipient_address: str = "",
+        recipient_buyer: str = "",            # МОЛ
+        recipient_vat: str = "",              # ИН по ЗДДС
+        invoice_number: Optional[str] = None,  # 10-digit; None = device auto
+        operator_id: Optional[str] = None,
+        operator_password: Optional[str] = None,
+    ) -> DeviceStatus:
+        """Open a fiscal INVOICE (Datecs C variant, FW 3.00+).
+
+        C variant header for invoice (flag = '2'):
+          op,pw,UNS,2,InvNumber,Recipient,Receiver,Address,EIK,EIKtype,VAT
+        Per Datecs PM v2.11.4 §"Open Fiscal Bon — Invoice mode".
+        """
+        op = operator_id or self.operator_id
+        pw = operator_password or self.operator_password
+        # Invoice number: device-side auto-increment when omitted.
+        # Some firmwares require an explicit 10-digit string; pass empty
+        # to let the device assign the next number.
+        inv = (invoice_number or "").rjust(10, "0") if invoice_number else ""
+        header = ",".join([
+            op, pw, unique_sale_number,
+            "2",                                   # invoice flag
+            inv,
+            recipient_name[:26],                   # max 26 chars per row
+            recipient_buyer[:16],                  # МОЛ — max 16
+            recipient_address[:30],
+            recipient_eik[:13],
+            recipient_eik_type,
+            recipient_vat[:13],
+        ])
         _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 

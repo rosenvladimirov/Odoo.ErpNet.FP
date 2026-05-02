@@ -180,13 +180,29 @@ class PrinterRegistry:
         """Serialised, opened driver context for a printer.
 
         Yields PmDevice or IslDevice depending on configured driver,
-        always inside the entry's asyncio.Lock.
+        always inside the entry's asyncio.Lock. For ISL drivers, lazy-
+        runs `detect()` on the entry's first use so `driver.info`
+        (firmware, model, capability flags) is populated for every
+        subsequent caller.
         """
         entry = self.get(printer_id)
         async with entry.lock:
             driver = self.make_driver(printer_id)
             driver.open()
             try:
+                # Lazy capability detection — once per entry lifetime.
+                # Cached on the entry so we don't re-probe every request.
+                cached = getattr(entry, "_isl_info_cache", None)
+                if cached is not None and hasattr(driver, "info"):
+                    driver.info = cached
+                elif hasattr(driver, "detect") and getattr(driver, "info", None) \
+                        and not getattr(driver.info, "firmware_version", ""):
+                    try:
+                        info = driver.detect()
+                        if info is not None:
+                            entry._isl_info_cache = info
+                    except Exception:
+                        _logger.exception("ISL detect failed for %s", printer_id)
                 yield driver
             finally:
                 try:

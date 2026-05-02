@@ -192,6 +192,32 @@ class ReversalReceipt(Receipt):
     reason: Literal["operator-error", "refund", "tax-base-reduction"] = "refund"
 
 
+class Invoice(Receipt):
+    """Body of POST /printers/{id}/invoice — fiscal invoice (фактура).
+
+    On firmware that supports native invoice (Datecs ISL FW 3.00+),
+    these fields are passed verbatim to `open_invoice_receipt`.
+    On older firmware, the proxy falls back to a regular fiscal
+    receipt prefixed with comment lines containing the same data.
+    """
+
+    customer_name: str = Field(..., alias="customerName")
+    customer_eik: str = Field(..., alias="customerEik")
+    customer_eik_type: Literal["0", "1", "2", "3"] = Field(
+        "0", alias="customerEikType",
+        description="0=BULSTAT, 1=EGN, 2=Foreign, 3=Service number",
+    )
+    customer_address: str = Field("", alias="customerAddress")
+    customer_buyer: str = Field("", alias="customerBuyer",
+                                 description="МОЛ — responsible person")
+    customer_vat: str = Field("", alias="customerVat",
+                               description="ИН по ЗДДС")
+    invoice_number: Optional[str] = Field(
+        None, alias="invoiceNumber",
+        description="10-digit; omit to let the device auto-increment",
+    )
+
+
 # ─── Cash operation envelopes ────────────────────────────────────────
 
 

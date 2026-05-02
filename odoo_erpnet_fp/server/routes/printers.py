@@ -23,6 +23,7 @@ from ..schemas import (
     DeviceInfo,
     DeviceStatusWithDateTime,
     GenericResult,
+    Invoice,
     Payment,
     PrintReceiptResult,
     Receipt,
@@ -397,6 +398,180 @@ async def print_receipt(
     asyncTimeout: Annotated[int, Query()] = 30000,
 ):
     return await _print_receipt_impl(request, id, receipt)
+
+
+# ─── 5b. POST /{id}/invoice ───────────────────────────────────────
+
+
+async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptResult:
+    """ISL invoice path — native (FW 3.00+) OR free-text fallback."""
+    from ...drivers.fiscal.datecs_isl.protocol import (
+        PaymentType as IslPT,
+        TaxGroup as IslTG,
+    )
+    payment_map = {"cash": IslPT.CASH, "card": IslPT.CARD, "check": IslPT.CHECK}
+
+    try:
+        async with registry.with_driver(id) as isl:
+            opened = False
+            try:
+                native = bool(isl.info.supports_native_invoice)
+                _logger.info(
+                    "INVOICE id=%s UNS=%r native=%s recipient=%r EIK=%s items=%d",
+                    id, inv.unique_sale_number, native,
+                    inv.customer_name, inv.customer_eik, len(inv.items),
+                )
+
+                if native:
+                    st = await asyncio.to_thread(
+                        isl.open_invoice_receipt,
+                        unique_sale_number=inv.unique_sale_number,
+                        recipient_name=inv.customer_name,
+                        recipient_eik=inv.customer_eik,
+                        recipient_eik_type=inv.customer_eik_type,
+                        recipient_address=inv.customer_address,
+                        recipient_buyer=inv.customer_buyer,
+                        recipient_vat=inv.customer_vat,
+                        invoice_number=inv.invoice_number,
+                        operator_id=inv.operator,
+                        operator_password=inv.operator_password,
+                    )
+                    # Native invoice failed (firmware variant mismatch?) —
+                    # try the fallback path automatically. The capability
+                    # flag is best-effort; some FW 3.00+ devices use a
+                    # slightly different invoice payload that we don't
+                    # cover yet (e.g. requires explicit invoice_number,
+                    # different EIK-type encoding, or vendor-locked).
+                    if not st.ok and any(
+                            "E401" in (e.code or "") for e in st.errors):
+                        _logger.warning(
+                            "Native invoice rejected (E401) — "
+                            "falling back to free-text comment header. "
+                            "Errors: %s",
+                            [(e.code, e.text) for e in st.errors],
+                        )
+                        native = False
+                        st = await asyncio.to_thread(
+                            isl.open_receipt,
+                            inv.unique_sale_number,
+                            inv.operator,
+                            inv.operator_password,
+                        )
+                else:
+                    # Fallback: open normal fiscal receipt, then prefix
+                    # with comment lines (CMD_FISCAL_RECEIPT_COMMENT).
+                    st = await asyncio.to_thread(
+                        isl.open_receipt,
+                        inv.unique_sale_number,
+                        inv.operator,
+                        inv.operator_password,
+                    )
+
+                if not st.ok:
+                    return PrintReceiptResult(
+                        ok=False,
+                        messages=[
+                            StatusMessage(type=m.type.value, code=m.code, text=m.text)
+                            for m in (st.messages + st.errors)
+                        ],
+                    )
+                opened = True
+
+                # In fallback mode, inject invoice header as comments.
+                if not native:
+                    invoice_header_lines = [
+                        "===== ФАКТУРА =====",
+                        f"Купувач: {inv.customer_name}"[:46],
+                        f"ЕИК: {inv.customer_eik}"[:46],
+                    ]
+                    if inv.customer_vat:
+                        invoice_header_lines.append(f"ИН по ЗДДС: {inv.customer_vat}"[:46])
+                    if inv.customer_address:
+                        invoice_header_lines.append(f"Адрес: {inv.customer_address}"[:46])
+                    if inv.customer_buyer:
+                        invoice_header_lines.append(f"МОЛ: {inv.customer_buyer}"[:46])
+                    invoice_header_lines.append("=" * 30)
+                    for line in invoice_header_lines:
+                        cst = await asyncio.to_thread(isl.add_comment, line)
+                        if not cst.ok:
+                            _logger.warning("comment line failed: %s",
+                                            [(e.code, e.text) for e in cst.errors])
+
+                # Items + payments — same as regular receipt
+                receipt_amount = 0.0
+                for item in inv.items:
+                    if isinstance(item, SaleItem):
+                        tg = IslTG(str(item.tax_group))
+                        st = await asyncio.to_thread(
+                            isl.add_item,
+                            text=item.text,
+                            unit_price=item.unit_price,
+                            tax_group=tg,
+                            quantity=item.quantity,
+                        )
+                        if not st.ok:
+                            raise RuntimeError("; ".join(e.text for e in st.errors))
+                        receipt_amount += float(item.quantity) * float(item.unit_price)
+
+                if not inv.payments:
+                    st = await asyncio.to_thread(isl.full_payment)
+                else:
+                    for pay in inv.payments:
+                        st = await asyncio.to_thread(
+                            isl.add_payment,
+                            pay.amount,
+                            payment_map.get(pay.payment_type.value, IslPT.CASH),
+                        )
+                        if not st.ok:
+                            raise RuntimeError("; ".join(e.text for e in st.errors))
+
+                st = await asyncio.to_thread(isl.close_receipt)
+                if not st.ok:
+                    raise RuntimeError("; ".join(e.text for e in st.errors))
+
+                return PrintReceiptResult(
+                    ok=True,
+                    receipt_date_time=_now_iso(),
+                    receipt_amount=round(receipt_amount, 2),
+                    fiscal_memory_serial_number=isl.info.fiscal_memory_serial_number or "",
+                )
+            except Exception:
+                if opened:
+                    try:
+                        await asyncio.to_thread(isl.abort_receipt)
+                    except Exception:
+                        _logger.exception("ISL abort after invoice error failed")
+                raise
+    except Exception as exc:
+        _logger.exception("ISL invoice print failed on %s", id)
+        return PrintReceiptResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
+
+
+@router.post("/{id}/invoice", response_model=PrintReceiptResult)
+async def print_invoice(
+    id: str,
+    invoice: Invoice,
+    request: Request,
+):
+    """Print a fiscal invoice (фактура).
+
+    On firmware that supports native invoice opcode (Datecs ISL FW 3.00+):
+      header includes recipient + EIK + address + МОЛ + ИН по ЗДДС;
+      device assigns invoice number from EEPROM auto-increment.
+    On older firmware: regular fiscal receipt prefixed with comment
+      lines containing the same data — visually similar but NOT a
+      Naredba H-18 fiscal invoice.
+    """
+    registry = _require_printer(request, id)
+    if registry.is_isl(id):
+        return await _isl_print_invoice(registry, id, invoice)
+    return PrintReceiptResult(
+        ok=False,
+        messages=[StatusMessage(
+            type="error", code="E501",
+            text="Invoice not yet implemented on Datecs PM driver",
+        )],
+    )
 
 
 # ─── 6. POST /{id}/reversalreceipt ────────────────────────────────
