@@ -29,30 +29,60 @@ neither ErpNet.FP nor IoT box covers yet.
 
 ## Quick start
 
-### Option A — Docker (recommended)
+### Option A — Docker stack (Traefik + proxy, drop-in replacement for ErpNet.FP)
+
+The bundled `docker-compose.yml` mirrors the original ErpNet.FP setup
+1:1 — Traefik routing the same hostnames (`erpnet-fp.odoo-shell.space`
+/ `erpnet.local` / `localhost`), HTTPS only, CORS middleware. Existing
+Odoo addons (`l10n_bg_erp_net_fp`) work without changing the configured
+host URL — only the container behind it changes.
 
 ```bash
 git clone https://github.com/rosenvladimirov/Odoo.ErpNet.FP
 cd Odoo.ErpNet.FP
 
-# Configure (edit ports, devices, TLS settings as needed)
+# Configure
 mkdir -p config certs
 cp config-examples/config.yaml config/config.yaml
 $EDITOR config/config.yaml
 
-# Run
+# Drop your TLS cert/key into ./certs (Cloudflare Origin / Let's Encrypt /
+# self-signed). Same files as the original ErpNet.FP stack.
+cp /path/to/cert.pem certs/cert.pem
+cp /path/to/key.pem  certs/key.pem
+
+# Run — starts Traefik (:443) + proxy (:8001 internal)
 docker compose up -d
 
-# Test
-curl http://localhost:8001/printers
+# Test (Traefik at :443 routes to the proxy)
+curl --insecure https://localhost/printers
+curl https://erpnet-fp.odoo-shell.space/printers   # if DNS points here
 ```
 
-### Option B — Native install
+### Option B — Native install (no Docker)
 
 ```bash
 pip install .
 odoo-erpnet-fp --config /path/to/config.yaml
 ```
+
+### Migrating from the C# ErpNet.FP container
+
+If you already run `~/Проекти/ErpNet.FP/docker-compose.yml` (Traefik +
+the C# `erpnet-fp` container), the migration is a 1-step swap:
+
+```bash
+# 1. Stop the old C# stack
+cd ~/Проекти/ErpNet.FP && docker compose down
+
+# 2. Bring up our Python stack — same Traefik routes, same hostnames,
+#    same TLS, same CORS — Odoo clients keep working unchanged.
+cd ~/Проекти/odoo/iot/Odoo.ErpNet.FP
+docker compose up -d
+```
+
+The only thing that changes server-side is the container handling
+incoming requests on :8001; client-side nothing changes.
 
 ## HTTPS / TLS
 

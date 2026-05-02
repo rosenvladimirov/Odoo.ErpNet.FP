@@ -24,3 +24,8 @@ dist/
 *.o
 *.dylib
 *.dll
+
+# Block ALL contents of the pinpad lib directory except the placeholder.
+# Headers, sources, pre-built binaries — none of it ships in the repo.
+odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/*
+!odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/.gitkeep

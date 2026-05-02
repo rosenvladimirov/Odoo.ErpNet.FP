@@ -1,20 +1,47 @@
 ---
-# Example deployment for a single shop machine.
+# Standalone deployment — proxy + Traefik in one stack.
 #
-# Adjust the volumes section to point at your actual:
-#   • COM device (/dev/ttyUSB0 on Linux, "COM5" path translation on Windows)
-#   • config file location (config.yaml or ErpNet.FP-style configuration.json)
-#   • TLS cert/key files — Cloudflare Origin Certificate, Let's Encrypt,
-#     Step-CA, or any other PEM source.
+# Drop-in replacement for the original ErpNet.FP setup:
+#   ../ErpNet.FP/docker-compose.yml — Traefik routing the C# server.
+# Same hostnames, same TLS, same CORS — just our Python proxy in place
+# of the C# one. Existing clients (l10n_bg_erp_net_fp Odoo addon, POS
+# UI) work unchanged because the URL stays exactly the same.
 #
 # Quick start:
+#   mkdir -p config certs
+#   cp config-examples/config.yaml config/config.yaml
+#   cp /path/to/cert.pem certs/cert.pem    # see ../ErpNet.FP/certs/
+#   cp /path/to/key.pem  certs/key.pem
 #   docker compose up -d
-#   curl http://localhost:8001/printers
 #
-# After enabling TLS in config.yaml:
-#   curl --cacert /path/to/origin-pull-ca.pem https://localhost:8443/printers
+#   curl --insecure https://localhost/printers
+#   curl https://erpnet-fp.odoo-shell.space/printers   # if DNS points here
 
 services:
+  # ─── Traefik reverse proxy — ───────────────────────────────────
+  # Routes the same hostnames as the original ErpNet.FP stack:
+  #   erpnet-fp.odoo-shell.space  (cloud / public DNS)
+  #   erpnet.local                (LAN-local hostname)
+  #   localhost                    (host-only)
+  # All over HTTPS (websecure entrypoint), with the CORS middleware
+  # from dynamic.yml so browser fetch() works from configured origins.
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      # Bind only to loopback by default — same as ErpNet.FP.
+      # Open to all interfaces by changing to "443:443" if needed.
+      - "127.0.0.1:443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./docker/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ./certs:/certs:ro
+    networks:
+      - erpnet
+
+  # ─── Our Python proxy (replaces ErpNet.FP C# container) ─────────
   odoo-erpnet-fp:
     image: rosenvladimirov/odoo-erpnet-fp:latest
     build:
@@ -22,38 +49,30 @@ services:
       dockerfile: docker/Dockerfile
     container_name: odoo-erpnet-fp
     restart: unless-stopped
+    networks:
+      - erpnet
 
-    # Group `dialout` (Linux) gives access to /dev/ttyUSB*. On Windows
-    # / macOS, swap this for the equivalent device passthrough mechanism.
+    # Same as ErpNet.FP — privileged for /dev access to USB devices
+    privileged: true
     group_add:
       - dialout
-
-    # Pass through the actual device(s) as needed
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0
-      # USB-HID barcode reader passthrough — uncomment + adjust path
-      # (use a stable /dev/input/by-id/... symlink in production)
-      # - /dev/input/event5:/dev/input/event5
-
-    # HID readers need access to /dev/input/by-id/ for stable device
-    # naming across reboots. Uncomment and bind-mount when using HID:
-    # volumes:
-    #   - /dev/input/by-id:/dev/input/by-id:ro
-
     volumes:
-      # Configuration — pick ONE of:
-      #   ./config/config.yaml             (recommended; supports TLS)
-      #   ./config/configuration.json      (ErpNet.FP-compat, no TLS opts)
+      - /dev:/dev
       - ./config:/app/config:ro
-
-      # TLS certs — Cloudflare Origin Certificate or any other PEM source
       - ./certs:/app/certs:ro
 
-    ports:
-      # HTTP — leave open in development; CLOSE in production once TLS works
-      - "8001:8001"
-      # HTTPS — uncomment when config.yaml has tls.enabled: true
-      # - "8443:8443"
+    expose:
+      - "8001"
+
+    labels:
+      - "traefik.enable=true"
+      # Same hostnames as the original ErpNet.FP stack — clients need
+      # NO change to the host URL configured on l10n_bg_erp_net_fp.
+      - "traefik.http.routers.erpnet.rule=Host(`erpnet.local`) || Host(`localhost`) || Host(`erpnet-fp.odoo-shell.space`)"
+      - "traefik.http.routers.erpnet.entrypoints=websecure"
+      - "traefik.http.routers.erpnet.tls=true"
+      - "traefik.http.routers.erpnet.middlewares=cors@file"
+      - "traefik.http.services.erpnet.loadbalancer.server.port=8001"
 
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)"]
@@ -67,3 +86,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  erpnet:
+    name: erpnet

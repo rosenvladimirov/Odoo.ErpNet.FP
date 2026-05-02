@@ -1,0 +1,48 @@
+# Traefik dynamic config — same shape as the original ErpNet.FP stack.
+#
+# TLS: bind-mount your cert/key into /certs (typically ./certs/ on the
+# host). Any PEM source works — Cloudflare Origin Certificate
+# (15-year, free), Let's Encrypt, Step-CA, or a self-signed pair for
+# local testing.
+#
+# CORS: extend the `accessControlAllowOriginList` for every front-end
+# origin that calls the API from the browser (the Odoo POS UI host,
+# Odoo SaaS database hostname, etc.). Wildcards are NOT recommended
+# because the protocol uses `accessControlAllowCredentials: true`.
+
+tls:
+  certificates:
+    - certFile: "/certs/cert.pem"
+      keyFile:  "/certs/key.pem"
+  stores:
+    default:
+      defaultCertificate:
+        certFile: "/certs/cert.pem"
+        keyFile:  "/certs/key.pem"
+
+http:
+  middlewares:
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "PUT"
+          - "PATCH"
+          - "DELETE"
+          - "OPTIONS"
+        accessControlAllowHeaders:
+          - "Content-Type"
+          - "Authorization"
+          - "Accept"
+          - "Origin"
+          - "X-Requested-With"
+        accessControlAllowOriginList:
+          # Add the Odoo hostnames that need to fetch this proxy from
+          # browser code. Common defaults — extend as needed:
+          - "https://www.odoo-shell.space"
+          - "https://demo-18.odoo-shell.space"
+          - "https://rosenvladimirov-demo-l10n-bulgaria.odoo.com"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 1728000
+        addVaryHeader: true

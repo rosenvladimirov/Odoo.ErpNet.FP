@@ -1,0 +1,16 @@
+# Traefik static config — same as the original ErpNet.FP stack.
+# HTTPS-only entrypoint on :443; loads certs and middlewares from
+# dynamic.yml.
+
+entryPoints:
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    exposedByDefault: false
+  file:
+    filename: /etc/traefik/dynamic.yml
+
+log:
+  level: INFO
