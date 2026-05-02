@@ -204,12 +204,29 @@ async def _isl_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
         async with registry.with_driver(id) as isl:
             opened = False
             try:
+                _logger.debug(
+                    "ISL open_receipt: id=%s UNS=%r operator=%r op_pw=%s items=%d "
+                    "(default isl.operator_id=%r, isl.operator_password=%s)",
+                    id,
+                    receipt.unique_sale_number,
+                    receipt.operator,
+                    "***" if receipt.operator_password else None,
+                    len(receipt.items),
+                    getattr(isl, "operator_id", None),
+                    "***" if getattr(isl, "operator_password", None) else None,
+                )
                 st = await asyncio.to_thread(
                     isl.open_receipt,
                     receipt.unique_sale_number,
                     receipt.operator,
                     receipt.operator_password,
                 )
+                if not st.ok:
+                    _logger.warning(
+                        "ISL open_receipt failed: id=%s UNS=%r operator=%r errors=%s",
+                        id, receipt.unique_sale_number, receipt.operator,
+                        [(e.code, e.text) for e in st.errors],
+                    )
                 if not st.ok:
                     return PrintReceiptResult(
                         ok=False,

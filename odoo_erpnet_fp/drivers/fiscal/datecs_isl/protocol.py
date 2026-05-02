@@ -269,6 +269,10 @@ class IslDevice:
         encoded = data.encode("cp1251") if data else b""
         seq = self._next_seq()
         request = fr.encode_request(seq, command, encoded)
+        _logger.debug(
+            "ISL >>> cmd=0x%02X seq=%d data=%r raw=%s",
+            command, seq, data, request.hex(" "),
+        )
 
         last_exc: Exception | None = None
         for _ in range(fr.MAX_WRITE_RETRIES):
@@ -284,7 +288,14 @@ class IslDevice:
                 last_exc = exc
                 continue
             text = data_bytes.decode("cp1251", errors="ignore")
-            return text, parse_status_bytes(status_bytes), bytes(status_bytes)
+            status = parse_status_bytes(status_bytes)
+            log_fn = _logger.warning if status.errors else _logger.debug
+            log_fn(
+                "ISL <<< cmd=0x%02X seq=%d data=%r status_bytes=%s errors=%s",
+                command, seq, text, status_bytes.hex(" "),
+                [(e.code, e.text) for e in status.errors],
+            )
+            return text, status, bytes(status_bytes)
 
         status = DeviceStatus()
         status.add_error("E101", f"Device unreachable: {last_exc}")
@@ -384,7 +395,11 @@ class IslDevice:
     ) -> DeviceStatus:
         op = operator_id or self.operator_id
         pw = operator_password or self.operator_password
-        header = ",".join([op, pw, unique_sale_number])
+        # ISL DATA fields are separated by TAB (0x09) per protocol spec —
+        # see docs/PROTOCOL_REFERENCE.md §"Frame layout". Comma is a
+        # plain printable byte that the device treats as part of the
+        # operator-id token, triggering E401 'Syntax error'.
+        header = "\t".join([op, pw, unique_sale_number])
         _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
