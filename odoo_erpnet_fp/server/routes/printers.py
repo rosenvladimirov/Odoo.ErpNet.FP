@@ -69,6 +69,27 @@ def _device_info(entry) -> DeviceInfo:
     cfg = entry.config
     if entry.info is not None:
         return entry.info
+    # Втори източник на info — cached IslDeviceInfo от opportunistic
+    # detect (status route го попълва при първи успешен probe и го
+    # persist-ва на диск). Map-ваме към ErpNet.FP-style DeviceInfo.
+    isl_cache = getattr(entry, "_isl_info_cache", None)
+    if isl_cache is not None:
+        return DeviceInfo(
+            uri=getattr(isl_cache, "uri", "") or "",
+            manufacturer=getattr(isl_cache, "manufacturer", "") or "Datecs",
+            model=getattr(isl_cache, "model", "") or "?",
+            firmware_version=getattr(isl_cache, "firmware_version", "") or "",
+            serial_number=getattr(isl_cache, "serial_number", "") or "",
+            fiscal_memory_serial_number=getattr(
+                isl_cache, "fiscal_memory_serial_number", "") or "",
+            tax_identification_number=getattr(
+                isl_cache, "tax_identification_number", "") or "",
+            item_text_max_length=getattr(isl_cache, "item_text_max_length", 36),
+            comment_text_max_length=getattr(isl_cache, "comment_text_max_length", 42),
+            operator_password_max_length=getattr(
+                isl_cache, "operator_password_max_length", 8),
+            supported_payment_types=pt_adapter.supported_for(cfg.driver),
+        )
     addr = cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}"
     transport_token = {"serial": "com", "tcp": "tcp"}.get(cfg.transport, "com")
     # ErpNet.FP-style URI: bg.<vendor>.<protocol>.<transport>://<addr>
@@ -163,6 +184,13 @@ async def printer_status(id: str, request: Request):
                             info = await asyncio.to_thread(drv.detect)
                             if info is not None:
                                 entry._isl_info_cache = info
+                                # Persist веднага — следващия restart на
+                                # proxy-то ще започне с пълно info дори
+                                # ако device е offline в момента
+                                try:
+                                    registry.persist_isl_info_cache()
+                                except Exception:
+                                    pass
                         except Exception as exc:
                             _logger.debug("opportunistic detect failed: %s", exc)
                 return DeviceStatusWithDateTime(

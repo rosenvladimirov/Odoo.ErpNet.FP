@@ -17,8 +17,19 @@ Drivers supported:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
+from pathlib import Path
+
+# Persistent on-disk cache за IslDeviceInfo (FW/serial/FM/TIN).
+# Без него — restart на proxy → info=празно докато device-ът не
+# отговори (което не може ако paper-out / cable disconnected).
+# С cache → последно successful detect остава видим.
+_ISL_INFO_CACHE_FILE = Path(os.environ.get(
+    "ODOO_ERPNET_FP_INFO_CACHE",
+    "/app/data/.isl_info_cache.json"))
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
@@ -91,6 +102,7 @@ class PrinterRegistry:
     @classmethod
     def from_config(cls, config: AppConfig) -> "PrinterRegistry":
         registry = cls()
+        cached_info = registry._load_isl_info_cache()
         for cfg in config.printers:
             if cfg.id in registry.printers:
                 raise ValueError(f"Duplicate printer id: {cfg.id!r}")
@@ -99,15 +111,61 @@ class PrinterRegistry:
                     f"Unsupported driver {cfg.driver!r} for printer {cfg.id!r}; "
                     f"known: {', '.join(sorted(SUPPORTED_DRIVERS))}"
                 )
-            registry.printers[cfg.id] = PrinterEntry(config=cfg)
+            entry = PrinterEntry(config=cfg)
+            # Restore cached IslDeviceInfo if we have it from a
+            # previous run (paper-out / cable-disconnected → still
+            # show the last-known FW/serial/FM/TIN in the UI).
+            if cfg.id in cached_info:
+                entry._isl_info_cache = cached_info[cfg.id]
+            registry.printers[cfg.id] = entry
             _logger.info(
-                "Registered printer %r — driver=%s transport=%s addr=%s",
+                "Registered printer %r — driver=%s transport=%s addr=%s%s",
                 cfg.id,
                 cfg.driver,
                 cfg.transport,
                 cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}",
+                " (info restored from cache)" if cfg.id in cached_info else "",
             )
         return registry
+
+    # ─── Persistent ISL info cache ─────────────────────────────
+    @staticmethod
+    def _load_isl_info_cache():
+        """Read cached IslDeviceInfo dict from disk, if file exists.
+        Returns dict[printer_id → IslDeviceInfo]. Empty on first run
+        or unreadable file (corrupted, permission, etc.).
+        """
+        try:
+            from ..drivers.fiscal.datecs_isl.protocol import IslDeviceInfo
+            if not _ISL_INFO_CACHE_FILE.exists():
+                return {}
+            raw = json.loads(_ISL_INFO_CACHE_FILE.read_text())
+            out = {}
+            for pid, d in (raw or {}).items():
+                try:
+                    out[pid] = IslDeviceInfo(**d)
+                except Exception:
+                    pass
+            _logger.info("Loaded ISL info cache for %d printer(s) from %s",
+                         len(out), _ISL_INFO_CACHE_FILE)
+            return out
+        except Exception as exc:
+            _logger.warning("ISL info cache load failed: %s", exc)
+            return {}
+
+    def persist_isl_info_cache(self):
+        """Write current cached IslDeviceInfo entries back to disk."""
+        try:
+            from dataclasses import asdict
+            payload = {}
+            for pid, entry in self.printers.items():
+                info = getattr(entry, "_isl_info_cache", None)
+                if info is not None:
+                    payload[pid] = asdict(info)
+            _ISL_INFO_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _ISL_INFO_CACHE_FILE.write_text(json.dumps(payload, indent=2))
+        except Exception as exc:
+            _logger.warning("ISL info cache persist failed: %s", exc)
 
     # ─── Driver factories ─────────────────────────────────────
 

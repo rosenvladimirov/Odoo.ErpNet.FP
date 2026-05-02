@@ -65,6 +65,8 @@ services:
       - /dev:/dev
       - ./config:/app/config:ro
       - ./certs:/app/certs:ro
+      # Writable cache (persistent ISL device-info between restarts).
+      - ./data:/app/data:rw
 
     expose:
       - "8001"
