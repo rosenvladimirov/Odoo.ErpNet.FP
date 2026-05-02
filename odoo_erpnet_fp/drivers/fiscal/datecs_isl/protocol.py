@@ -214,7 +214,7 @@ class IslDevice:
         self,
         transport: Transport,
         operator_id: str = "1",
-        operator_password: str = "0000",
+        operator_password: str = "1",
         admin_id: str = "20",
         admin_password: str = "9999",
     ) -> None:
@@ -395,11 +395,15 @@ class IslDevice:
     ) -> DeviceStatus:
         op = operator_id or self.operator_id
         pw = operator_password or self.operator_password
-        # ISL DATA fields are separated by TAB (0x09) per protocol spec —
-        # see docs/PROTOCOL_REFERENCE.md §"Frame layout". Comma is a
-        # plain printable byte that the device treats as part of the
-        # operator-id token, triggering E401 'Syntax error'.
-        header = "\t".join([op, pw, unique_sale_number])
+        # OpenReceipt header format differs across Datecs ISL variants:
+        #   - C variant (DP-150 base, FW 3.00 BG): `op,pw,UNS,1` —
+        #     COMMA-separated, 4 fields, password default "1"
+        #   - X variant (DP-150X, FP-700X, FMP-350X): `op\tpw\tUNS\t1\t\t\t` —
+        #     TAB-separated, 6 fields, password default "0000"
+        # Default to C-style here (matches the original ErpNet.FP
+        # BgDatecsCIslFiscalPrinter); subclasses (vendors.py) override
+        # for X-style devices.
+        header = ",".join([op, pw, unique_sale_number, "1"])
         _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
