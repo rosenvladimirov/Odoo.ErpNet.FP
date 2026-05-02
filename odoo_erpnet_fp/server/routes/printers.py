@@ -151,6 +151,20 @@ async def printer_status(id: str, request: Request):
                         messages=msg_adapter.from_status(fs),
                     )
                 isl_status = await asyncio.to_thread(drv.get_status)
+                # Device отговаря — opportunistic populate на info
+                # (FW, serial, FM serial, TIN) ако още не е cached.
+                # Status обикновено успява първи (cheap), а info-то
+                # после е готов за /printers и UI-то.
+                if isl_status.ok:
+                    entry = registry.get(id)
+                    if (getattr(entry, "_isl_info_cache", None) is None
+                            and hasattr(drv, "detect")):
+                        try:
+                            info = await asyncio.to_thread(drv.detect)
+                            if info is not None:
+                                entry._isl_info_cache = info
+                        except Exception as exc:
+                            _logger.debug("opportunistic detect failed: %s", exc)
                 return DeviceStatusWithDateTime(
                     ok=isl_status.ok,
                     device_date_time=_now_iso(),
