@@ -15,7 +15,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ─── Enums (string values shipped over the wire) ──────────────────────
@@ -164,6 +164,23 @@ class Receipt(_CamelModel):
     items: list[ReceiptItem] = Field(default_factory=list)
     payments: list[Payment] = Field(default_factory=list)
     info: Optional[dict] = None  # vendor-specific extras
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_item_type_to_sale(cls, data):
+        # Pydantic discriminated unions REQUIRE the discriminator field
+        # to be present in input. Existing ErpNet.FP clients (in
+        # particular l10n_bg_erp_net_fp Odoo addon) omit `type` for
+        # sale lines because PROTOCOL.md says "sale is the default,
+        # type may be omitted". Add `type=sale` to any item that has
+        # no `type` so it routes to SaleItem.
+        if isinstance(data, dict):
+            items = data.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict) and "type" not in item:
+                        item["type"] = "sale"
+        return data
 
 
 class ReversalReceipt(Receipt):
