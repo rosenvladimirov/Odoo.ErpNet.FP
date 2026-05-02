@@ -41,6 +41,7 @@ http:
           # Add the Odoo hostnames that need to fetch this proxy from
           # browser code. Common defaults — extend as needed:
           - "https://www.odoo-shell.space"
+          - "https://www1.odoo-shell.space"
           - "https://demo-18.odoo-shell.space"
           - "https://rosenvladimirov-demo-l10n-bulgaria.odoo.com"
         accessControlAllowCredentials: true
