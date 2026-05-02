@@ -446,10 +446,22 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                             "E401" in (e.code or "") for e in st.errors):
                         _logger.warning(
                             "Native invoice rejected (E401) — "
+                            "aborting any half-opened receipt and "
                             "falling back to free-text comment header. "
                             "Errors: %s",
                             [(e.code, e.text) for e in st.errors],
                         )
+                        # Abort BEFORE retry — the failed native invoice
+                        # may have left the device half-way through the
+                        # OPEN sequence (some firmwares start printing
+                        # the invoice header before validating the full
+                        # payload). Without abort we'd see two receipts
+                        # come out: a partially-printed invoice header
+                        # plus the fallback fiscal receipt.
+                        try:
+                            await asyncio.to_thread(isl.abort_receipt)
+                        except Exception:
+                            _logger.debug("abort_receipt before fallback raised — likely no open receipt, continuing")
                         native = False
                         st = await asyncio.to_thread(
                             isl.open_receipt,
