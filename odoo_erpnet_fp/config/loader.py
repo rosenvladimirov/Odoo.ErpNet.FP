@@ -213,7 +213,10 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 tcp_host=entry.get("tcp_host"),
                 tcp_port=entry.get("tcp_port") and int(entry["tcp_port"]),
                 operator=str(entry.get("operator", "1")),
-                operator_password=str(entry.get("operator_password", "0000")),
+                # "1" matches C-variant DP-150 factory default; X-variant
+                # DP-150X / FP-700X devices need "0000" — set explicitly
+                # in config.yaml when needed.
+                operator_password=str(entry.get("operator_password", "1")),
                 till_number=int(entry.get("till_number", 1)),
                 nsale_prefix=entry.get("nsale_prefix"),
                 extras=entry.get("extras", {}),
@@ -336,7 +339,7 @@ def _erpnet_json_to_app_config(data: dict) -> AppConfig:
                 tcp_host=tcp_host,
                 tcp_port=tcp_port,
                 operator=str(entry.get("Operator", "1")),
-                operator_password=str(entry.get("OperatorPassword", "0000")),
+                operator_password=str(entry.get("OperatorPassword", "1")),
             )
         )
     return AppConfig(
