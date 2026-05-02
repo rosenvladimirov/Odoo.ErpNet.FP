@@ -302,7 +302,40 @@ class IslDevice:
         return "", status, b""
 
     def _read_one_frame(self, timeout: float) -> bytes:
-        """Collect bytes until ETX, dispatching NAK / SYN inline."""
+        """Collect bytes until ETX, dispatching NAK / SYN inline.
+
+        Uses transport-level `read_until_byte(ETX)` when available so
+        the read returns the instant the device finishes sending —
+        the previous chunk-then-loop approach paid the full 5s
+        timeout on every round-trip even though the device replied
+        in milliseconds.
+        """
+        read_until = getattr(self._t, "read_until_byte", None)
+        if read_until is not None:
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TransportTimeout(f"No complete frame within {timeout}s")
+                buf = read_until(fr.ETX, max_bytes=fr.DEFAULT_READ_BUF,
+                                 timeout=remaining)
+                if not buf:
+                    continue
+                # Strip leading NAK / SYN / stray bytes; if NAK appears
+                # at start, the spec requires us to surface it.
+                if buf[0] == fr.NAK:
+                    raise fr.ChecksumError("Slave sent NAK")
+                # Drop any leading bytes before PRE (incl. SYN keep-alives).
+                pre_idx = buf.find(bytes([fr.PRE]))
+                if pre_idx == -1:
+                    continue  # all garbage so far, keep reading
+                trimmed = buf[pre_idx:]
+                if trimmed and trimmed[-1] == fr.ETX:
+                    return bytes(trimmed)
+                # Partial frame that ended without ETX — treat as
+                # transport hiccup, retry within remaining timeout.
+
+        # Fallback for transports without read_until_byte (e.g. TCP).
         deadline = time.monotonic() + timeout
         buf = bytearray()
         while time.monotonic() < deadline:
@@ -314,9 +347,9 @@ class IslDevice:
                     if b == fr.NAK:
                         raise fr.ChecksumError("Slave sent NAK")
                     if b == fr.SYN:
-                        continue  # keep waiting
+                        continue
                     if b != fr.PRE:
-                        continue  # ignore stray bytes
+                        continue
                 buf.append(b)
                 if buf and buf[-1] == fr.ETX:
                     return bytes(buf)

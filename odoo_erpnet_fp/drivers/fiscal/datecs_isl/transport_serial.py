@@ -88,20 +88,20 @@ class SerialTransport(Transport):
 
     def read(self, n: int, timeout: float) -> bytes:
         ser = self._require()
-        deadline = time.monotonic() + timeout
-        chunks: list[bytes] = []
-        remaining = n
-        while remaining > 0:
-            now = time.monotonic()
-            if now >= deadline:
-                break
-            ser.timeout = deadline - now
-            chunk = ser.read(remaining)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+        ser.timeout = timeout
+        return ser.read(n)
+
+    def read_until_byte(self, terminator: int, max_bytes: int,
+                        timeout: float) -> bytes:
+        """Read bytes until `terminator` is seen or `max_bytes` reached.
+        Returns AS SOON AS terminator arrives — the key property the
+        ISL protocol layer needs to avoid eating the full 5s timeout
+        on every device round-trip.
+        """
+        ser = self._require()
+        ser.timeout = timeout
+        buf = ser.read_until(bytes([terminator]), size=max_bytes)
+        return buf
 
     def read_until(
         self, terminator: bytes, max_bytes: int, timeout: float
