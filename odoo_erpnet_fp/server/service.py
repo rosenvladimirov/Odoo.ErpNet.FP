@@ -191,35 +191,16 @@ class PrinterRegistry:
             driver = self.make_driver(printer_id)
             driver.open()
             try:
-                # Lazy capability detection — once per entry lifetime.
-                # Cached on the entry so we don't re-probe every request.
-                # IMPORTANT: detect() fires 2+ ISL commands which each
-                # take up to 5s × MAX_WRITE_RETRIES on an unresponsive
-                # device — that would freeze every status check too.
-                # We back off after a single failure for 60s so paper-
-                # out / cover-open devices don't drag every request.
+                # Restore previously cached IslDeviceInfo if we have it.
+                # We do NOT auto-run detect() here — that would fire 2+
+                # ISL commands that take up to 5s × retries on an
+                # unresponsive device, dragging /status checks to 30+s
+                # and freezing the calling browser. Routes that genuinely
+                # need capability info (e.g. invoice) call ensure_detect()
+                # explicitly with their own timeout budget.
                 cached = getattr(entry, "_isl_info_cache", None)
                 if cached is not None and hasattr(driver, "info"):
                     driver.info = cached
-                else:
-                    last_fail = getattr(entry, "_isl_detect_fail_at", 0.0)
-                    too_recent = (time.monotonic() - last_fail) < 60.0
-                    if (hasattr(driver, "detect")
-                            and getattr(driver, "info", None)
-                            and not getattr(driver.info, "firmware_version", "")
-                            and not too_recent):
-                        try:
-                            info = driver.detect()
-                            if info is not None:
-                                entry._isl_info_cache = info
-                                entry._isl_detect_fail_at = 0.0
-                            else:
-                                entry._isl_detect_fail_at = time.monotonic()
-                        except Exception as exc:
-                            _logger.warning(
-                                "ISL detect failed for %s: %s — "
-                                "backing off 60s", printer_id, exc)
-                            entry._isl_detect_fail_at = time.monotonic()
                 yield driver
             finally:
                 try:
