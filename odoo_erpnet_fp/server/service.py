@@ -447,10 +447,10 @@ class ReaderRegistry:
         for cfg in config.readers:
             if cfg.id in registry.readers:
                 raise ValueError(f"Duplicate reader id: {cfg.id!r}")
-            if cfg.transport not in ("hid", "serial"):
+            if cfg.transport not in ("hid", "serial", "external"):
                 raise ValueError(
                     f"Unknown reader transport {cfg.transport!r} on {cfg.id!r}; "
-                    f"expected 'hid' or 'serial'"
+                    f"expected 'hid', 'serial', or 'external'"
                 )
             bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks)
             registry.readers[cfg.id] = ReaderEntry(config=cfg, bus=bus)
@@ -484,6 +484,14 @@ class ReaderRegistry:
         loop = loop or asyncio.get_running_loop()
         for entry in self.readers.values():
             entry.bus._loop = loop  # bind bus to running loop so publish works
+            # external transport — bus only, no in-proc driver. Scans arrive
+            # via POST /readers/{id}/inject from a host-side listener.
+            if entry.config.transport == "external":
+                _logger.info(
+                    "Reader %r is external — listening on /readers/%s/inject",
+                    entry.config.id, entry.config.id,
+                )
+                continue
             try:
                 driver = self._make_driver(entry.config)
                 driver.set_listener(entry.bus.publish_threadsafe)

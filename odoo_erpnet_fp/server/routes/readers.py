@@ -80,11 +80,19 @@ async def list_readers(request: Request):
             device_path=entry.config.device_path,
             port=entry.config.port,
             webhooks=len(entry.config.webhooks),
-            running=entry.driver.is_running if entry.driver else False,
+            running=_is_running(entry),
             subscriber_count=entry.bus.subscriber_count,
         )
         for rid, entry in reg.readers.items()
     }
+
+
+def _is_running(entry) -> bool:
+    # external readers have no in-proc driver — they're "running" as long as
+    # the bus is alive (which it always is once registered).
+    if entry.config.transport == "external":
+        return True
+    return entry.driver.is_running if entry.driver else False
 
 
 @router.get("/{id}", response_model=ReaderInfoResp)
@@ -97,7 +105,7 @@ async def reader_info(id: str, request: Request):
         device_path=entry.config.device_path,
         port=entry.config.port,
         webhooks=len(entry.config.webhooks),
-        running=entry.driver.is_running if entry.driver else False,
+        running=_is_running(entry),
         subscriber_count=entry.bus.subscriber_count,
     )
 
@@ -110,6 +118,36 @@ async def reader_last(id: str, request: Request):
     if last is None:
         return None
     return ScanResp(**last.to_json())
+
+
+class InjectReq(BaseModel):
+    barcode: str
+
+
+@router.post("/{id}/inject", response_model=ScanResp)
+async def reader_inject(id: str, req: InjectReq, request: Request):
+    """External-transport injection: a host-side listener POSTs each scan
+    here. The barcode is published to the same bus that hid/serial drivers
+    use, so WebSocket/SSE/long-poll subscribers receive it identically.
+
+    Use this when the reader cannot be opened from inside the proxy (e.g.
+    BLE HID device that the host's input stack dynamically grabs).
+    """
+    reg = _require(request, id)
+    entry = reg.get(id)
+    if entry.config.transport != "external":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Reader {id!r} is transport={entry.config.transport!r}; "
+            "/inject is only valid on external readers",
+        )
+    barcode = (req.barcode or "").strip()
+    if not barcode:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty barcode")
+    from ...drivers.readers.common import BarcodeScan
+    scan = BarcodeScan(reader_id=id, barcode=barcode)
+    entry.bus.publish_threadsafe(scan)
+    return ScanResp(**scan.to_json())
 
 
 @router.get("/{id}/next", response_model=Optional[ScanResp])
