@@ -1,0 +1,156 @@
+{
+  "uid": "erpnet-fp-overview",
+  "title": "ErpNet.FP — Overview",
+  "tags": ["erpnet", "fiscal-printer", "pos"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Proxy version",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "erpnet_fp_info_total",
+        "legendFormat": "{{version}}",
+        "refId": "A"
+      }],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "name",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "HTTP requests / s",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "targets": [{
+        "expr": "sum(rate(erpnet_fp_http_requests_total[1m]))",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 50 },
+            { "color": "red", "value": 100 }
+          ]}
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Total scans (1h)",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "targets": [{
+        "expr": "sum(increase(erpnet_fp_reader_scans_total[1h]))",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "decimals": 0 } }
+    },
+    {
+      "type": "stat",
+      "title": "Active subscribers",
+      "id": 4,
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "targets": [{
+        "expr": "sum(erpnet_fp_reader_subscribers)",
+        "refId": "A"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP requests by path",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "sum by (path) (rate(erpnet_fp_http_requests_total[1m]))",
+        "legendFormat": "{{path}}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP latency p50 / p95 / p99 (per path)",
+      "id": 11,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, path) (rate(erpnet_fp_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{path}}", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le, path) (rate(erpnet_fp_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{path}}", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le, path) (rate(erpnet_fp_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99 {{path}}", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Barcode scans / minute",
+      "id": 20,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{
+        "expr": "sum by (reader_id) (rate(erpnet_fp_reader_scans_total[1m]) * 60)",
+        "legendFormat": "{{reader_id}}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "/min" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Last weight reading (kg)",
+      "id": 21,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{
+        "expr": "erpnet_fp_scale_last_weight_kg",
+        "legendFormat": "{{scale_id}}",
+        "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "unit": "kg", "decimals": 3 } }
+    },
+    {
+      "type": "table",
+      "title": "Scale read outcomes (1h)",
+      "id": 30,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "targets": [{
+        "expr": "sum by (scale_id, outcome) (increase(erpnet_fp_scale_reads_total[1h]))",
+        "format": "table",
+        "instant": true,
+        "refId": "A"
+      }],
+      "transformations": [{ "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true, "service": true } }}]
+    },
+    {
+      "type": "table",
+      "title": "Display writes (1h)",
+      "id": 31,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "targets": [{
+        "expr": "sum by (display_id, action, outcome) (increase(erpnet_fp_display_writes_total[1h]))",
+        "format": "table",
+        "instant": true,
+        "refId": "A"
+      }],
+      "transformations": [{ "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true, "service": true } }}]
+    },
+    {
+      "type": "stat",
+      "title": "Printer status failures (1h)",
+      "id": 32,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "targets": [{
+        "expr": "sum by (printer_id, reason) (increase(erpnet_fp_printer_status_failures_total[1h]))",
+        "legendFormat": "{{printer_id}} ({{reason}})",
+        "refId": "A"
+      }]
+    }
+  ]
+}

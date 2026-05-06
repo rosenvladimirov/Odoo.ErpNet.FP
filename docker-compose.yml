@@ -104,6 +104,96 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ─── Local Prometheus — memory-capped, 7-day retention ──────────
+  # Scrapes ONLY the proxy's /metrics endpoint. Bound to localhost
+  # only so it doesn't show up on any public network. Together with
+  # Grafana below adds ~220 MB RAM to the stack.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: erpnet-prometheus
+    restart: unless-stopped
+    user: "65534:65534"   # nobody
+    networks:
+      - erpnet
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.retention.size=512MB"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.listen-address=:9090"
+    ports:
+      - "127.0.0.1:9090:9090"   # local-only access
+    mem_limit: 192m
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─── Local Grafana — anonymous viewer, pre-loaded dashboard ─────
+  # Open http://localhost:3001 in browser. No login needed; default
+  # role is Viewer. Edits / new dashboards require admin login
+  # (admin / change-me unless GF_SECURITY_ADMIN_PASSWORD is set).
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    container_name: erpnet-grafana
+    restart: unless-stopped
+    user: "472:472"   # grafana
+    networks:
+      - erpnet
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_USERS_DEFAULT_THEME: "dark"
+      GF_INSTALL_PLUGINS: ""
+      GF_LOG_LEVEL: "warn"
+      GF_SERVER_ROOT_URL: "https://grafana.lan.mcpworks.net"
+      GF_SERVER_DOMAIN: "grafana.lan.mcpworks.net"
+    ports:
+      - "127.0.0.1:3001:3000"   # local-only fallback; 3001 to avoid Odoo collision
+    mem_limit: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    depends_on:
+      - prometheus
+    labels:
+      # Wildcard cert *.lan.mcpworks.net is configured globally on the
+      # websecure entrypoint, so we don't repeat resolver/domains here.
+      # `priority: 100` puts the grafana router AHEAD of the proxy's
+      # erpnet-lan router (which matches any *.lan.mcpworks.net via
+      # HostRegexp). Without it, requests to grafana.lan.mcpworks.net
+      # fall into the proxy and return 404.
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.lan.mcpworks.net`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.routers.grafana.priority=100"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
 networks:
   erpnet:
     name: erpnet
