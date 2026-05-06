@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse
 
 from ..config.loader import AppConfig, load_config
 from .service import (
+    DisplayRegistry,
     PinpadRegistry,
     PrinterRegistry,
     ReaderRegistry,
@@ -50,10 +51,12 @@ def create_app(config: AppConfig) -> FastAPI:
         # WebSocket / SSE / webhook subscribers. Failures are logged
         # per-reader; one bad device doesn't block server startup.
         await reader_registry.start_all()
+        await display_registry.start_all()
         try:
             yield
         finally:
             await reader_registry.stop_all()
+            await display_registry.stop_all()
 
     app = FastAPI(
         title="Odoo.ErpNet.FP",
@@ -71,10 +74,12 @@ def create_app(config: AppConfig) -> FastAPI:
     pinpad_registry = PinpadRegistry.from_config(config)
     scale_registry = ScaleRegistry.from_config(config)
     reader_registry = ReaderRegistry.from_config(config)
+    display_registry = DisplayRegistry.from_config(config)
     app.state.registry = registry
     app.state.pinpad_registry = pinpad_registry
     app.state.scale_registry = scale_registry
     app.state.reader_registry = reader_registry
+    app.state.display_registry = display_registry
     app.state.config = config
 
     @app.middleware("http")
@@ -103,6 +108,11 @@ def create_app(config: AppConfig) -> FastAPI:
         )
         return response
 
+    from .routes.displays import router as displays_router
+    from .routes.iot_compat import (
+        v18_router as iot_compat_v18_router,
+        v19_router as iot_compat_v19_router,
+    )
     from .routes.pinpads import router as pinpads_router
     from .routes.printers import router as printers_router
     from .routes.readers import router as readers_router
@@ -111,6 +121,12 @@ def create_app(config: AppConfig) -> FastAPI:
     app.include_router(pinpads_router)
     app.include_router(scales_router)
     app.include_router(readers_router)
+    app.include_router(displays_router)
+    # Native Odoo IoT Box compatibility — same handlers, two prefixes
+    # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
+    # and Odoo 19+ (/iot_drivers) clients.
+    app.include_router(iot_compat_v18_router)
+    app.include_router(iot_compat_v19_router)
 
     @app.get("/healthz")
     def healthz():
@@ -120,6 +136,7 @@ def create_app(config: AppConfig) -> FastAPI:
             "pinpads": list(pinpad_registry.pinpads.keys()),
             "scales": list(scale_registry.scales.keys()),
             "readers": list(reader_registry.readers.keys()),
+            "displays": list(display_registry.displays.keys()),
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the

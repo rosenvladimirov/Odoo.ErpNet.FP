@@ -102,6 +102,24 @@ class ReaderEventBus:
         if self.webhooks:
             asyncio.create_task(self._deliver_webhooks(scan))
 
+        # 4. Native Odoo IoT long-poll subscribers — push barcode as
+        #    iot.device event under identifier `reader.<reader_id>`.
+        try:
+            from .routes.iot_compat import get_iot_sessions
+            await get_iot_sessions().push(
+                f"reader.{self.reader_id}",
+                {
+                    "result": scan.barcode,
+                    "value": scan.barcode,  # legacy alias
+                    "status": {"status": "success"},
+                },
+            )
+        except Exception:  # noqa: BLE001
+            _logger.debug(
+                "Reader %r IoT push failed (compat layer not loaded?)",
+                self.reader_id, exc_info=True,
+            )
+
     # ─── History access ─────────────────────────────────────
 
     def last_scan(self) -> Optional[BarcodeScan]:

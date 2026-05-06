@@ -75,3 +75,113 @@ printers:
   #   tcp_port: 9100
   #   operator: "1"
   #   operator_password: "0000"
+
+# ─── Weighing scales ────────────────────────────────────────────
+#
+# Supported drivers (de-facto BG market coverage):
+#   cas              — CAS PR-II / PD-II / PSD / PDS / PR-C + ALL
+#                      CAS-compatible clones. Aliases: cas.pr2, cas.pd2,
+#                      elicom.cash47, elicom.evl, datecs.cas
+#                      (Elicom EVL must be in CASH47 jumper mode;
+#                       Datecs scales must have "CAS" protocol selected
+#                       in the menu — both are factory defaults on BG market.)
+#   ascii_continuous — Generic ASCII broadcast scales — passive listener.
+#                      Aliases: acs, jcs, generic, ascii, adam.
+#                      Covers ACS 6/15, ACS 15/30, JCS, no-name OEM.
+#   toledo_8217      — Mettler-Toledo industrial (Ariva-S, Viva).
+#                      Aliases: mettler.toledo.8217, ariva-s.
+
+# scales:
+#   # CAS PR-II 6/15 kg counter scale (~250 BGN, itgstore.bg)
+#   - id: cas1
+#     driver: cas
+#     port: /dev/ttyUSB1
+#     baudrate: 9600
+#
+#   # Elicom EVL in CASH47 mode (~280 BGN, BG-made)
+#   - id: elicom1
+#     driver: elicom.evl
+#     port: /dev/ttyUSB2
+#     baudrate: 9600
+#
+#   # ACS 6/15 budget OEM (~180 BGN — sends continuous ASCII stream)
+#   - id: acs1
+#     driver: acs
+#     port: /dev/ttyUSB3
+#     baudrate: 9600
+#
+#   # Mettler-Toledo Ariva-S (industrial, request-response)
+#   - id: tol1
+#     driver: toledo_8217
+#     port: /dev/ttyUSB4
+#     baudrate: 9600
+
+# ─── Barcode readers ─────────────────────────────────────────────
+#
+# Two transport types:
+#   hid      — USB HID keyboard-emulator; `device_path` = /dev/input/eventN
+#   serial   — RS-232 / USB-CDC ACM; `port` = /dev/ttyACM? or /dev/ttyUSB?
+#   external — host-side listener POSTs scans to /readers/{id}/inject
+#              (workaround for BLE HID + long-lived proxy fd kernel quirk —
+#               see memory/feedback_ble_hid_evdev_proxy_blocked.md)
+#
+# RECOMMENDATION: prefer `serial` (USB CDC) over `hid` for long-lived
+# proxies. HID evdev fd-s in containerised processes can become "deaf"
+# under load (kernel quirk); serial /dev/ttyACM? has none of that.
+
+# readers:
+#   # Honeywell Voyager XP 1470g 2D — USB CDC ACM mode (recommended).
+#   # Out of the box the scanner is in USB HID Keyboard mode. Switch it
+#   # to USB CDC by scanning these configuration barcodes from the User
+#   # Guide (in order):
+#   #   1) *USB Serial Driver Required*  (or *USB Serial Emulation*)
+#   #   2) *9600 Baud*
+#   #   3) *Eight (8) Data Bits, No Parity, One (1) Stop Bit*
+#   #   4) *CR/LF Suffix*
+#   # After a replug the scanner appears as /dev/ttyACM0 (vendor 0c2e).
+#   - id: honeywell1
+#     transport: serial
+#     port: /dev/ttyACM0
+#     baudrate: 9600
+#     encoding: ascii
+#     webhooks:
+#       - https://erp.example.com/erp_net_fp/reader/scan
+#
+#   # USB HID keyboard scanner (Symbol/Zebra/Newland default mode).
+#   # Use only on dev/desktop sessions — not on long-lived proxy hosts.
+#   - id: usb1
+#     transport: hid
+#     device_path: /dev/input/by-id/usb-Symbol_..._S_N:5680...:3-event-kbd
+#     grab: true
+#
+#   # BLE HID scanner — proxy doesn't open the device. A host systemd
+#   # service opens /dev/input/eventN and POSTs each scan to
+#   # /readers/bt1/inject. See memory/feedback_ble_hid_evdev_proxy_blocked.md
+#   - id: bt1
+#     transport: external
+
+# ─── Customer-facing pole displays ──────────────────────────────
+#
+# Supported drivers:
+#   datecs.dpd201   — Datecs DPD-201 + ESC/POS-compatible 2×20 VFD
+#                     pole displays (ICD CD-5220, Birch DSP-V9 in
+#                     default mode, Bematech PDX-3000 in DSP800
+#                     emulation mode). Same byte protocol works
+#                     across all of them.
+#
+# Coming later: posiflex.pd2x00, escpos.generic
+#
+# Encoding:
+#   cp437     USA / standard Europe (Latin)              — DPD-201 sw#6 OPEN
+#   cp850     multilingual Latin-1 (Western European)    — DPD-201 sw#6 SHORT
+#   cp1251    Cyrillic — only on DPD-201 in "DATECS ECR" jumper mode
+#             (sw#7 SHORT + sw#1..6 OPEN; firmware accepts cp1251 directly)
+
+# displays:
+#   - id: dpd1
+#     driver: datecs.dpd201
+#     port: /dev/ttyUSB1            # check `dmesg | grep ttyUSB` after plug-in
+#     baudrate: 9600                # match jumper switches #1+#2 on the PCB
+#     encoding: cp1251              # for Bulgarian; use cp437/cp850 for Latin
+#     chars_per_line: 20
+#     lines: 2

@@ -31,3 +31,6 @@ odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/*
 !odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/.gitkeep
 .env
 letsencrypt/
+
+# Runtime data — local state, never commit
+data/

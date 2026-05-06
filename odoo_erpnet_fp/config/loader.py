@@ -145,6 +145,31 @@ class ScaleConfig:
 
 
 @dataclass
+class DisplayConfig:
+    """Customer-facing pole display entry.
+
+    `driver` selects the implementation:
+        datecs.dpd201    — Datecs DPD-201 + ESC/POS-compatible clones
+                           (ICD CD-5220, Birch DSP-V9, Bematech PDX-3000)
+
+    `encoding` controls how text is encoded before sending — pick the
+    codec that matches the device's selected character code table:
+        cp437     — USA / standard Europe (Latin)
+        cp850     — multilingual Latin-1 (Western European)
+        cp1251    — Cyrillic; only works on DPD-201 in "DATECS ECR" jumper mode
+    """
+
+    id: str
+    driver: str = "datecs.dpd201"
+    port: Optional[str] = None
+    baudrate: int = 9600
+    encoding: str = "cp437"
+    chars_per_line: int = 20
+    lines: int = 2
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ReaderConfig:
     """Barcode reader entry — push-model (no polling).
 
@@ -175,6 +200,7 @@ class AppConfig:
     pinpads: list[PinpadConfig] = field(default_factory=list)
     scales: list[ScaleConfig] = field(default_factory=list)
     readers: list[ReaderConfig] = field(default_factory=list)
+    displays: list[DisplayConfig] = field(default_factory=list)
     auto_detect: bool = False
 
 
@@ -263,12 +289,28 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    displays: list[DisplayConfig] = []
+    for entry in data.get("displays", []) or []:
+        displays.append(
+            DisplayConfig(
+                id=str(entry["id"]),
+                driver=entry.get("driver", "datecs.dpd201"),
+                port=entry.get("port"),
+                baudrate=int(entry.get("baudrate", 9600)),
+                encoding=entry.get("encoding", "cp437"),
+                chars_per_line=int(entry.get("chars_per_line", 20)),
+                lines=int(entry.get("lines", 2)),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     return AppConfig(
         server=server,
         printers=printers,
         pinpads=pinpads,
         scales=scales,
         readers=readers,
+        displays=displays,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 

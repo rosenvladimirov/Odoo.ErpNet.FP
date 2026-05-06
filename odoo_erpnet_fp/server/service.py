@@ -36,10 +36,15 @@ from typing import Any, Optional, Union
 
 from ..config.loader import (
     AppConfig,
+    DisplayConfig,
     PinpadConfig,
     PrinterConfig,
     ReaderConfig,
     ScaleConfig,
+)
+from ..drivers.customer_displays import (
+    CustomerDisplay,
+    DatecsDpd201,
 )
 from ..drivers.pinpad.datecs_pay import DatecsPayPinpad
 from ..drivers.readers import (
@@ -48,7 +53,16 @@ from ..drivers.readers import (
     HidBarcodeReader,
     SerialBarcodeReader,
 )
-from ..drivers.scales import Toledo8217Scale
+from ..drivers.scales import (
+    AsciiContinuousScale,
+    CasPrIIScale,
+    Toledo8217Scale,
+)
+
+# Map driver name → CustomerDisplay subclass.
+_DISPLAY_DRIVERS: dict[str, type[CustomerDisplay]] = {
+    "datecs.dpd201": DatecsDpd201,
+}
 from .reader_bus import ReaderEventBus
 from ..drivers.fiscal.datecs_isl import (
     DaisyIslDevice,
@@ -361,10 +375,31 @@ class ScaleEntry:
 
 
 _SCALE_DRIVERS = {
+    # Mettler-Toledo 8217 — industrial scales (Ariva-S, Viva, etc.)
     "toledo_8217": Toledo8217Scale,
-    # Aliases — Mettler scales using Toledo 8217 protocol
     "mettler.toledo.8217": Toledo8217Scale,
     "ariva-s": Toledo8217Scale,
+
+    # CAS PR-II + all CAS-compatible BG market scales (~75% coverage):
+    # native CAS, Elicom EVL in CASH47 jumper mode, Datecs in CAS mode.
+    "cas": CasPrIIScale,
+    "cas.pr2": CasPrIIScale,
+    "cas.pd2": CasPrIIScale,
+    "cas.psd": CasPrIIScale,
+    "cas.pds": CasPrIIScale,
+    "cas.pr_c": CasPrIIScale,
+    "elicom.cash47": CasPrIIScale,
+    "elicom.evl": CasPrIIScale,
+    "datecs.cas": CasPrIIScale,
+
+    # Generic ASCII continuous-stream scales — passive listener.
+    # Covers ACS 6/15, ACS 15/30, JCS, no-name OEM Chinese scales.
+    "adam": AsciiContinuousScale,
+    "ascii": AsciiContinuousScale,
+    "ascii_continuous": AsciiContinuousScale,
+    "acs": AsciiContinuousScale,
+    "jcs": AsciiContinuousScale,
+    "generic": AsciiContinuousScale,
 }
 
 
@@ -398,7 +433,8 @@ class ScaleRegistry:
     def has(self, scale_id: str) -> bool:
         return scale_id in self.scales
 
-    def make_scale(self, scale_id: str) -> Toledo8217Scale:
+    def make_scale(self, scale_id: str):
+        """Returns one of: Toledo8217Scale, CasPrIIScale, AsciiContinuousScale."""
         entry = self.get(scale_id)
         cls = _SCALE_DRIVERS[entry.config.driver]
         return cls(port=entry.config.port, baudrate=entry.config.baudrate)
@@ -541,3 +577,100 @@ class ReaderRegistry:
             baudrate=cfg.baudrate,
             encoding=cfg.encoding,
         )
+
+
+# ─── Customer-display registry — opened on demand, per-id lock ───
+
+
+@dataclass
+class DisplayEntry:
+    config: DisplayConfig
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    driver: Optional[CustomerDisplay] = None
+
+
+class DisplayRegistry:
+    """Customer-facing pole displays (VFD/LCD).
+
+    Unlike printers, displays have no readback channel — they're write-
+    only. The registry holds an open serial port per display for the
+    lifetime of the process to avoid the open/close jitter that kills
+    the first byte of each command on cheap clones.
+    """
+
+    def __init__(self) -> None:
+        self.displays: dict[str, DisplayEntry] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig) -> "DisplayRegistry":
+        registry = cls()
+        for cfg in config.displays:
+            if cfg.id in registry.displays:
+                raise ValueError(f"Duplicate display id: {cfg.id!r}")
+            if cfg.driver not in _DISPLAY_DRIVERS:
+                raise ValueError(
+                    f"Unsupported display driver {cfg.driver!r}; "
+                    f"known: {', '.join(sorted(_DISPLAY_DRIVERS))}"
+                )
+            registry.displays[cfg.id] = DisplayEntry(config=cfg)
+            _logger.info(
+                "Registered display %r — driver=%s port=%s encoding=%s",
+                cfg.id, cfg.driver, cfg.port, cfg.encoding,
+            )
+        return registry
+
+    def get(self, display_id: str) -> DisplayEntry:
+        if display_id not in self.displays:
+            raise KeyError(display_id)
+        return self.displays[display_id]
+
+    def has(self, display_id: str) -> bool:
+        return display_id in self.displays
+
+    def _make_driver(self, cfg: DisplayConfig) -> CustomerDisplay:
+        cls = _DISPLAY_DRIVERS[cfg.driver]
+        return cls(
+            display_id=cfg.id,
+            port=cfg.port,
+            baudrate=cfg.baudrate,
+            encoding=cfg.encoding,
+            chars_per_line=cfg.chars_per_line,
+            lines=cfg.lines,
+        )
+
+    async def start_all(self) -> None:
+        """Open every configured display once at startup. Failures are
+        logged per-display; the proxy keeps running with the rest."""
+        for entry in self.displays.values():
+            try:
+                drv = self._make_driver(entry.config)
+                drv.open()
+                entry.driver = drv
+            except Exception:
+                _logger.exception(
+                    "Failed to open display %r", entry.config.id
+                )
+
+    async def stop_all(self) -> None:
+        for entry in self.displays.values():
+            if entry.driver is None:
+                continue
+            try:
+                entry.driver.close()
+            except Exception:
+                _logger.exception(
+                    "Failed to close display %r", entry.config.id
+                )
+            entry.driver = None
+
+    @asynccontextmanager
+    async def with_display(self, display_id: str):
+        entry = self.get(display_id)
+        async with entry.lock:
+            if entry.driver is None:
+                # Lazy reopen if start_all() failed (e.g. cable was
+                # unplugged at boot, plugged in later).
+                drv = self._make_driver(entry.config)
+                drv.open()
+                entry.driver = drv
+            yield entry.driver
