@@ -124,6 +124,41 @@ class InjectReq(BaseModel):
     barcode: str
 
 
+@router.post("/{id}/reset")
+async def reader_reset(id: str, request: Request):
+    """Force the reader's driver to drop its current fd and reopen
+    the device. Intended as a fallback button — e.g. the hid2serial
+    tray menu calls this when the operator restarts the daemon and
+    wants the proxy to re-attach immediately, without waiting for
+    pyserial to notice the dead pty.
+
+    Only meaningful for in-proc drivers (transport=serial / hid).
+    For external readers (transport=external) this is a no-op.
+    """
+    reg = _require(request, id)
+    entry = reg.get(id)
+    if entry.driver is None:
+        return {
+            "ok": True,
+            "id": id,
+            "transport": entry.config.transport,
+            "message": "no in-proc driver — nothing to reset",
+        }
+    reset_fn = getattr(entry.driver, "reset", None)
+    if not callable(reset_fn):
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            f"Driver for reader {id!r} does not support reset",
+        )
+    reset_fn()
+    return {
+        "ok": True,
+        "id": id,
+        "transport": entry.config.transport,
+        "message": "driver reset triggered",
+    }
+
+
 @router.post("/{id}/inject", response_model=ScanResp)
 async def reader_inject(id: str, req: InjectReq, request: Request):
     """External-transport injection: a host-side listener POSTs each scan

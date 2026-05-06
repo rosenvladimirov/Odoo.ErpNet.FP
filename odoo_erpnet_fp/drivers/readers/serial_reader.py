@@ -21,11 +21,13 @@ except ImportError:  # pragma: no cover
 
 from .common import BarcodeReader
 
-# Reopen the serial port for up to this many seconds after an I/O
-# error before giving up. Long enough to ride out an hid2serial
-# daemon restart cycle (systemd Restart=always with ~3 s gap), with
-# headroom for slower hardware or extended BLE re-pair time.
-_RECONNECT_TIMEOUT_S = 30.0
+# Reconnect retries do not give up — a sleeping BLE scanner can take
+# minutes to wake up and the user expects "scan to resume" to just
+# work without manually restarting the proxy. The retry loop emits a
+# heartbeat log every _RECONNECT_HEARTBEAT_S seconds so the operator
+# can see we are still trying instead of silently spinning.
+_RECONNECT_BACKOFF_MAX_S = 5.0
+_RECONNECT_HEARTBEAT_S = 30.0
 
 _logger = logging.getLogger(__name__)
 
@@ -60,6 +62,12 @@ class SerialBarcodeReader(BarcodeReader):
         self._conn: Optional["serial.Serial"] = None
         self._thread: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
+        # Set externally (e.g. by /readers/{id}/reset) to force the
+        # read loop to drop its current fd and re-enter _reopen — even
+        # if pyserial isn't yet seeing an I/O error. Useful when the
+        # operator (via tray button) knows the daemon was restarted
+        # and wants to short-circuit the auto-detection.
+        self._force_reopen_evt = threading.Event()
 
     def start(self) -> None:
         if self._running:
@@ -85,6 +93,26 @@ class SerialBarcodeReader(BarcodeReader):
             self.reader_id, self.port, self.baudrate,
         )
 
+    def reset(self) -> None:
+        """Public hook — force the read loop to drop its current fd
+        and reopen the port from scratch. Called from
+        POST /readers/{id}/reset (tray menu, ops dashboard button).
+        Safe to call concurrently; the loop checks the flag on its
+        next read iteration and re-enters _reopen.
+        """
+        self._force_reopen_evt.set()
+        # Also close the underlying fd so any blocked read returns
+        # immediately with SerialException, which the loop then
+        # treats as a normal disconnect.
+        try:
+            if self._conn is not None:
+                self._conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _logger.info(
+            "Serial reader %r: external reset requested", self.reader_id,
+        )
+
     def stop(self) -> None:
         self._stop_evt.set()
         self._running = False
@@ -99,12 +127,17 @@ class SerialBarcodeReader(BarcodeReader):
         _logger.info("Serial reader %r stopped", self.reader_id)
 
     def _reopen(self) -> bool:
-        """Close current serial and reopen it, retrying with backoff.
+        """Close current serial and reopen it, retrying indefinitely.
 
-        Returns True if the port was reopened, False if we hit the
-        timeout or were asked to stop. Used both when the device path
-        disappears (hid2serial daemon restarting / BLE scanner asleep)
-        and when pyserial reports an I/O error on read.
+        Returns True when the port is reopened, False only if we are
+        asked to stop. Never gives up on its own — a BLE scanner
+        sleeping for hours and then waking up still resumes scanning
+        without operator intervention.
+
+        Logging strategy: each retry is DEBUG (so it's available when
+        diagnosing) but every _RECONNECT_HEARTBEAT_S we also emit a
+        single INFO heartbeat with attempt count + last error, so the
+        operator sees a clear "still waiting" trail in the regular log.
         """
         try:
             if self._conn is not None:
@@ -114,10 +147,13 @@ class SerialBarcodeReader(BarcodeReader):
         finally:
             self._conn = None
 
-        deadline = time.monotonic() + _RECONNECT_TIMEOUT_S
         delay = 1.0
-        while time.monotonic() < deadline and not self._stop_evt.is_set():
+        attempt = 0
+        last_error: str = ""
+        last_heartbeat = time.monotonic()
+        while not self._stop_evt.is_set():
             time.sleep(delay)
+            attempt += 1
             try:
                 self._conn = serial.Serial(
                     port=self.port,
@@ -128,33 +164,60 @@ class SerialBarcodeReader(BarcodeReader):
                     timeout=0.5,
                 )
                 _logger.info(
-                    "Serial reader %r: reconnected to %s",
-                    self.reader_id, self.port,
+                    "Serial reader %r: reconnected to %s after %d attempt(s)",
+                    self.reader_id, self.port, attempt,
                 )
                 return True
             except (serial.SerialException, OSError) as exc:
+                last_error = str(exc)
                 _logger.debug(
                     "Serial reader %r: reopen failed (%s), retrying in %.0fs",
                     self.reader_id, exc, delay,
                 )
-                delay = min(delay + 1.0, 5.0)
+                now = time.monotonic()
+                if now - last_heartbeat >= _RECONNECT_HEARTBEAT_S:
+                    _logger.info(
+                        "Serial reader %r: still waiting for %s "
+                        "(attempt %d, last error: %s)",
+                        self.reader_id, self.port, attempt, last_error,
+                    )
+                    last_heartbeat = now
+                delay = min(delay + 1.0, _RECONNECT_BACKOFF_MAX_S)
         return False
 
     def _loop(self) -> None:
         buf = bytearray()
         try:
             while not self._stop_evt.is_set():
+                if self._force_reopen_evt.is_set():
+                    self._force_reopen_evt.clear()
+                    _logger.warning(
+                        "Serial reader %r: forced reopen requested — reconnecting",
+                        self.reader_id,
+                    )
+                    buf.clear()
+                    if not self._reopen():
+                        break
+                    continue
                 try:
                     chunk = self._conn.read(64)  # type: ignore[union-attr]
-                except (serial.SerialException, OSError) as exc:
+                except (serial.SerialException, OSError, TypeError, AttributeError) as exc:
+                    # TypeError / AttributeError happen when an external
+                    # caller closes self._conn while we're blocked in
+                    # read() (pyserial sets self.fd = None during close).
+                    # Treat it the same as a normal disconnect and
+                    # re-enter the reopen loop.
                     _logger.warning(
                         "Serial reader %r: read failed (%s) — reconnecting",
                         self.reader_id, exc,
                     )
                     buf.clear()  # drop partial frame; new pty starts fresh
                     if not self._reopen():
-                        _logger.error(
-                            "Serial reader %r: reopen timed out, giving up",
+                        # _reopen returned False only because we were
+                        # asked to stop — this is clean shutdown, not
+                        # an error.
+                        _logger.info(
+                            "Serial reader %r: shutdown requested during reconnect",
                             self.reader_id,
                         )
                         break
