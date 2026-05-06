@@ -34,40 +34,25 @@
     align-items: center;
     gap: 1rem;
   }
-  header h1 {
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
+  header h1 { font-size: 1.125rem; font-weight: 600; }
   header .version {
-    color: var(--text-dim);
-    font-size: 0.875rem;
-    margin-left: auto;
-  }
-  .container {
-    max-width: 1200px;
-    margin: 1.5rem auto;
-    padding: 0 1.5rem;
-  }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-  .toolbar .ago {
-    color: var(--text-dim);
-    font-size: 0.875rem;
-    margin-left: auto;
-  }
-  button {
     background: var(--surface-hi);
-    color: var(--text);
-    border: 1px solid var(--muted);
-    border-radius: 6px;
-    padding: 0.5rem 0.875rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: background 0.15s;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-family: monospace;
+  }
+  header .summary { color: var(--text-dim); font-size: 0.875rem; margin-left: auto; }
+  .container { max-width: 1200px; margin: 1.5rem auto; padding: 0 1.5rem; }
+  .toolbar {
+    display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;
+  }
+  .toolbar .ago { color: var(--text-dim); font-size: 0.875rem; margin-left: auto; }
+  button {
+    background: var(--surface-hi); color: var(--text); border: 1px solid var(--muted);
+    border-radius: 6px; padding: 0.5rem 0.875rem; font-size: 0.875rem;
+    cursor: pointer; transition: background 0.15s;
   }
   button:hover { background: #475569; }
   button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
@@ -75,6 +60,26 @@
   button.danger { background: var(--err); border-color: var(--err); }
   button.warn { background: var(--warn); color: var(--bg); border-color: var(--warn); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+
+  section.devices {
+    margin-bottom: 1.5rem;
+  }
+  section.devices h2 {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.95rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-dim);
+    margin-bottom: 0.75rem;
+  }
+  section.devices h2 .count {
+    background: var(--surface-hi);
+    color: var(--text);
+    font-size: 0.7rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    text-transform: none;
+    letter-spacing: 0;
+  }
 
   .grid {
     display: grid;
@@ -82,129 +87,77 @@
     gap: 1rem;
   }
   .card {
-    background: var(--surface);
-    border: 1px solid var(--surface-hi);
-    border-radius: 10px;
-    overflow: hidden;
+    background: var(--surface); border: 1px solid var(--surface-hi);
+    border-radius: 10px; overflow: hidden;
   }
   .card-header {
-    padding: 1rem 1.25rem;
+    padding: 0.75rem 1rem; background: rgba(0,0,0,0.15);
     border-bottom: 1px solid var(--surface-hi);
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+    display: flex; align-items: center; gap: 0.5rem;
   }
-  .card-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-  }
+  .card-header h3 { font-size: 1rem; font-weight: 600; }
   .card-header .uri {
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-    margin-left: auto;
+    color: var(--text-dim); font-size: 0.75rem;
+    margin-left: auto; font-family: monospace;
   }
-  .card-body {
-    padding: 1rem 1.25rem;
-  }
+  .card-body { padding: 1rem; }
   .card-body dl {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.375rem 1rem;
-    font-size: 0.875rem;
+    display: grid; grid-template-columns: max-content 1fr;
+    gap: 0.25rem 0.875rem; font-size: 0.875rem;
   }
-  .card-body dt {
-    color: var(--text-dim);
-    font-weight: 500;
-  }
-  .card-body dd {
-    word-break: break-word;
-  }
+  .card-body dt { color: var(--text-dim); }
+  .card-body dd { color: var(--text); word-break: break-word; }
   .card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    padding: 0.75rem 1.25rem;
-    background: rgba(0,0,0,0.15);
-    border-top: 1px solid var(--surface-hi);
+    padding: 0.5rem 0.875rem; border-top: 1px solid var(--surface-hi);
+    display: flex; flex-wrap: wrap; gap: 0.4rem; background: rgba(0,0,0,0.1);
   }
-  .card-actions button {
-    flex: 1;
-    min-width: 100px;
-    font-size: 0.8125rem;
-    padding: 0.4375rem 0.625rem;
+  .empty {
+    grid-column: 1 / -1;
+    padding: 1.5rem; text-align: center;
+    color: var(--text-dim); font-size: 0.875rem;
+    background: var(--surface); border: 1px dashed var(--surface-hi);
+    border-radius: 10px;
   }
-
+  .empty code {
+    font-family: monospace; background: var(--surface-hi);
+    padding: 0.1rem 0.4rem; border-radius: 4px;
+  }
   .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.1875rem 0.625rem;
-    border-radius: 1rem;
-    font-size: 0.75rem;
+    font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px;
     font-weight: 500;
-  }
-  .badge::before {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: currentColor;
   }
   .badge.ok { background: rgba(16,185,129,0.15); color: var(--ok); }
-  .badge.warn { background: rgba(245,158,11,0.15); color: var(--warn); }
   .badge.err { background: rgba(239,68,68,0.15); color: var(--err); }
-  .badge.muted { background: rgba(100,116,139,0.15); color: var(--text-dim); }
-
+  .badge.warn { background: rgba(245,158,11,0.15); color: var(--warn); }
+  .badge.muted { background: rgba(100,116,139,0.15); color: var(--muted); }
   .messages {
-    margin-top: 0.75rem;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    max-height: 8rem;
-    overflow-y: auto;
+    margin-top: 0.75rem; padding-top: 0.75rem;
+    border-top: 1px solid var(--surface-hi);
+    list-style: none; font-size: 0.8rem;
   }
-  .messages li {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    background: rgba(0,0,0,0.2);
-  }
+  .messages li { padding: 0.2rem 0; }
   .messages li.error { color: var(--err); }
   .messages li.warning { color: var(--warn); }
-  .messages li.info { color: var(--text-dim); }
-
-  .empty {
-    text-align: center;
-    padding: 3rem 1rem;
-    color: var(--text-dim);
+  .reader-feed {
+    font-family: monospace; font-size: 0.8rem; color: var(--text-dim);
+    margin-top: 0.5rem; max-height: 80px; overflow-y: auto;
   }
+  .reader-feed .scan { color: var(--text); }
 
   #toast {
-    position: fixed;
-    bottom: 1.5rem;
-    right: 1.5rem;
-    background: var(--surface-hi);
-    color: var(--text);
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-    transform: translateY(120%);
-    transition: transform 0.25s;
-    max-width: 22rem;
-    font-size: 0.875rem;
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    background: var(--surface); border-left: 4px solid var(--ok);
+    padding: 0.75rem 1rem; border-radius: 6px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    max-width: 360px; opacity: 0; transform: translateY(20px);
+    transition: all 0.2s;
   }
-  #toast.show { transform: translateY(0); }
-  #toast.ok { border-left: 4px solid var(--ok); }
-  #toast.err { border-left: 4px solid var(--err); }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.err { border-left-color: var(--err); }
 
   footer {
-    margin-top: 2rem;
-    padding: 1rem 1.5rem;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 0.75rem;
+    margin-top: 2rem; padding: 1rem 1.5rem; text-align: center;
+    color: var(--text-dim); font-size: 0.75rem;
   }
   footer a { color: var(--accent); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
@@ -215,7 +168,8 @@
 <header>
   <span style="font-size: 1.5rem;">🧾</span>
   <h1>Odoo.ErpNet.FP</h1>
-  <span class="version" id="version">…</span>
+  <span class="version" id="version">v…</span>
+  <span class="summary" id="summary">…</span>
 </header>
 
 <div class="container">
@@ -224,9 +178,30 @@
     <span class="ago" id="last-refresh">never</span>
   </div>
 
-  <div class="grid" id="printers">
-    <div class="empty">Loading…</div>
-  </div>
+  <section class="devices" data-kind="printers">
+    <h2>🧾 Fiscal printers <span class="count" id="cnt-printers">0</span></h2>
+    <div class="grid" id="grid-printers"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="scales">
+    <h2>⚖️ Scales <span class="count" id="cnt-scales">0</span></h2>
+    <div class="grid" id="grid-scales"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="displays">
+    <h2>🪧 Customer displays <span class="count" id="cnt-displays">0</span></h2>
+    <div class="grid" id="grid-displays"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="readers">
+    <h2>🔍 Barcode readers <span class="count" id="cnt-readers">0</span></h2>
+    <div class="grid" id="grid-readers"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="pinpads">
+    <h2>💳 Payment terminals <span class="count" id="cnt-pinpads">0</span></h2>
+    <div class="grid" id="grid-pinpads"><div class="empty">Loading…</div></div>
+  </section>
 </div>
 
 <footer>
@@ -239,7 +214,8 @@
 
 <script>
 const ENDPOINT = window.location.origin;
-let state = {};
+const KINDS = ["printers", "scales", "displays", "readers", "pinpads"];
+let state = { printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, statuses: {}, scans: {} };
 
 function toast(msg, kind = "ok") {
   const el = document.getElementById("toast");
@@ -271,32 +247,47 @@ async function fetchJSON(url, opts = {}) {
   return r.json();
 }
 
-async function loadPrinters() {
-  const grid = document.getElementById("printers");
+// ─── Loaders ───────────────────────────────────────────────
+
+async function loadVersion() {
   try {
-    const printers = await fetchJSON(ENDPOINT + "/printers");
-    if (!Object.keys(printers).length) {
-      grid.innerHTML = '<div class="empty">No printers configured. Edit <code>config.yaml</code> and restart.</div>';
-      return;
-    }
-    state.printers = printers;
-    render();
-    fetchAllStatuses();  // fire-and-forget after initial render
+    const r = await fetchJSON(ENDPOINT + "/healthz");
+    document.getElementById("version").textContent = "v" + (r.version || "?");
+    const total = (r.printers||[]).length + (r.scales||[]).length + (r.displays||[]).length + (r.readers||[]).length + (r.pinpads||[]).length;
+    document.getElementById("summary").textContent =
+      `${total} device${total===1?"":"s"} · ` +
+      KINDS.map(k => `${(r[k]||[]).length} ${k}`).join(" · ");
   } catch (e) {
-    grid.innerHTML = `<div class="empty">Cannot reach proxy: ${e.message}</div>`;
+    document.getElementById("version").textContent = "offline";
+    document.getElementById("summary").textContent = "proxy unreachable";
   }
+}
+
+async function loadKind(kind) {
+  try {
+    const data = await fetchJSON(`${ENDPOINT}/${kind}`);
+    state[kind] = data || {};
+  } catch (e) {
+    state[kind] = {};
+  }
+  document.getElementById("cnt-" + kind).textContent = Object.keys(state[kind]).length;
+  renderKind(kind);
+}
+
+async function loadAll() {
+  await Promise.all(KINDS.map(loadKind));
+  // After listings render, fetch printer statuses (only the kind with status endpoint)
+  fetchAllStatuses();
 }
 
 async function fetchStatus(id) {
   try {
-    const r = await fetchJSON(ENDPOINT + "/printers/" + encodeURIComponent(id) + "/status");
-    state.statuses = state.statuses || {};
+    const r = await fetchJSON(`${ENDPOINT}/printers/${encodeURIComponent(id)}/status`);
     state.statuses[id] = { ...r, fetchedAt: Date.now() };
   } catch (e) {
-    state.statuses = state.statuses || {};
     state.statuses[id] = { fetchError: e.message, fetchedAt: Date.now() };
   }
-  render();
+  renderKind("printers");
 }
 
 async function fetchAllStatuses() {
@@ -305,61 +296,165 @@ async function fetchAllStatuses() {
   document.getElementById("last-refresh").textContent = "Refreshed " + fmtAgo(Date.now());
 }
 
-function render() {
-  const grid = document.getElementById("printers");
-  const printers = state.printers || {};
-  const statuses = state.statuses || {};
+// ─── Renderers per kind ────────────────────────────────────
 
-  grid.innerHTML = Object.entries(printers).map(([id, info]) => {
-    const status = statuses[id];
-    const messages = status?.messages || [];
-    return `
-      <div class="card">
-        <div class="card-header">
-          <h2>${id}</h2>
-          ${badgeFor(status)}
-          <span class="uri">${info.uri || ""}</span>
-        </div>
-        <div class="card-body">
-          <dl>
-            <dt>Manufacturer</dt><dd>${info.manufacturer || "—"}</dd>
-            <dt>Model</dt><dd>${info.model || "—"}</dd>
-            <dt>Serial #</dt><dd>${info.serialNumber || "—"}</dd>
-            <dt>Fiscal mem #</dt><dd>${info.fiscalMemorySerialNumber || "—"}</dd>
-            <dt>Tax #</dt><dd>${info.taxIdentificationNumber || "—"}</dd>
-            <dt>Firmware</dt><dd>${info.firmwareVersion || "—"}</dd>
-            ${status?.deviceDateTime ? `<dt>Device clock</dt><dd>${status.deviceDateTime}</dd>` : ""}
-          </dl>
-          ${messages.length ? `
-            <ul class="messages">
-              ${messages.slice(0, 6).map(m => `<li class="${m.type}">${m.code ? `[${m.code}] ` : ""}${m.text || ""}</li>`).join("")}
-            </ul>
-          ` : ""}
-        </div>
-        <div class="card-actions">
-          <button onclick="action('${id}', 'status', 'GET')">⟳ Status</button>
-          <button onclick="action('${id}', 'cash', 'GET')">💰 Cash</button>
-          <button onclick="action('${id}', 'xreport', 'POST')">📄 X</button>
-          <button class="warn" onclick="action('${id}', 'zreport', 'POST', true)">🗄 Z</button>
-          <button onclick="action('${id}', 'duplicate', 'POST')">📋 Duplicate</button>
-          <button class="danger" onclick="action('${id}', 'reset', 'POST', true)">⊘ Reset</button>
-        </div>
-      </div>
-    `;
-  }).join("");
+function emptyCard(kind) {
+  const hints = {
+    printers: 'Add a <code>printers:</code> entry in <code>config.yaml</code> and restart the proxy.',
+    scales: 'Add a <code>scales:</code> entry. Drivers: <code>cas</code> · <code>elicom.evl</code> · <code>acs</code> · <code>toledo_8217</code>',
+    displays: 'Add a <code>displays:</code> entry. Driver: <code>datecs.dpd201</code>',
+    readers: 'Add a <code>readers:</code> entry. Transports: <code>hid</code> · <code>serial</code> · <code>external</code>',
+    pinpads: 'Add a <code>pinpads:</code> entry. Driver: <code>datecs_pay</code>',
+  };
+  return `<div class="empty">No ${kind} configured.<br>${hints[kind] || ""}</div>`;
 }
 
-async function action(id, op, method, confirmRequired = false) {
+function renderKind(kind) {
+  const grid = document.getElementById("grid-" + kind);
+  const items = state[kind] || {};
+  if (!Object.keys(items).length) {
+    grid.innerHTML = emptyCard(kind);
+    return;
+  }
+  const renderer = {
+    printers: renderPrinter,
+    scales: renderScale,
+    displays: renderDisplay,
+    readers: renderReader,
+    pinpads: renderPinpad,
+  }[kind];
+  grid.innerHTML = Object.entries(items).map(([id, info]) => renderer(id, info)).join("");
+}
+
+function renderPrinter(id, info) {
+  const status = state.statuses[id];
+  const messages = status?.messages || [];
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        ${badgeFor(status)}
+        <span class="uri">${info.uri || info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Manufacturer</dt><dd>${info.manufacturer || "—"}</dd>
+          <dt>Model</dt><dd>${info.model || "—"}</dd>
+          <dt>Serial #</dt><dd>${info.serialNumber || "—"}</dd>
+          <dt>Fiscal mem #</dt><dd>${info.fiscalMemorySerialNumber || "—"}</dd>
+          <dt>Tax #</dt><dd>${info.taxIdentificationNumber || "—"}</dd>
+          <dt>Firmware</dt><dd>${info.firmwareVersion || "—"}</dd>
+          ${status?.deviceDateTime ? `<dt>Device clock</dt><dd>${status.deviceDateTime}</dd>` : ""}
+        </dl>
+        ${messages.length ? `<ul class="messages">${messages.slice(0, 6).map(m => `<li class="${m.type}">${m.code ? `[${m.code}] ` : ""}${m.text || ""}</li>`).join("")}</ul>` : ""}
+      </div>
+      <div class="card-actions">
+        <button class="sm" onclick="printerAction('${id}', 'status', 'GET')">⟳ Status</button>
+        <button class="sm" onclick="printerAction('${id}', 'cash', 'GET')">💰 Cash</button>
+        <button class="sm" onclick="printerAction('${id}', 'xreport', 'POST')">📄 X</button>
+        <button class="sm warn" onclick="printerAction('${id}', 'zreport', 'POST', true)">🗄 Z</button>
+        <button class="sm" onclick="printerAction('${id}', 'duplicate', 'POST')">📋 Duplicate</button>
+        <button class="sm" onclick="printerAction('${id}', 'drawer', 'POST')">💵 Drawer</button>
+      </div>
+    </div>`;
+}
+
+function renderScale(id, info) {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>Port</dt><dd>${info.port || "—"}</dd>
+          <dt>Last reading</dt><dd id="scale-last-${id}">— kg</dd>
+        </dl>
+      </div>
+      <div class="card-actions">
+        <button class="sm primary" onclick="scaleRead('${id}')">⚖️ Read weight</button>
+        <button class="sm" onclick="scaleProbe('${id}')">⟳ Probe</button>
+      </div>
+    </div>`;
+}
+
+function renderDisplay(id, info) {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>Port</dt><dd>${info.port || "—"}</dd>
+          <dt>Encoding</dt><dd>${info.encoding || "—"}</dd>
+          <dt>Geometry</dt><dd>${(info.charsPerLine || info.chars_per_line || "?")}×${info.lines || "?"}</dd>
+        </dl>
+      </div>
+      <div class="card-actions">
+        <button class="sm" onclick="displayClear('${id}')">⊘ Clear</button>
+        <button class="sm primary" onclick="displayTest('${id}')">📝 Test text</button>
+        <button class="sm" onclick="displaySelfTest('${id}')">🔧 Self-test</button>
+      </div>
+    </div>`;
+}
+
+function renderReader(id, info) {
+  const recent = (state.scans[id] || []).slice(-5).reverse();
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        <span class="uri">${info.transport || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Transport</dt><dd>${info.transport || "—"}</dd>
+          ${info.device_path ? `<dt>Device</dt><dd style="font-family:monospace;font-size:0.75rem">${info.device_path}</dd>` : ""}
+          ${info.port ? `<dt>Port</dt><dd>${info.port}</dd>` : ""}
+        </dl>
+        <div class="reader-feed">
+          ${recent.length ? recent.map(s => `<div class="scan">▶ ${s}</div>`).join("") : "(no scans yet)"}
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="sm" onclick="readerSubscribe('${id}')">▶ Listen</button>
+      </div>
+    </div>`;
+}
+
+function renderPinpad(id, info) {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>Port</dt><dd>${info.port || "—"}</dd>
+        </dl>
+      </div>
+    </div>`;
+}
+
+// ─── Actions per kind ──────────────────────────────────────
+
+async function printerAction(id, op, method, confirmRequired = false) {
   if (confirmRequired && !confirm(`Run ${op} on ${id}?`)) return;
   try {
     const r = await fetchJSON(
-      ENDPOINT + "/printers/" + encodeURIComponent(id) + "/" + op,
+      `${ENDPOINT}/printers/${encodeURIComponent(id)}/${op}`,
       { method, headers: { Accept: "application/json" } }
     );
     if (op === "status") {
-      state.statuses = state.statuses || {};
       state.statuses[id] = { ...r, fetchedAt: Date.now() };
-      render();
+      renderKind("printers");
       toast(`Status refreshed for ${id}`, r.ok ? "ok" : "err");
       return;
     }
@@ -367,7 +462,7 @@ async function action(id, op, method, confirmRequired = false) {
       toast(`${id}: cash in safe = ${(r.amount ?? 0).toFixed(2)}`, r.ok ? "ok" : "err");
       return;
     }
-    if (r?.ok) {
+    if (r?.ok !== false) {
       toast(`${op} succeeded on ${id}`, "ok");
     } else {
       const errMsg = (r?.messages || []).filter(m => m.type === "error").map(m => m.text).join("; ");
@@ -379,23 +474,82 @@ async function action(id, op, method, confirmRequired = false) {
   }
 }
 
-function refreshAll() {
-  fetchAllStatuses();
+async function scaleRead(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/scales/${encodeURIComponent(id)}/weight`);
+    const cell = document.getElementById("scale-last-" + id);
+    if (r.ok && cell) cell.textContent = `${(r.weightKg ?? r.weight_kg ?? 0).toFixed(3)} kg`;
+    toast(r.ok ? `${id}: ${(r.weightKg ?? r.weight_kg ?? 0).toFixed(3)} kg` : `${id}: ${(r.status || []).join("; ") || "failed"}`,
+          r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
 }
 
-async function loadVersion() {
+async function scaleProbe(id) {
   try {
-    const r = await fetchJSON(ENDPOINT + "/healthz");
-    document.getElementById("version").textContent = `${r.printers.length} printer(s)`;
-  } catch (e) {
-    document.getElementById("version").textContent = "offline";
-  }
+    const r = await fetchJSON(`${ENDPOINT}/scales/${encodeURIComponent(id)}/probe`);
+    toast(`${id}: ${r.ok ? "alive" : (r.error || "no response")}`, r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
 }
+
+async function displayClear(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/displays/${encodeURIComponent(id)}/clear`,
+                              { method: "POST", headers: { Accept: "application/json" } });
+    toast(`${id} cleared`, r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+async function displayTest(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/displays/${encodeURIComponent(id)}/two-lines`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ top: "ErpNet.FP", bottom: "Test 1.99 BGN" }) });
+    toast(`${id}: test text sent`, r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+async function displaySelfTest(id) {
+  if (!confirm(`Run self-test on ${id}? Display blocks for ~20s.`)) return;
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/displays/${encodeURIComponent(id)}/self-test`,
+                              { method: "POST", headers: { Accept: "application/json" } });
+    toast(`${id}: self-test triggered`, r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+const _readerStreams = {};
+function readerSubscribe(id) {
+  if (_readerStreams[id]) {
+    _readerStreams[id].close();
+    delete _readerStreams[id];
+    toast(`${id}: stopped listening`, "ok");
+    return;
+  }
+  try {
+    const es = new EventSource(`${ENDPOINT}/readers/${encodeURIComponent(id)}/sse`);
+    _readerStreams[id] = es;
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        const code = data.barcode || data.value || ev.data;
+        state.scans[id] = state.scans[id] || [];
+        state.scans[id].push(code);
+        if (state.scans[id].length > 20) state.scans[id].shift();
+        renderKind("readers");
+        toast(`${id}: ${code}`, "ok");
+      } catch {}
+    };
+    es.onerror = () => { es.close(); delete _readerStreams[id]; };
+    toast(`${id}: listening (click again to stop)`, "ok");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+function refreshAll() { loadVersion(); loadAll(); }
 
 // Init
 loadVersion();
-loadPrinters();
-setInterval(fetchAllStatuses, 30000);  // auto-refresh every 30s
+loadAll();
+setInterval(fetchAllStatuses, 30000);
 </script>
 </body>
 </html>

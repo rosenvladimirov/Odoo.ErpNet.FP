@@ -293,25 +293,39 @@ async def _printer_action(state, printer_id: str, data: dict) -> dict:
 
     async with reg.with_driver(printer_id) as drv:
         def _run():
-            if action in ("status", "read_status"):
-                return drv.status()
-            if action in ("zreport", "z_report", "print_zreport"):
-                return drv.print_zreport()
-            if action in ("xreport", "x_report", "print_xreport"):
-                return drv.print_xreport()
-            if action in ("drawer", "open_drawer"):
-                return drv.open_drawer()
-            if action == "duplicate":
-                return drv.print_duplicate()
+            # Method names differ between PM and ISL drivers; try a
+            # short list of synonyms before declaring unsupported.
+            candidates = {
+                "status": ["get_status", "status"],
+                "read_status": ["get_status", "status"],
+                "zreport": ["print_z_report", "print_zreport"],
+                "z_report": ["print_z_report", "print_zreport"],
+                "print_zreport": ["print_z_report", "print_zreport"],
+                "xreport": ["print_x_report", "print_xreport"],
+                "x_report": ["print_x_report", "print_xreport"],
+                "print_xreport": ["print_x_report", "print_xreport"],
+                "drawer": ["open_drawer", "drawer"],
+                "open_drawer": ["open_drawer", "drawer"],
+                "duplicate": ["print_duplicate", "duplicate"],
+            }
+            method_names = candidates.get(action, [])
+            for name in method_names:
+                fn = getattr(drv, name, None)
+                if callable(fn):
+                    return fn()
             raise ValueError(f"Unknown printer action: {action!r}")
         try:
             result = await asyncio.to_thread(_run)
         except AttributeError as exc:
-            # Driver doesn't support this action (e.g. PM has no print_duplicate)
             return {"status": {"status": "error",
                                "message_body": f"Action not supported: {exc}"}}
-    return {"result": result if result is not None else True,
-            "status": {"status": "success"}}
+    # DeviceStatus dataclass / dict / etc — wrap into JSON-friendly shape.
+    if hasattr(result, "__dict__") and not isinstance(result, dict):
+        result_payload = {k: v for k, v in vars(result).items()
+                          if not k.startswith("_")}
+    else:
+        result_payload = result if result is not None else True
+    return {"result": result_payload, "status": {"status": "success"}}
 
 
 async def _pinpad_action(state, pinpad_id: str, data: dict) -> dict:

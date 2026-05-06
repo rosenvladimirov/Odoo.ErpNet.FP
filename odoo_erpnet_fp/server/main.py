@@ -38,6 +38,16 @@ _access_logger = logging.getLogger("odoo_erpnet_fp.access")
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _read_version() -> str:
+    """Resolve installed package version, with a fallback for editable
+    in-tree development."""
+    try:
+        from importlib.metadata import version
+        return version("odoo-erpnet-fp")
+    except Exception:
+        return "dev"
+
+
 def create_app(config: AppConfig) -> FastAPI:
     """Build a FastAPI app bound to the given config.
 
@@ -132,6 +142,7 @@ def create_app(config: AppConfig) -> FastAPI:
     def healthz():
         return {
             "ok": True,
+            "version": _read_version(),
             "printers": list(registry.printers.keys()),
             "pinpads": list(pinpad_registry.pinpads.keys()),
             "scales": list(scale_registry.scales.keys()),
