@@ -189,6 +189,16 @@ class ReaderConfig:
     baudrate: int = 9600                # for serial
     grab: bool = True                   # for hid: exclusive device access
     encoding: str = "ascii"             # for serial: line decode
+    # ─── HID auto-discovery (alternative to device_path) ──
+    vid: Optional[int] = None           # USB vendor id (decimal or hex literal)
+    pid: Optional[int] = None           # USB product id
+    name_regex: Optional[str] = None    # regex on device name
+    # ─── HID framing ────────────────────────────────────
+    terminator: str = "enter"           # enter | tab | lf | comma-separated scancodes
+    strip_prefix: str = ""
+    strip_suffix: str = ""
+    max_length: int = 4096
+    caps_lock_strategy: str = "ignore"  # ignore | respect
     webhooks: list[str] = field(default_factory=list)
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -205,6 +215,19 @@ class AppConfig:
 
 
 # ─── YAML loader (preferred) ─────────────────────────────────────────
+
+
+def _to_int(v: Any) -> Optional[int]:
+    """Accept int, decimal string, or 0xNNNN hex string (handy for VID/PID)."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, int):
+        return v
+    s = str(v).strip()
+    try:
+        return int(s, 0)  # base 0 → auto-detect 0x.. / 0o.. / 0b.. / decimal
+    except ValueError:
+        return None
 
 
 def _yaml_to_app_config(data: dict) -> AppConfig:
@@ -275,6 +298,9 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
 
     readers: list[ReaderConfig] = []
     for entry in data.get("readers", []) or []:
+        # Accept VID/PID nested under `match:` (matches the
+        # documented hid2serial schema) or flat top-level fields.
+        match = entry.get("match") or {}
         readers.append(
             ReaderConfig(
                 id=str(entry["id"]),
@@ -284,6 +310,25 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 baudrate=int(entry.get("baudrate", 9600)),
                 grab=bool(entry.get("grab", True)),
                 encoding=entry.get("encoding", "ascii"),
+                vid=_to_int(entry.get("vid", match.get("vid"))),
+                pid=_to_int(entry.get("pid", match.get("pid"))),
+                name_regex=entry.get("name_regex", match.get("name_regex")),
+                terminator=entry.get(
+                    "terminator", (entry.get("framing") or {}).get("terminator", "enter")
+                ),
+                strip_prefix=entry.get(
+                    "strip_prefix", (entry.get("framing") or {}).get("strip_prefix", "")
+                ),
+                strip_suffix=entry.get(
+                    "strip_suffix", (entry.get("framing") or {}).get("strip_suffix", "")
+                ),
+                max_length=int(entry.get(
+                    "max_length", (entry.get("framing") or {}).get("max_length", 4096)
+                )),
+                caps_lock_strategy=entry.get(
+                    "caps_lock_strategy",
+                    (entry.get("keymap") or {}).get("caps_lock_strategy", "ignore"),
+                ),
                 webhooks=list(entry.get("webhooks", []) or []),
                 extras=entry.get("extras", {}),
             )

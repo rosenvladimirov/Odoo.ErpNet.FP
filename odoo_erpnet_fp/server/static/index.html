@@ -62,23 +62,46 @@
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button.sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 
-  section.devices {
-    margin-bottom: 1.5rem;
+  /* Tab bar */
+  .tabs {
+    display: flex; gap: 0.25rem; flex-wrap: wrap;
+    border-bottom: 1px solid var(--surface-hi);
+    margin-bottom: 1.25rem;
+    padding-bottom: 0;
   }
-  section.devices h2 {
-    display: flex; align-items: center; gap: 0.5rem;
-    font-size: 0.95rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--text-dim);
-    margin-bottom: 0.75rem;
+  .tabs button.tab {
+    background: transparent; color: var(--text-dim);
+    border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 0.625rem 1rem;
+    font-size: 0.9rem; font-weight: 500;
+    display: flex; align-items: center; gap: 0.4rem;
+    transition: color 0.15s, border-color 0.15s;
   }
-  section.devices h2 .count {
+  .tabs button.tab:hover {
+    color: var(--text); background: rgba(255,255,255,0.02);
+  }
+  .tabs button.tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tabs button.tab .count {
     background: var(--surface-hi);
     color: var(--text);
     font-size: 0.7rem;
-    padding: 0.1rem 0.45rem;
+    padding: 0.05rem 0.4rem;
     border-radius: 999px;
-    text-transform: none;
-    letter-spacing: 0;
+    min-width: 1.25rem;
+    text-align: center;
+  }
+  .tabs button.tab.active .count {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  section.devices {
+    display: none;
+  }
+  section.devices.active {
+    display: block;
   }
 
   .grid {
@@ -178,28 +201,31 @@
     <span class="ago" id="last-refresh">never</span>
   </div>
 
-  <section class="devices" data-kind="printers">
-    <h2>🧾 Fiscal printers <span class="count" id="cnt-printers">0</span></h2>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-kind="printers" onclick="switchTab('printers')">🧾 Fiscal printers <span class="count" id="cnt-printers">0</span></button>
+    <button class="tab" data-kind="scales" onclick="switchTab('scales')">⚖️ Scales <span class="count" id="cnt-scales">0</span></button>
+    <button class="tab" data-kind="displays" onclick="switchTab('displays')">🪧 Displays <span class="count" id="cnt-displays">0</span></button>
+    <button class="tab" data-kind="readers" onclick="switchTab('readers')">🔍 Readers <span class="count" id="cnt-readers">0</span></button>
+    <button class="tab" data-kind="pinpads" onclick="switchTab('pinpads')">💳 Pinpads <span class="count" id="cnt-pinpads">0</span></button>
+  </div>
+
+  <section class="devices active" data-kind="printers">
     <div class="grid" id="grid-printers"><div class="empty">Loading…</div></div>
   </section>
 
   <section class="devices" data-kind="scales">
-    <h2>⚖️ Scales <span class="count" id="cnt-scales">0</span></h2>
     <div class="grid" id="grid-scales"><div class="empty">Loading…</div></div>
   </section>
 
   <section class="devices" data-kind="displays">
-    <h2>🪧 Customer displays <span class="count" id="cnt-displays">0</span></h2>
     <div class="grid" id="grid-displays"><div class="empty">Loading…</div></div>
   </section>
 
   <section class="devices" data-kind="readers">
-    <h2>🔍 Barcode readers <span class="count" id="cnt-readers">0</span></h2>
     <div class="grid" id="grid-readers"><div class="empty">Loading…</div></div>
   </section>
 
   <section class="devices" data-kind="pinpads">
-    <h2>💳 Payment terminals <span class="count" id="cnt-pinpads">0</span></h2>
     <div class="grid" id="grid-pinpads"><div class="empty">Loading…</div></div>
   </section>
 </div>
@@ -546,9 +572,28 @@ function readerSubscribe(id) {
 
 function refreshAll() { loadVersion(); loadAll(); }
 
+function switchTab(kind) {
+  if (!KINDS.includes(kind)) return;
+  document.querySelectorAll(".tabs .tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.kind === kind);
+  });
+  document.querySelectorAll("section.devices").forEach(s => {
+    s.classList.toggle("active", s.dataset.kind === kind);
+  });
+  if (window.location.hash !== "#" + kind) {
+    history.replaceState(null, "", "#" + kind);
+  }
+}
+
+function _initTabFromHash() {
+  const hash = (window.location.hash || "").replace("#", "");
+  if (KINDS.includes(hash)) switchTab(hash);
+}
+
 // Init
+window.addEventListener("hashchange", _initTabFromHash);
 loadVersion();
-loadAll();
+loadAll().then(_initTabFromHash);
 setInterval(fetchAllStatuses, 30000);
 </script>
 </body>

@@ -557,14 +557,23 @@ class ReaderRegistry:
     @staticmethod
     def _make_driver(cfg: ReaderConfig) -> BarcodeReader:
         if cfg.transport == "hid":
-            if not cfg.device_path:
+            if not (cfg.device_path or cfg.vid or cfg.pid or cfg.name_regex):
                 raise ValueError(
-                    f"HID reader {cfg.id!r} needs `device_path` (e.g. /dev/input/eventN)"
+                    f"HID reader {cfg.id!r} needs at least one of: "
+                    "device_path, vid+pid, or name_regex"
                 )
             return HidBarcodeReader(
                 reader_id=cfg.id,
                 device_path=cfg.device_path,
+                vid=cfg.vid,
+                pid=cfg.pid,
+                name_regex=cfg.name_regex,
                 grab=cfg.grab,
+                terminator=cfg.terminator,
+                strip_prefix=cfg.strip_prefix,
+                strip_suffix=cfg.strip_suffix,
+                max_length=cfg.max_length,
+                caps_lock_strategy=cfg.caps_lock_strategy,
             )
         # serial
         if not cfg.port:
