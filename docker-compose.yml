@@ -185,11 +185,31 @@ services:
       # HostRegexp). Without it, requests to grafana.lan.mcpworks.net
       # fall into the proxy and return 404.
       - "traefik.enable=true"
+      # Default router — full Grafana UI for logged-in users. Anonymous
+      # users still hit this for any path that isn't `/`, but with the
+      # anon Viewer role they can't reach Settings / Connections /
+      # Plugins anyway.
       - "traefik.http.routers.grafana.rule=Host(`grafana.lan.mcpworks.net`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls=true"
       - "traefik.http.routers.grafana.priority=100"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      # Anon-kiosk redirect — when an unauthenticated visitor opens the
+      # root URL we send them straight to the dashboard in kiosk mode
+      # (no top nav, no sidebar, no edit / settings affordances).
+      # Logged-in users carry a `grafana_session=` cookie so the
+      # negative HeadersRegexp keeps this router from matching them.
+      # priority=200 beats the default `grafana` router on the same
+      # path.
+      - "traefik.http.middlewares.grafana-kiosk.redirectregex.regex=^https?://grafana\\.lan\\.mcpworks\\.net/?(\\?.*)?$$"
+      - "traefik.http.middlewares.grafana-kiosk.redirectregex.replacement=https://grafana.lan.mcpworks.net/d/erpnet-fp-overview/?orgId=1&kiosk&theme=dark&refresh=10s"
+      - "traefik.http.middlewares.grafana-kiosk.redirectregex.permanent=false"
+      - "traefik.http.routers.grafana-anon.rule=Host(`grafana.lan.mcpworks.net`) && Path(`/`) && !HeadersRegexp(`Cookie`, `grafana_session=`)"
+      - "traefik.http.routers.grafana-anon.entrypoints=websecure"
+      - "traefik.http.routers.grafana-anon.tls=true"
+      - "traefik.http.routers.grafana-anon.priority=200"
+      - "traefik.http.routers.grafana-anon.middlewares=grafana-kiosk"
+      - "traefik.http.routers.grafana-anon.service=grafana"
     logging:
       driver: "json-file"
       options:
