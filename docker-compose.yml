@@ -162,6 +162,12 @@ services:
       GF_LOG_LEVEL: "warn"
       GF_SERVER_ROOT_URL: "https://grafana.lan.mcpworks.net"
       GF_SERVER_DOMAIN: "grafana.lan.mcpworks.net"
+      # Allow embedding Grafana panels in an Odoo backend iframe.
+      # Without this Grafana sends X-Frame-Options: DENY and the
+      # iframe stays blank.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "none"   # required when iframe origin differs
+      GF_SECURITY_COOKIE_SECURE: "true"
     ports:
       - "127.0.0.1:3001:3000"   # local-only fallback; 3001 to avoid Odoo collision
     mem_limit: 128m
