@@ -38,6 +38,33 @@ _access_logger = logging.getLogger("odoo_erpnet_fp.access")
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _normalise_path(raw: str) -> str:
+    """Collapse path parameters into bounded labels for Prometheus.
+
+    /printers/dp150/status     → /printers/:id/status
+    /readers/bt1/last          → /readers/:id/last
+    /scales/cas1/weight        → /scales/:id/weight
+
+    This keeps the label cardinality of `http_requests_total` finite —
+    metric explosion is the most common Prometheus mistake.
+    """
+    parts = raw.split("/")
+    normalised: list[str] = []
+    # Known top-level resource collections that take an :id segment
+    id_after = {"printers", "readers", "scales", "displays", "pinpads",
+                "iot_drivers", "hw_drivers"}
+    skip_next = False
+    for i, part in enumerate(parts):
+        if skip_next:
+            normalised.append(":id")
+            skip_next = False
+            continue
+        normalised.append(part)
+        if part in id_after and i + 1 < len(parts) and parts[i + 1]:
+            skip_next = True
+    return "/".join(normalised)
+
+
 def _read_version() -> str:
     """Resolve installed package version, with a fallback for editable
     in-tree development."""
@@ -92,8 +119,11 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.display_registry = display_registry
     app.state.config = config
 
+    from . import metrics
+    metrics.set_proxy_info(_read_version())
+
     @app.middleware("http")
-    async def log_requests(request: Request, call_next):
+    async def log_and_meter_requests(request: Request, call_next):
         import time
         start = time.monotonic()
         client = request.client.host if request.client else "?"
@@ -107,7 +137,8 @@ def create_app(config: AppConfig) -> FastAPI:
                 request.url.path,
             )
             raise
-        elapsed_ms = int((time.monotonic() - start) * 1000)
+        elapsed_s = time.monotonic() - start
+        elapsed_ms = int(elapsed_s * 1000)
         _access_logger.info(
             "%s %s %s → %s (%dms)",
             client,
@@ -116,6 +147,22 @@ def create_app(config: AppConfig) -> FastAPI:
             response.status_code,
             elapsed_ms,
         )
+        # Record metrics. Use `request.url.path` directly — it has
+        # placeholders like /printers/<id>/status, which would
+        # explode label cardinality. Replace numeric / hex segments
+        # with `:id` so we get a bounded set of paths.
+        try:
+            metric_path = _normalise_path(request.url.path)
+            metrics.http_requests_total.labels(
+                method=request.method,
+                path=metric_path,
+                status_code=str(response.status_code),
+            ).inc()
+            metrics.http_request_duration_seconds.labels(
+                method=request.method, path=metric_path,
+            ).observe(elapsed_s)
+        except Exception:
+            pass
         return response
 
     from .routes.displays import router as displays_router
@@ -137,6 +184,39 @@ def create_app(config: AppConfig) -> FastAPI:
     # and Odoo 19+ (/iot_drivers) clients.
     app.include_router(iot_compat_v18_router)
     app.include_router(iot_compat_v19_router)
+
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics():
+        """Prometheus text-exposition endpoint.
+
+        Returns 501 if `prometheus_client` is not installed (optional
+        dep). Scrape with the standard Prometheus / Grafana stack:
+
+            scrape_configs:
+              - job_name: erpnet-fp
+                static_configs:
+                  - targets: ['erpnet.example.com']
+
+        Reader subscriber gauge is updated lazily here on each scrape,
+        so the value is always fresh without a polling loop.
+        """
+        if not metrics.is_available():
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(
+                "prometheus_client not installed; metrics disabled",
+                status_code=501,
+            )
+        # Lazy gauges — refresh per-reader subscriber counts on scrape
+        for rid, entry in reader_registry.readers.items():
+            try:
+                metrics.reader_subscribers.labels(reader_id=rid).set(
+                    entry.bus.subscriber_count
+                )
+            except Exception:
+                pass
+        from fastapi.responses import Response
+        body, ctype = metrics.render()
+        return Response(content=body, media_type=ctype)
 
     @app.get("/healthz")
     def healthz():

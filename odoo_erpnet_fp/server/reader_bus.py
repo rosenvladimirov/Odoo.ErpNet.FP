@@ -84,6 +84,13 @@ class ReaderEventBus:
         asyncio.run_coroutine_threadsafe(self._publish(scan), self._loop)
 
     async def _publish(self, scan: BarcodeScan) -> None:
+        # 0. Metrics
+        try:
+            from . import metrics as _m
+            _m.reader_scans_total.labels(reader_id=self.reader_id).inc()
+        except Exception:
+            pass
+
         # 1. History (always — supports late subscribers)
         self._history.append(scan)
 

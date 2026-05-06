@@ -131,45 +131,58 @@ async def display_info(id: str, request: Request):
     )
 
 
-async def _run(reg, id: str, fn) -> OkResp:
+async def _run(reg, id: str, fn, action: str = "unknown") -> OkResp:
+    from .. import metrics as _m
     try:
         async with reg.with_display(id) as d:
             await asyncio.to_thread(fn, d)
+        try:
+            _m.display_writes_total.labels(
+                display_id=id, action=action, outcome="success",
+            ).inc()
+        except Exception:
+            pass
         return OkResp(ok=True)
     except Exception as exc:
         _logger.exception("display op failed for %s", id)
+        try:
+            _m.display_writes_total.labels(
+                display_id=id, action=action, outcome="error",
+            ).inc()
+        except Exception:
+            pass
         return OkResp(ok=False, error=str(exc))
 
 
 @router.post("/{id}/clear", response_model=OkResp)
 async def clear(id: str, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.clear())
+    return await _run(reg, id, lambda d: d.clear(), "clear")
 
 
 @router.post("/{id}/initialize", response_model=OkResp)
 async def initialize(id: str, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.initialize())
+    return await _run(reg, id, lambda d: d.initialize(), "initialize")
 
 
 @router.post("/{id}/text", response_model=OkResp)
 async def text(id: str, body: TextLineReq, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.display_line(body.line, body.text))
+    return await _run(reg, id, lambda d: d.display_line(body.line, body.text), "text")
 
 
 @router.post("/{id}/two-lines", response_model=OkResp)
 async def two_lines(id: str, body: TwoLinesReq, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.display_two_lines(body.top, body.bottom))
+    return await _run(reg, id, lambda d: d.display_two_lines(body.top, body.bottom), "two_lines")
 
 
 @router.post("/{id}/total", response_model=OkResp)
 async def total(id: str, body: TotalReq, request: Request):
     reg = _require(request, id)
     return await _run(
-        reg, id, lambda d: d.display_total(body.label, body.amount, body.currency)
+        reg, id, lambda d: d.display_total(body.label, body.amount, body.currency), "total"
     )
 
 
@@ -179,29 +192,29 @@ async def change(id: str, body: ChangeReq, request: Request):
     return await _run(
         reg,
         id,
-        lambda d: d.display_change(body.amount, body.currency, body.label),
+        lambda d: d.display_change(body.amount, body.currency, body.label), "change",
     )
 
 
 @router.post("/{id}/cursor", response_model=OkResp)
 async def cursor(id: str, body: CursorReq, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.set_cursor(body.col, body.row))
+    return await _run(reg, id, lambda d: d.set_cursor(body.col, body.row), "cursor")
 
 
 @router.post("/{id}/brightness", response_model=OkResp)
 async def brightness(id: str, body: BrightnessReq, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.set_brightness(body.level))
+    return await _run(reg, id, lambda d: d.set_brightness(body.level), "brightness")
 
 
 @router.post("/{id}/blink", response_model=OkResp)
 async def blink(id: str, body: BlinkReq, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.set_blink(body.n))
+    return await _run(reg, id, lambda d: d.set_blink(body.n), "blink")
 
 
 @router.post("/{id}/self-test", response_model=OkResp)
 async def self_test(id: str, request: Request):
     reg = _require(request, id)
-    return await _run(reg, id, lambda d: d.self_test())
+    return await _run(reg, id, lambda d: d.self_test(), "self_test")

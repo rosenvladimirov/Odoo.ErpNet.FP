@@ -241,7 +241,10 @@
 <script>
 const ENDPOINT = window.location.origin;
 const KINDS = ["printers", "scales", "displays", "readers", "pinpads"];
-let state = { printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, statuses: {}, scans: {} };
+let state = {
+  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {},
+  statuses: {}, scans: {}, readerLast: {},
+};
 
 function toast(msg, kind = "ok") {
   const el = document.getElementById("toast");
@@ -302,8 +305,9 @@ async function loadKind(kind) {
 
 async function loadAll() {
   await Promise.all(KINDS.map(loadKind));
-  // After listings render, fetch printer statuses (only the kind with status endpoint)
+  // After listings render, fetch printer statuses + reader last-scan
   fetchAllStatuses();
+  fetchAllReaderLast();
 }
 
 async function fetchStatus(id) {
@@ -431,26 +435,52 @@ function renderDisplay(id, info) {
 
 function renderReader(id, info) {
   const recent = (state.scans[id] || []).slice(-5).reverse();
+  const last = state.readerLast?.[id];
+  const running = info.running;
+  const runBadge = running
+    ? '<span class="badge ok">● running</span>'
+    : '<span class="badge muted">○ stopped</span>';
+  const path = info.devicePath || info.device_path || info.port || "—";
   return `
     <div class="card">
       <div class="card-header">
         <h3>${id}</h3>
+        ${runBadge}
         <span class="uri">${info.transport || ""}</span>
       </div>
       <div class="card-body">
         <dl>
           <dt>Transport</dt><dd>${info.transport || "—"}</dd>
-          ${info.device_path ? `<dt>Device</dt><dd style="font-family:monospace;font-size:0.75rem">${info.device_path}</dd>` : ""}
-          ${info.port ? `<dt>Port</dt><dd>${info.port}</dd>` : ""}
+          <dt>Source</dt><dd style="font-family:monospace;font-size:0.75rem;word-break:break-all">${path}</dd>
+          <dt>Subscribers</dt><dd>${info.subscriberCount ?? 0}</dd>
+          ${last ? `<dt>Last scan</dt><dd style="font-family:monospace">${last.barcode} <span style="color:var(--text-dim);font-size:0.7rem">(${fmtAgo(new Date(last.timestamp).getTime())})</span></dd>` : ""}
         </dl>
         <div class="reader-feed">
-          ${recent.length ? recent.map(s => `<div class="scan">▶ ${s}</div>`).join("") : "(no scans yet)"}
+          ${recent.length ? recent.map(s => `<div class="scan">▶ ${s}</div>`).join("")
+                          : (last ? "" : "(no scans yet — try scanning a barcode)")}
         </div>
       </div>
       <div class="card-actions">
         <button class="sm" onclick="readerSubscribe('${id}')">▶ Listen</button>
+        <button class="sm" onclick="fetchReaderLast('${id}')">⟳ Refresh</button>
       </div>
     </div>`;
+}
+
+async function fetchReaderLast(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/readers/${encodeURIComponent(id)}/last`);
+    state.readerLast = state.readerLast || {};
+    state.readerLast[id] = r;          // null if no scans yet
+    renderKind("readers");
+  } catch (e) {
+    // ignore — 404 means reader not found, network error means proxy down
+  }
+}
+
+async function fetchAllReaderLast() {
+  const ids = Object.keys(state.readers || {});
+  await Promise.all(ids.map(fetchReaderLast));
 }
 
 function renderPinpad(id, info) {
@@ -594,7 +624,10 @@ function _initTabFromHash() {
 window.addEventListener("hashchange", _initTabFromHash);
 loadVersion();
 loadAll().then(_initTabFromHash);
+// Periodic refreshes — printers slower (status RPC takes ~1s on real device),
+// readers faster so the running-badge + last-scan stay current.
 setInterval(fetchAllStatuses, 30000);
+setInterval(() => loadKind("readers").then(fetchAllReaderLast), 5000);
 </script>
 </body>
 </html>

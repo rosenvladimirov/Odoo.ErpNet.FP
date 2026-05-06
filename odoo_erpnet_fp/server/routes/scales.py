@@ -77,17 +77,36 @@ async def scale_info(id: str, request: Request):
 @router.get("/{id}/weight", response_model=WeightReadResp)
 async def scale_weight(id: str, request: Request):
     reg = _require(request, id)
+    from .. import metrics as _m
     try:
         async with reg.with_scale(id) as sc:
             reading = await asyncio.to_thread(sc.read_weight)
-        return WeightReadResp(
-            ok=reading.ok,
-            weight_kg=reading.weight_kg,
-            status=reading.status,
-        )
     except Exception as exc:
         _logger.exception("scale weight read failed for %s", id)
+        try:
+            _m.scale_reads_total.labels(scale_id=id, outcome="unreachable").inc()
+        except Exception:
+            pass
         return WeightReadResp(ok=False, error=str(exc))
+
+    if reading.ok:
+        try:
+            _m.scale_reads_total.labels(scale_id=id, outcome="success").inc()
+            if reading.weight_kg is not None:
+                _m.scale_last_weight_kg.labels(scale_id=id).set(reading.weight_kg)
+        except Exception:
+            pass
+    else:
+        outcome = "unstable" if "unstable" in " ".join(reading.status).lower() else "error"
+        try:
+            _m.scale_reads_total.labels(scale_id=id, outcome=outcome).inc()
+        except Exception:
+            pass
+    return WeightReadResp(
+        ok=reading.ok,
+        weight_kg=reading.weight_kg,
+        status=reading.status,
+    )
 
 
 @router.get("/{id}/probe")
