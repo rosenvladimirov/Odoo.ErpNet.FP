@@ -1,0 +1,92 @@
+# C:\ProgramData\Odoo.ErpNet.FP\config.yaml
+#
+# Default Windows configuration for the ErpNet.FP proxy service.
+# Adjust ports and add devices as needed; restart the service after
+# any change:
+#   sc stop OdooErpNetFP && sc start OdooErpNetFP
+#
+# Log file: C:\ProgramData\Odoo.ErpNet.FP\logs\service.log
+# Dashboard: http://127.0.0.1:8001/
+# API docs:  http://127.0.0.1:8001/docs
+# Healthz:   http://127.0.0.1:8001/healthz
+# Metrics:   http://127.0.0.1:8001/metrics
+
+server:
+  host: "127.0.0.1"          # 0.0.0.0 if you need LAN access
+  port: 8001
+  log_level: INFO
+  tls:
+    enabled: false
+    # certfile: "C:\\ProgramData\\Odoo.ErpNet.FP\\certs\\server.crt"
+    # keyfile:  "C:\\ProgramData\\Odoo.ErpNet.FP\\certs\\server.key"
+  cors:
+    allow_origins:
+      - "http://localhost"
+      - "https://localhost"
+
+# ─── Fiscal printers — one entry per device ───────────────────────
+printers:
+  # Datecs DP-150 / FP-700 / FP-2000 over USB-CDC (Windows COM port).
+  # Find the COM number in Device Manager → Ports (COM & LPT).
+  # - id: dp150
+  #   driver: datecs.isl
+  #   transport: serial
+  #   port: COM3
+  #   baudrate: 115200
+  #   variant: dp150           # dp150 | dp150x | fp700x
+
+  # Datecs PM (FP-700 MX / FP-1000 series).
+  # - id: pm-fp700mx
+  #   driver: datecs.pm
+  #   transport: serial
+  #   port: COM4
+  #   baudrate: 115200
+
+  # TCP-attached printer (Eltrade etc.).
+  # - id: eltrade
+  #   driver: datecs.isl
+  #   transport: tcp
+  #   tcp_host: 192.168.1.50
+  #   tcp_port: 9100
+
+# ─── Customer displays ────────────────────────────────────────────
+displays:
+  # Datecs DPD-201 + ESC/POS-compatible clones (ICD CD-5220, Birch
+  # DSP-V9, Bematech PDX-3000) on a serial port (often the same
+  # box as the fiscal printer, second port).
+  # - id: pole1
+  #   driver: datecs.dpd201
+  #   port: COM5
+  #   baudrate: 9600
+
+# ─── Scales ───────────────────────────────────────────────────────
+scales:
+  # CAS PR-II / PD-II + Elicom EVL CASH47 + Datecs CAS-compat on COM
+  # - id: cash47
+  #   driver: cas.pr_ii
+  #   port: COM6
+  #   baudrate: 9600
+
+# ─── Pinpads ──────────────────────────────────────────────────────
+pinpads:
+  # DatecsPay terminal (NDA-locked driver, available separately).
+  # - id: pinpad1
+  #   driver: datecs.pay
+  #   port: COM7
+
+# ─── Barcode readers ──────────────────────────────────────────────
+readers:
+  # External-transport reader: hid2serial daemon POSTs each scan to
+  # POST /readers/<id>/inject. No virtual serial driver needed.
+  # - id: scanner1
+  #   transport: external
+  #   webhooks: []
+
+  # Serial reader (consumer side of a virtual COM pair, when using
+  # com0com / hid2vsp): the daemon writes barcodes to one half of
+  # the pair, this proxy reads from the other.
+  # - id: bt1
+  #   transport: serial
+  #   port: COM32
+  #   baudrate: 9600
+  #   webhooks: []
