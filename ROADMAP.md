@@ -1,6 +1,6 @@
 # ErpNet.FP — Roadmap to v1.0
 
-> Last updated: 2026-05-06 (evening) · Current version: **0.2.3**
+> Last updated: 2026-05-06 (late evening) · Current version: **0.2.5**
 
 A pure-Python drop-in replacement for the C# ErpNet.FP fiscal-printer
 HTTP server, oriented at the Bulgarian POS / retail market. Adds
@@ -11,7 +11,7 @@ clean integration.
 
 ---
 
-## Where we are (v0.2.3)
+## Where we are (v0.2.5)
 
 ### Hardware drivers
 - ✅ **Datecs PM** (FP-700 MX series)
@@ -27,11 +27,18 @@ clean integration.
 - ✅ Dashboard with version badge + 5 tabbed device sections + reader running indicator + auto-refresh
 - ✅ **End-to-end POS test passed** (Teemi TMSL-55 BLE → hid2serial → ErpNet.FP → dev-18 Odoo POS, 2026-05-06)
 
+### Observability (added 2026-05-06 late evening — half of v0.4 done)
+- ✅ `/metrics` Prometheus endpoint — request count, per-path latency histogram, per-device error rate, scale reads, last weight gauge, reader/display counters
+- ✅ Local monitoring stack — Prometheus + Grafana in `docker-compose.yml`, scrapes proxy every 5 s, 7-day retention, ~220 MB RAM, anonymous Viewer access
+- ✅ Pre-loaded dashboard `erpnet-fp-overview` (provisioned via YAML)
+- ✅ TLS via Traefik wildcard cert (`grafana.lan.mcpworks.net`, ACME DNS-01 through Cloudflare resolver `cf`)
+- ✅ Embedded view inside Odoo — `l10n_bg_erp_net_fp` 18.0.10.1.0 + 19.0.10.1.0: new "Monitoring" menu under ErpNet.FP that opens the dashboard in a kiosk-mode iframe (URL configurable in Settings → POS → Packaging Weight QC → Embedded Grafana monitoring)
+
 ### What's still missing for v1.0
 
 - Hardware coverage gaps: **Borica** / **myPOS** pinpads, **Posiflex PD-2600/2800** displays, **Datecs ETS** / **Elicom EPS** label-printing scales
 - Fiscal printers: **Tremol** / **Eltrade** / **Incotex** — stubs exist, need full driver
-- Production: no auth beyond Bearer, no `/metrics` endpoint, no persistent device state, no audit log rotation
+- Production: no auth beyond Bearer, no persistent device state, no audit log rotation
 - Quality: minimal test coverage, no CI, no hardware-in-loop testing
 - Distribution: no signed Docker images, no Helm chart, no public release announcement
 - Windows: code-complete (`hid2serial` v0.2.0-dev) but **awaiting real-hardware test** with com0com + scanner
@@ -64,7 +71,7 @@ disconnect). The remaining half stays as v0.3 below.
 
 - HTTPS auth: Bearer / mTLS / IP allow-list, picked per server in config.yaml
 - Per-device health monitoring — probe every 30 s, alert on webhook if a device stays down longer than 5 min
-- `/metrics` Prometheus endpoint — request count, latency p50/p95/p99, per-device error rate, queue depth
+- ~~`/metrics` Prometheus endpoint~~ — **DONE in 0.2.5** (full Counter/Gauge/Histogram, bounded label cardinality)
 - Persistent device state — JSON cache for last weight, last scan, last receipt; survives restart
 - Webhook delivery with retry queue + dead-letter queue
 - Audit log for all outgoing fiscal commands — JSONL, rotate daily, optional remote shipment
@@ -98,6 +105,40 @@ disconnect). The remaining half stays as v0.3 below.
 - Public announcement: Odoo forum, LinkedIn, [`awesome-odoo`](https://github.com/odoo/awesome-odoo) PR
 - Final license review (currently LGPL-3.0-or-later)
 - Branded icons (placeholder green-square in v0.2.x) + Authenticode-signed Windows installer
+
+---
+
+## Module independence — Grafana embed vs ErpNet.FP monitoring stack
+
+The Odoo Grafana embed and the ErpNet.FP-bundled monitoring stack are
+**fully decoupled** — either one works without the other:
+
+| Component | Lives in | Depends on |
+|---|---|---|
+| `l10n_bg_erp_net_fp` "Monitoring" menu (iframe + URL config) | Odoo addon | Just an iframe — works with **any** Grafana URL the user configures |
+| Bundled Prometheus + Grafana stack | `Odoo.ErpNet.FP/docker-compose.yml` | Just scrapes `odoo-erpnet-fp:8001/metrics` — works with or without an Odoo backend |
+
+Implications:
+
+- The Odoo embed module can point at a remote / hosted / cloud Grafana
+  (a customer's existing observability stack, Grafana Cloud, etc.).
+  Set Settings → POS → Embedded Grafana monitoring → URL to whatever
+  Grafana you already run.
+- The ErpNet.FP local stack can be browsed directly via
+  `http://localhost:3001` or `https://grafana.lan.mcpworks.net`
+  without ever installing the Odoo addon. This is useful for
+  technicians who want a quick health dashboard at the till without
+  jumping through Odoo.
+- If the URL field is blank in Odoo settings, the menu still loads
+  but shows a friendly "Configure Grafana URL first" message —
+  no traceback.
+- The dashboard JSON (`monitoring/grafana/dashboards/erpnet-fp.json`)
+  is provisioned in the bundled stack but is also a plain Grafana
+  export, importable into any other Grafana instance via the UI.
+
+So you can mix and match: bundled stack only, embed only (pointing
+elsewhere), both, or neither. The pieces don't share state, secrets,
+or wire formats beyond standard Prometheus scrape and HTTPS iframe.
 
 ---
 
@@ -151,11 +192,21 @@ disconnect). The remaining half stays as v0.3 below.
 
 - **9 commits** on `Odoo.ErpNet.FP` (dashboard tabs, version badge, IoT compat, displays, scale drivers, last-scan endpoints, etc.)
 - **8 tags** on `hid2serial` (v0.1.0 → v0.1.6, plus v0.2.0-dev)
-- **4 module bumps** on `l10n_bg_erp_net_fp` (18.0.9.0.0 → 18.0.10.0.4, mirror in v19)
+- **5 module bumps** on `l10n_bg_erp_net_fp` (18.0.9.0.0 → **18.0.10.1.0**, mirror in v19)
 - **deb package** built + tested (`hid2serial_0.1.6_all.deb`)
 - **Windows installer** built via Docker (`hid2serial-0.2.0-dev-setup.exe`)
 - **dev-18 deployment** — module installed + upgraded with all dependencies
 - **End-to-end POS test PASSED** with real Teemi BLE scanner
+
+### Late-evening additions (after the first POS test)
+
+- **`/metrics` endpoint** in proxy (0.2.4) — prometheus_client wrapper with no-op fallback when the lib is missing
+- **Local Prometheus + Grafana stack** in `docker-compose.yml` (0.2.4) — anonymous viewer, dark theme, 192 MB + 128 MB memory caps
+- **Wildcard TLS** for `*.lan.mcpworks.net` via Traefik DNS-01 ACME (Cloudflare resolver) — same cert covers `erpnet.lan.mcpworks.net` and `grafana.lan.mcpworks.net`
+- **Traefik routing precedence fix** — `priority: 100` on the grafana router so it wins over the proxy's `HostRegexp({sub:[a-z0-9-]+}.lan.mcpworks.net)` catch-all
+- **Grafana iframe-embedding allowed** (0.2.5) — `GF_SECURITY_ALLOW_EMBEDDING=true` + `SameSite=none` + `Secure` cookies → drops `X-Frame-Options: DENY`
+- **Odoo embed module** — `l10n_bg_erp_net_fp` 18.0.10.1.0 + 19.0.10.1.0: new OWL component reads `ir.config_parameter` for URL + dashboard UID, builds kiosk-mode URL with auto-refresh, renders inside Odoo backend; new menu "Monitoring" under ErpNet.FP, restricted to `point_of_sale.group_pos_manager`
+- **Documented decoupling** — see "Module independence" section above
 
 ---
 
