@@ -56,6 +56,7 @@ from ..drivers.readers import (
 from ..drivers.scales import (
     AsciiContinuousScale,
     CasPrIIScale,
+    OhausRangerScale,
     Toledo8217Scale,
 )
 
@@ -400,6 +401,15 @@ _SCALE_DRIVERS = {
     "acs": AsciiContinuousScale,
     "jcs": AsciiContinuousScale,
     "generic": AsciiContinuousScale,
+
+    # OHAUS Ranger 3000 / Count 3000 / Valor 7000 with Ethernet kit
+    # 30037447 — TCP port 9761 fixed by firmware. `port` config field
+    # is the host or "host:9761" string, baudrate is ignored.
+    "ohaus_ranger": OhausRangerScale,
+    "ohaus": OhausRangerScale,
+    "ranger3000": OhausRangerScale,
+    "ranger.count3000": OhausRangerScale,
+    "valor7000": OhausRangerScale,
 }
 
 

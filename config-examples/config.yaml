@@ -90,6 +90,11 @@ printers:
 #                      Covers ACS 6/15, ACS 15/30, JCS, no-name OEM.
 #   toledo_8217      — Mettler-Toledo industrial (Ariva-S, Viva).
 #                      Aliases: mettler.toledo.8217, ariva-s.
+#   ohaus_ranger     — OHAUS Ranger 3000 / Count 3000 / Valor 7000 over
+#                      the Ethernet kit P/N 30037447 — TCP, port 9761
+#                      fixed by firmware. `port` field is the host or
+#                      `host:9761`; baudrate is ignored (Ethernet only).
+#                      Aliases: ohaus, ranger3000, ranger.count3000, valor7000.
 
 # scales:
 #   # CAS PR-II 6/15 kg counter scale (~250 BGN, itgstore.bg)
@@ -115,6 +120,13 @@ printers:
 #     driver: toledo_8217
 #     port: /dev/ttyUSB4
 #     baudrate: 9600
+#
+#   # OHAUS Ranger Count 3000 with Ethernet kit 30037447
+#   # (read scale's IP from menu: E.t.h.r.n.t / Ip Adr;
+#   #  port 9761 is hard-coded by the kit firmware)
+#   - id: ohaus1
+#     driver: ohaus_ranger
+#     port: 192.168.3.162           # or "192.168.3.162:9761"
 
 # ─── Barcode readers ─────────────────────────────────────────────
 #
