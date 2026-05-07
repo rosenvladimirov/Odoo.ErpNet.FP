@@ -290,6 +290,16 @@ def cli(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Wire the in-memory ring-buffer handler — feeds /admin/logs +
+    # /admin/logs/stream so admins can read recent logs without shell
+    # access to the host (e.g. for CF-fronted instances).
+    try:
+        from .routes.admin import install_log_buffer
+        install_log_buffer()
+    except Exception:
+        # /admin/logs is optional — proxy must boot even if it fails.
+        logging.exception("install_log_buffer failed")
+
     # Lazy import so `odoo-erpnet-fp --help` works without uvicorn installed
     import uvicorn
 

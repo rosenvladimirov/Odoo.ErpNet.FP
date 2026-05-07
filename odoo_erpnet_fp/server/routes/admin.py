@@ -33,15 +33,68 @@ host root password — never embed it in client-side code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
+import time
+from collections import deque
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _logger = logging.getLogger(__name__)
+
+
+# ─── In-memory ring-buffer log handler ────────────────────────────
+#
+# Captures every log record emitted by the proxy into a bounded
+# deque so admins can read the most-recent N lines via /admin/logs
+# without shell access to the host. SSE variant streams new lines
+# as they arrive.
+
+_LOG_BUFFER: deque = deque(maxlen=int(os.environ.get("ERPNET_LOG_BUFFER", "5000")))
+_LOG_LISTENERS: list[asyncio.Queue] = []
+
+
+class _RingBufferHandler(logging.Handler):
+    """Logging handler — appends formatted records to the ring buffer
+    and notifies SSE listeners. Threadsafe: deque.append + list of
+    asyncio.Queue.put_nowait."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            ts = record.created
+            entry = {"ts": ts, "level": record.levelname,
+                     "name": record.name, "msg": line}
+            _LOG_BUFFER.append(entry)
+            for q in list(_LOG_LISTENERS):
+                try:
+                    q.put_nowait(entry)
+                except asyncio.QueueFull:
+                    # Slow listener — drop the oldest message it had,
+                    # then enqueue the new one. Better than blocking.
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(entry)
+                    except Exception:
+                        pass
+        except Exception:
+            self.handleError(record)
+
+
+def install_log_buffer():
+    """Wire the ring-buffer handler onto the root logger. Call once
+    after `logging.basicConfig` in main.py."""
+    h = _RingBufferHandler(level=logging.DEBUG)
+    h.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    ))
+    logging.getLogger().addHandler(h)
 
 
 # ENV-driven configuration. All optional — sensible defaults for a
@@ -261,3 +314,122 @@ async def trigger_self_update(
             "in 3 s. Poll /healthz to detect the new container."
         ),
     }
+
+
+# ─── GET /admin/logs ─── tail recent entries ─────────────────────
+
+
+@router.get("/logs")
+async def get_logs(
+    tail: int = Query(200, ge=1, le=5000,
+                      description="How many recent lines to return"),
+    level: Optional[str] = Query(None, regex="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
+                                  description="Minimum level filter"),
+    contains: Optional[str] = Query(None, max_length=200,
+                                     description="Substring filter"),
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+):
+    """Return the most-recent N log entries as JSON.
+
+    Useful for remote debug without shell access — e.g. when the
+    proxy is fronted by Cloudflare and `docker logs` requires SSH.
+    Filtering by `level` / `contains` happens server-side so the
+    response stays small.
+    """
+    _check_token(x_admin_token)
+
+    snapshot = list(_LOG_BUFFER)
+    levels_order = {"DEBUG": 10, "INFO": 20, "WARNING": 30,
+                    "ERROR": 40, "CRITICAL": 50}
+    if level:
+        floor = levels_order[level]
+        snapshot = [
+            e for e in snapshot
+            if levels_order.get(e["level"], 20) >= floor
+        ]
+    if contains:
+        c = contains.lower()
+        snapshot = [e for e in snapshot if c in e["msg"].lower()]
+
+    snapshot = snapshot[-tail:]
+    return {
+        "count": len(snapshot),
+        "buffer_size": _LOG_BUFFER.maxlen,
+        "lines": snapshot,
+    }
+
+
+# ─── GET /admin/logs/stream ─── SSE live tail ───────────────────
+
+
+@router.get("/logs/stream")
+async def stream_logs(
+    request: Request,
+    level: Optional[str] = Query(None, regex="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"),
+    contains: Optional[str] = Query(None, max_length=200),
+    backfill: int = Query(50, ge=0, le=500,
+                          description="Existing lines to send before live tail"),
+    x_admin_token: Optional[str] = Query(None, alias="token",
+                                          description="Admin token (query param so EventSource can pass it)"),
+):
+    """Live tail via Server-Sent Events.
+
+    EventSource API on the browser side can't set custom request
+    headers, so the admin token comes in via `?token=…` query param.
+    Subsequent log records are pushed as `data: <json>\\n\\n` events.
+    Connection ends when the client disconnects or the server stops.
+    """
+    _check_token(x_admin_token)
+
+    levels_order = {"DEBUG": 10, "INFO": 20, "WARNING": 30,
+                    "ERROR": 40, "CRITICAL": 50}
+    floor = levels_order.get(level, 0) if level else 0
+    needle = contains.lower() if contains else None
+
+    def _accept(entry: dict) -> bool:
+        if floor and levels_order.get(entry["level"], 20) < floor:
+            return False
+        if needle and needle not in entry["msg"].lower():
+            return False
+        return True
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _LOG_LISTENERS.append(queue)
+
+    async def _gen():
+        import json
+        try:
+            # Backfill — last N already-buffered lines, server-side filtered.
+            backfilled = [e for e in list(_LOG_BUFFER) if _accept(e)][-backfill:]
+            for e in backfilled:
+                yield f"data: {json.dumps(e)}\n\n"
+            # Live tail
+            heartbeat = time.monotonic() + 15.0
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    e = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    if _accept(e):
+                        yield f"data: {json.dumps(e)}\n\n"
+                except asyncio.TimeoutError:
+                    pass
+                # Periodic heartbeat keeps the connection alive through
+                # idle proxies / load balancers.
+                if time.monotonic() > heartbeat:
+                    yield ": keepalive\n\n"
+                    heartbeat = time.monotonic() + 15.0
+        finally:
+            try:
+                _LOG_LISTENERS.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering if behind one
+        },
+    )
