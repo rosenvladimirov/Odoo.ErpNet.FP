@@ -842,7 +842,85 @@ async def reset_printer(id: str, request: Request):
         return GenericResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
 
 
-# ─── 14. POST /{id}/rawrequest ────────────────────────────────────
+# ─── 14. GET / POST /{id}/vat-rates ───────────────────────────────
+
+
+@router.get("/{id}/vat-rates")
+async def get_vat_rates(id: str, request: Request):
+    """Read currently programmed VAT rates from the device.
+
+    Response shape: `{ok, rates: {А: 2000, Б: 900, В: 0, Г: null, ...},
+                     decimal_point: 2}`.
+    Each rate is an integer × 100 (so 2000 = 20.00%); `null` means
+    the slot is disabled.
+
+    PM-only for now; ISL devices use a different rate-read path
+    (cmd 0x21 sub 'I' on most variants) — TODO when first ISL request
+    lands.
+    """
+    registry = _require_printer(request, id)
+    if not registry.is_pm(id):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="VAT-rate reading is currently only implemented "
+                   "for the Datecs PM driver.",
+        )
+    try:
+        async with registry.with_driver(id) as drv:
+            rates = await asyncio.to_thread(drv.read_vat_rates)
+        return {
+            "ok": True,
+            "rates": {k: v for k, v in rates.items() if k != "decimal_point"},
+            "decimal_point": rates.get("decimal_point", 2),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+@router.post("/{id}/vat-rates")
+async def set_vat_rates(id: str, body: dict, request: Request):
+    """Program VAT rates on the device (cmd 0x53 'P').
+
+    Request body: `{rates: {"А": 2000, "Б": 900, "В": 0, "Г": null, ...},
+                   decimal_point: 2}` — same shape as GET response.
+
+    Cyrillic letters are preferred; Latin shortcuts A-H are auto-
+    translated to А-З. Rate values are integer × 100. Use `null` to
+    disable a slot.
+
+    FISCAL CAVEAT: Bulgarian devices typically reject VAT changes
+    unless a Z-report has zeroed the daily totals first; some changes
+    require service-mode unlock. The proxy passes through the device's
+    error code unchanged.
+    """
+    registry = _require_printer(request, id)
+    if not registry.is_pm(id):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="VAT-rate programming is currently only implemented "
+                   "for the Datecs PM driver.",
+        )
+    rates = body.get("rates") or {}
+    if not isinstance(rates, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`rates` must be a dict of {letter: int×100 | null}",
+        )
+    decimal_point = int(body.get("decimal_point", 2))
+    try:
+        async with registry.with_driver(id) as drv:
+            await asyncio.to_thread(drv.program_vat_rates, rates, decimal_point)
+            new_rates = await asyncio.to_thread(drv.read_vat_rates)
+        return {
+            "ok": True,
+            "rates": {k: v for k, v in new_rates.items() if k != "decimal_point"},
+            "decimal_point": new_rates.get("decimal_point", 2),
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+# ─── 15. POST /{id}/rawrequest ────────────────────────────────────
 
 
 @router.post("/{id}/rawrequest", response_model=GenericResult)

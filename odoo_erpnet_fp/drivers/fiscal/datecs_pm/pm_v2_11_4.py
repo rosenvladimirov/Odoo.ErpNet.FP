@@ -204,6 +204,96 @@ class PmDevice:
         errors.raise_for_code(code)
         return (rest[0].strip() if rest else text).strip()
 
+    # ---- VAT-rate programming (cmd 0x53) ------------------------------
+
+    # 1..8 → CP-1251 letter sequence the device expects internally.
+    # Slots 5..8 are device-programmable but rarely used in BG retail.
+    _VAT_LETTERS = ("А", "Б", "В", "Г", "Д", "Е", "Ж", "З")
+
+    def read_vat_rates(self) -> dict:
+        """0x53 'I' — Read currently programmed VAT rates.
+
+        Returns: dict like {'А': 2000, 'Б': 900, 'В': 0, 'Г': None,
+                            'decimal_point': 2}
+        Each rate is stored as int × 100 (so 2000 = 20.00%). `None`
+        means the slot is disabled ('X' from the device).
+        """
+        data = codec.encode_data("I")
+        resp = self._exchange(commands.CMD_VAT_PROGRAMMING, data)
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+
+        # rest is a list of TAB-separated string fields. Pad to 9 to be
+        # tolerant of firmware that truncates trailing fields.
+        fields = list(rest) if rest else []
+        while len(fields) < 9:
+            fields.append("")
+        out: dict = {}
+        for idx, letter in enumerate(self._VAT_LETTERS):
+            v = fields[idx].strip().upper()
+            if not v or v == "X":
+                out[letter] = None
+            else:
+                try:
+                    out[letter] = int(v)
+                except ValueError:
+                    out[letter] = None
+        try:
+            out["decimal_point"] = int(fields[8].strip() or "2")
+        except ValueError:
+            out["decimal_point"] = 2
+        return out
+
+    def program_vat_rates(self, rates: dict, decimal_point: int = 2) -> None:
+        """0x53 'P' — Program VAT rates.
+
+        `rates` keys: any of 'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З'
+        (CP-1251 Cyrillic) OR 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'
+        (Latin shortcuts — auto-translated).
+
+        Values: integer × 100 (e.g. 2000 = 20.00%, 900 = 9.00%, 0 =
+        zero-rated). Use `None` to disable a slot.
+
+        FISCAL CAVEAT: BG devices typically reject VAT programming
+        unless a Z-report has been printed first today (daily totals
+        zeroed) and may require service-mode unlock for certain rate
+        changes. The proxy surfaces the device's error code unchanged
+        — interpret it through the Datecs PM error-code reference.
+        """
+        # Normalize Latin → Cyrillic
+        latin_map = dict(zip("ABCDEFGH", self._VAT_LETTERS))
+        normalized = {}
+        for k, v in rates.items():
+            if not isinstance(k, str):
+                raise ValueError(f"VAT slot key must be str, got {type(k)}")
+            up = k.strip().upper()
+            cyr = latin_map.get(up, up)  # already cyrillic OR translated
+            if cyr not in self._VAT_LETTERS:
+                raise ValueError(
+                    f"Unknown VAT slot {k!r} — valid: А-З or A-H")
+            normalized[cyr] = v
+
+        # Build TAB-separated fields: P\t<v0>\t<v1>...\t<v7>\t<dcpp>
+        fields: list = ["P"]
+        for letter in self._VAT_LETTERS:
+            if letter in normalized:
+                v = normalized[letter]
+                if v is None:
+                    fields.append("X")
+                elif isinstance(v, (int, float)):
+                    fields.append(str(int(v)))
+                else:
+                    raise ValueError(
+                        f"VAT rate for {letter!r} must be int×100 or None, "
+                        f"got {v!r}")
+            else:
+                fields.append("X")  # not provided → keep disabled
+        fields.append(str(int(decimal_point)))
+        data = codec.encode_data(*fields)
+        resp = self._exchange(commands.CMD_VAT_PROGRAMMING, data, timeout=10.0)
+        code, _ = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+
     def detect(self) -> dict:
         """Aggregate `read_device_info` + `read_tax_number` into a single
         dict shaped like the ISL `IslDeviceInfo` cache used by
