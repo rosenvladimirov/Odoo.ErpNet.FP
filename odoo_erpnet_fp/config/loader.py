@@ -90,23 +90,37 @@ class TlsConfig:
 class RegistryConfig:
     """Fleet registry — central Odoo control plane.
 
-    Heartbeat flow:
-      1. Admin creates `erpnet.fp.proxy` record in Odoo and copies the
-         one-time pairing token into `pairing_token` below.
-      2. On first start the proxy POSTs `/erp_net_fp/registry/pair`,
-         exchanges the pairing token for a long-lived `secret`, and
-         persists it back to config.yaml. The pairing token is then
-         removed (it is single-use).
-      3. Every `interval_seconds`, proxy POSTs
-         `/erp_net_fp/registry/heartbeat` with HMAC-signed body so
-         Odoo can update `last_seen`, `version`, `devices`, etc.
+    Default flow (zero-touch auto-enrol):
+      1. Set `enabled: true`. Pick a stable `name` (defaults to
+         hostname — change to something meaningful like "sofia-shop-1").
+      2. On startup the proxy POSTs `/erp_net_fp/registry/auto-enrol`
+         with `{name, host, version, admin_token, public_url}`. The
+         admin_token (auto-bootstrapped on first run) is the proof of
+         ownership — the server creates a fresh record with the proxy
+         in `active` state, or refreshes the existing record if the
+         admin_token matches.
+      3. The server returns a long-lived `secret` which the proxy
+         persists to `/app/data/registry_secret` (config.yaml is
+         typically mounted read-only).
+      4. Every `interval_seconds`, proxy POSTs
+         `/erp_net_fp/registry/heartbeat` with HMAC-signed body.
 
-    Disabled by default — set `enabled: true` after generating a
-    pairing token in Odoo.
+    Manual pairing flow (for stricter setups):
+      Set `pairing_token` to a one-time token issued from the Fleet
+      UI; auto-enrol is then skipped. After successful pair the proxy
+      clears the token and uses the returned secret.
+
+    Disabled by default — set `enabled: true` to opt in.
+
+    `public_url` is what the Odoo backend uses for back-channel
+    /admin/* calls (Update, Logs, VAT). Leave empty for local-only
+    dev proxies — the backend will then reject Update/Logs/VAT.
     """
 
     enabled: bool = False
     url: str = "https://iot.mcpworks.net"
+    name: str = ""
+    public_url: str = ""
     pairing_token: str = ""
     secret: str = ""
     interval_seconds: int = 60
@@ -278,6 +292,8 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         registry=RegistryConfig(
             enabled=bool(registry_data.get("enabled", False)),
             url=str(registry_data.get("url", "https://iot.mcpworks.net")).rstrip("/"),
+            name=str(registry_data.get("name") or "").strip(),
+            public_url=str(registry_data.get("public_url") or "").rstrip("/"),
             pairing_token=str(registry_data.get("pairing_token") or "").strip(),
             secret=str(registry_data.get("secret") or "").strip(),
             interval_seconds=int(registry_data.get("interval_seconds", 60)),
