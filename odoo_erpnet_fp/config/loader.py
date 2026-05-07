@@ -87,11 +87,38 @@ class TlsConfig:
 
 
 @dataclass
+class RegistryConfig:
+    """Fleet registry — central Odoo control plane.
+
+    Heartbeat flow:
+      1. Admin creates `erpnet.fp.proxy` record in Odoo and copies the
+         one-time pairing token into `pairing_token` below.
+      2. On first start the proxy POSTs `/erp_net_fp/registry/pair`,
+         exchanges the pairing token for a long-lived `secret`, and
+         persists it back to config.yaml. The pairing token is then
+         removed (it is single-use).
+      3. Every `interval_seconds`, proxy POSTs
+         `/erp_net_fp/registry/heartbeat` with HMAC-signed body so
+         Odoo can update `last_seen`, `version`, `devices`, etc.
+
+    Disabled by default — set `enabled: true` after generating a
+    pairing token in Odoo.
+    """
+
+    enabled: bool = False
+    url: str = "https://iot.mcpworks.net"
+    pairing_token: str = ""
+    secret: str = ""
+    interval_seconds: int = 60
+
+
+@dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8001
     log_level: str = "info"
     tls: TlsConfig = field(default_factory=TlsConfig)
+    registry: RegistryConfig = field(default_factory=RegistryConfig)
 
 
 @dataclass
@@ -233,6 +260,7 @@ def _to_int(v: Any) -> Optional[int]:
 def _yaml_to_app_config(data: dict) -> AppConfig:
     server_data = data.get("server", {})
     tls_data = server_data.get("tls", {})
+    registry_data = server_data.get("registry", {})
     server = ServerConfig(
         host=server_data.get("host", "0.0.0.0"),
         port=int(server_data.get("port", 8001)),
@@ -246,6 +274,13 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             require_client_cert=bool(
                 tls_data.get("require_client_cert", False)
             ),
+        ),
+        registry=RegistryConfig(
+            enabled=bool(registry_data.get("enabled", False)),
+            url=str(registry_data.get("url", "https://iot.mcpworks.net")).rstrip("/"),
+            pairing_token=str(registry_data.get("pairing_token") or "").strip(),
+            secret=str(registry_data.get("secret") or "").strip(),
+            interval_seconds=int(registry_data.get("interval_seconds", 60)),
         ),
     )
     server.tls.validate()

@@ -75,13 +75,19 @@ def _read_version() -> str:
         return "dev"
 
 
-def create_app(config: AppConfig) -> FastAPI:
+def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     """Build a FastAPI app bound to the given config.
 
     Importing `routes.printers` is deferred until here so that simply
     importing this module (e.g. by the CLI dispatcher) doesn't pull in
     the full route tree before the registry is configured.
+
+    `config_path` is the on-disk YAML path; the fleet registry client
+    needs it to write back the long-lived secret after pairing. If
+    omitted, pairing still works in-memory but the secret is lost on
+    restart.
     """
+    import asyncio  # noqa: F401  — needed for fleet task management below
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
         # Bind reader threads to the live event loop so push events reach
@@ -89,9 +95,24 @@ def create_app(config: AppConfig) -> FastAPI:
         # per-reader; one bad device doesn't block server startup.
         await reader_registry.start_all()
         await display_registry.start_all()
+        # Fleet registry — pair once if needed, then heartbeat in
+        # background. No-op when server.registry.enabled is false.
+        from .registry import fleet_loop
+        fleet_task: asyncio.Task | None = None
+        if app.state.config.server.registry.enabled:
+            fleet_task = asyncio.create_task(
+                fleet_loop(app, config_path or Path("config.yaml")),
+                name="fleet-heartbeat",
+            )
         try:
             yield
         finally:
+            if fleet_task is not None:
+                fleet_task.cancel()
+                try:
+                    await fleet_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             await reader_registry.stop_all()
             await display_registry.stop_all()
 
@@ -321,7 +342,7 @@ def cli(argv: list[str] | None = None) -> int:
     # Lazy import so `odoo-erpnet-fp --help` works without uvicorn installed
     import uvicorn
 
-    app = create_app(config)
+    app = create_app(config, config_path=args.config)
 
     uvicorn_kwargs: dict = {
         "host": config.server.host,

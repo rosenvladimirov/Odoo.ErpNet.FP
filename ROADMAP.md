@@ -89,33 +89,23 @@ disconnect). The remaining half stays as v0.3 below.
 - Audit log for all outgoing fiscal commands — JSONL, rotate daily, optional remote shipment
 - Windows hardware test with `hid2serial` 0.2.0 → release as 0.2.0 stable
 
-### v0.4.5 — Fleet remote management (DESIGN APPROVED 2026-05-07, ~1 week)
+### v0.3 — Fleet remote management (SHIPPED 2026-05-07)
 
-**Goal:** one Odoo backend (dev-18) controls every deployed ErpNet.FP
-proxy without per-instance SSH.
+**Goal:** one Odoo backend (`iot.mcpworks.net`, v19 CE) controls
+every deployed ErpNet.FP proxy without per-instance SSH.
 
-**Architecture:**
-```
-ErpNet.FP startup + every 60 s:
-   POST <registry_url>/erp_net_fp/registry/heartbeat
-   X-Registry-Secret: <per-proxy-secret>
-   {host, version, admin_token, devices}
-
-Odoo upserts erpnet.fp.proxy record.
-```
-
-**Phase 1 — Heartbeat protocol:**
-- Proxy `config.yaml` adds `server.registry: {url, secret}`; httpx-async task every 60 s; pushes admin_token (so Odoo back-channel `/admin/*` works)
-- Odoo `/erp_net_fp/registry/heartbeat` controller (validates per-proxy secret); upserts `erpnet.fp.proxy(name, url, version, admin_token, last_seen, devices_json, alive)`
-
-**Phase 2 — Odoo Fleet view + buttons:**
-- Model `erpnet.fp.proxy` (secret generated on create — admin copies into proxy `config.yaml`)
-- Tree + form views, menu under ErpNet.FP
-- Buttons: Update (POST `/admin/self-update`) / View Logs (GET `/admin/logs?tail=N`) / Program VAT (POST `/printers/{id}/vat-rates`) — all via stored admin_token
-
-**Open decisions:**
-- Bootstrap UX: how does proxy initially get its registry secret? Manual `config.yaml` edit (simpler) vs auto-discovery via `/admin/bootstrap-info` (zero-touch but requires registry on RFC1918 link).
-- Encryption of `admin_token` storage in Odoo (security review needed before production).
+**Delivered:**
+- Proxy: `config.yaml` `server.registry: {enabled, url, pairing_token, secret, interval_seconds}` (default `url: https://iot.mcpworks.net`); `server/registry.py` async httpx loop — pairs once via `POST /erp_net_fp/registry/pair`, persists secret back to YAML, then heartbeats every 60 s with HMAC-SHA256 signed body containing host, version, admin_token, device list
+- Odoo module **`l10n_bg_erp_net_fp_fleet`** (separate from core `l10n_bg_erp_net_fp` — minimal deps `base, mail`, deployable on dedicated CE 19 stack):
+  - Model `erpnet.fp.proxy` (state machine draft → pairing → active → archived)
+  - One-time pairing tokens (1-h TTL, single-use, swept by cron every 5 min)
+  - Long-lived `registry_secret` (32-byte URL-safe, validates HMAC on every heartbeat)
+  - `admin_token_encrypted` — Fernet AES-128-CBC ciphertext, key in `ir.config_parameter` `l10n_bg_erp_net_fp_fleet.fernet_key` (group_system only)
+  - Computed `alive` (true if `last_seen` < 180 s); decoration in list view (success/danger/warning)
+  - Form buttons: Generate Pairing Token / Self-update / View Logs / Program VAT (wizard) / Reset Secret / Archive
+  - Two security groups: `Fleet Viewer` (read-only) + `Fleet Manager` (full)
+  - Public-facing routes: `/erp_net_fp/registry/pair` + `/erp_net_fp/registry/heartbeat` (auth=public, gated by token / HMAC)
+- Bumped to **0.3.0**.
 
 ### v0.5 — Odoo integration depth (~2 weeks)
 
