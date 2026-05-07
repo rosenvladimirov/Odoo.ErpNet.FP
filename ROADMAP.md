@@ -1,6 +1,6 @@
 # ErpNet.FP — Roadmap to v1.0
 
-> Last updated: 2026-05-06 (late evening) · Current version: **0.2.5**
+> Last updated: 2026-05-07 (evening) · Current version: **0.2.17**
 
 A pure-Python drop-in replacement for the C# ErpNet.FP fiscal-printer
 HTTP server, oriented at the Bulgarian POS / retail market. Adds
@@ -34,15 +34,27 @@ clean integration.
 - ✅ TLS via Traefik wildcard cert (`grafana.lan.mcpworks.net`, ACME DNS-01 through Cloudflare resolver `cf`)
 - ✅ Embedded view inside Odoo — `l10n_bg_erp_net_fp` 18.0.10.1.0 + 19.0.10.1.0: new "Monitoring" menu under ErpNet.FP that opens the dashboard in a kiosk-mode iframe (URL configurable in Settings → POS → Packaging Weight QC → Embedded Grafana monitoring)
 
+### Shipped 2026-05-07 (post-0.2.5)
+
+- ✅ **OHAUS Ranger SICS scale driver** (TCP MT-SICS, Ethernet kit P/N 30037447) — 0.2.10
+- ✅ **Datecs PM `read_device_info`** (CMD 0x7B) — populates serial / FM / firmware in `/printers` — 0.2.10
+- ✅ **`/admin/self-update` endpoint + UI modal** (docker:25-cli sidecar with `compose --force-recreate`) — 0.2.11..0.2.14
+- ✅ **`/printers/{id}/vat-rates`** GET (read) + POST (program) — Datecs PM cmd 0x53; eliminates need for service tech to fix "Forbidden VAT" rejections — 0.2.15
+- ✅ **`/admin/logs` + `/admin/logs/stream` SSE** — in-memory ring buffer (5000 lines), level/contains filters, Server-Sent Events for live tail — 0.2.16
+- ✅ **Auto-bootstrap admin token** + `/admin/bootstrap-info` (RFC1918-restricted, one-time-claim → 410 Gone) — operators no longer need `ERPNET_ADMIN_TOKEN` env var preconfigured — 0.2.17
+- ✅ **l10n_bg_erp_net_fp split** — core (CE-installable) + EE bridge `l10n_bg_erp_net_fp_iot` + OCA bridge `l10n_bg_erp_net_fp_iot_oca`; **v19 deployed today** (was open in roadmap)
+- ✅ **Per-cashier operator credentials** on `res.users` — sent to Datecs as operator/password per receipt
+- ✅ **Cloudflare bot-rule UA workaround** — browser-like UA on backend HTTP calls (was 403'ing fp.stedy.bg behind CF)
+
 ### What's still missing for v1.0
 
 - Hardware coverage gaps: **Borica** / **myPOS** pinpads, **Posiflex PD-2600/2800** displays, **Datecs ETS** / **Elicom EPS** label-printing scales
 - Fiscal printers: **Tremol** / **Eltrade** / **Incotex** — stubs exist, need full driver
-- Production: no auth beyond Bearer, no persistent device state, no audit log rotation
-- Quality: minimal test coverage, no CI, no hardware-in-loop testing
+- ~~l10n_bg_erp_net_fp v19 deploy~~ — **DONE 2026-05-07**
+- Persistent device state, webhook delivery retry/DLQ, audit log JSONL rotation
+- Quality: minimal test coverage (173 unit tests today, no integration), no CI, no hardware-in-loop testing
 - Distribution: no signed Docker images, no Helm chart, no public release announcement
 - Windows: code-complete (`hid2serial` v0.2.0-dev) but **awaiting real-hardware test** with com0com + scanner
-- l10n_bg_erp_net_fp v19 deploy — pending `l10n_bg_*` schema repair on dev-19
 
 ---
 
@@ -76,6 +88,34 @@ disconnect). The remaining half stays as v0.3 below.
 - Webhook delivery with retry queue + dead-letter queue
 - Audit log for all outgoing fiscal commands — JSONL, rotate daily, optional remote shipment
 - Windows hardware test with `hid2serial` 0.2.0 → release as 0.2.0 stable
+
+### v0.4.5 — Fleet remote management (DESIGN APPROVED 2026-05-07, ~1 week)
+
+**Goal:** one Odoo backend (dev-18) controls every deployed ErpNet.FP
+proxy without per-instance SSH.
+
+**Architecture:**
+```
+ErpNet.FP startup + every 60 s:
+   POST <registry_url>/erp_net_fp/registry/heartbeat
+   X-Registry-Secret: <per-proxy-secret>
+   {host, version, admin_token, devices}
+
+Odoo upserts erpnet.fp.proxy record.
+```
+
+**Phase 1 — Heartbeat protocol:**
+- Proxy `config.yaml` adds `server.registry: {url, secret}`; httpx-async task every 60 s; pushes admin_token (so Odoo back-channel `/admin/*` works)
+- Odoo `/erp_net_fp/registry/heartbeat` controller (validates per-proxy secret); upserts `erpnet.fp.proxy(name, url, version, admin_token, last_seen, devices_json, alive)`
+
+**Phase 2 — Odoo Fleet view + buttons:**
+- Model `erpnet.fp.proxy` (secret generated on create — admin copies into proxy `config.yaml`)
+- Tree + form views, menu under ErpNet.FP
+- Buttons: Update (POST `/admin/self-update`) / View Logs (GET `/admin/logs?tail=N`) / Program VAT (POST `/printers/{id}/vat-rates`) — all via stored admin_token
+
+**Open decisions:**
+- Bootstrap UX: how does proxy initially get its registry secret? Manual `config.yaml` edit (simpler) vs auto-discovery via `/admin/bootstrap-info` (zero-touch but requires registry on RFC1918 link).
+- Encryption of `admin_token` storage in Odoo (security review needed before production).
 
 ### v0.5 — Odoo integration depth (~2 weeks)
 
