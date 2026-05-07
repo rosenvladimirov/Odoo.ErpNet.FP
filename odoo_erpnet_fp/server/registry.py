@@ -192,9 +192,16 @@ async def _pair(client: httpx.AsyncClient, cfg: RegistryConfig,
     return str(secret) if secret else None
 
 
+class HeartbeatResult:
+    OK = "ok"
+    TRANSIENT = "transient"  # network glitch, retry next tick
+    REENROL = "reenrol"      # 410 — server forgot us, drop secret + auto-enrol
+    BANNED = "banned"        # 403 — proxy archived, give up
+
+
 async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
                      app, name: str, host: str, version: str,
-                     public_url: str) -> bool:
+                     public_url: str) -> str:
     body = {
         "name": name,
         "host": host,
@@ -220,12 +227,22 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         )
     except httpx.HTTPError as exc:
         _logger.debug("Heartbeat failed: %s", exc)
-        return False
-    if r.status_code != 200:
-        _logger.warning("Heartbeat rejected (%s): %s",
-                        r.status_code, r.text[:200])
-        return False
-    return True
+        return HeartbeatResult.TRANSIENT
+    if r.status_code == 200:
+        return HeartbeatResult.OK
+    if r.status_code == 410:
+        # Server deleted our record — re-enrol on next loop tick.
+        _logger.info("Heartbeat → 410 Gone: server forgot us, "
+                     "will re-enrol")
+        return HeartbeatResult.REENROL
+    if r.status_code == 403:
+        _logger.warning("Heartbeat → 403 Forbidden: proxy is archived "
+                        "in fleet UI; will not retry until restart "
+                        "after Unarchive.")
+        return HeartbeatResult.BANNED
+    _logger.warning("Heartbeat rejected (%s): %s",
+                    r.status_code, r.text[:200])
+    return HeartbeatResult.TRANSIENT
 
 
 async def fleet_loop(app, config_path: Path) -> None:
@@ -304,12 +321,44 @@ async def fleet_loop(app, config_path: Path) -> None:
                      cfg.url, name, interval)
         while True:
             try:
-                await _heartbeat(client, cfg, app, name, container_host,
-                                  version, public_url)
+                result = await _heartbeat(client, cfg, app, name,
+                                           container_host, version,
+                                           public_url)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 _logger.exception("Heartbeat tick raised unexpectedly")
+                result = HeartbeatResult.TRANSIENT
+
+            if result == HeartbeatResult.REENROL:
+                # Drop our local secret and auto-enrol again on this tick.
+                cfg.secret = ""
+                try:
+                    os.unlink(_SECRET_FILE)
+                except OSError:
+                    pass
+                admin_token = _admin_token_value()
+                if admin_token:
+                    new_secret = await _auto_enrol(
+                        client, cfg, name, container_host, version,
+                        admin_token, public_url,
+                    )
+                    if new_secret:
+                        cfg.secret = new_secret
+                        _persist_secret(new_secret)
+                        _logger.info("Re-enrolled successfully")
+                    else:
+                        _logger.warning("Re-enrol failed; will retry next tick")
+            elif result == HeartbeatResult.BANNED:
+                # Proxy is archived in the fleet UI; sleep MUCH longer
+                # to avoid log spam, but don't exit (operator may
+                # un-archive, in which case we resume normally).
+                try:
+                    await asyncio.sleep(15 * 60)
+                except asyncio.CancelledError:
+                    raise
+                continue
+
             try:
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
