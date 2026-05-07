@@ -67,9 +67,22 @@ services:
       - ./certs:/app/certs:ro
       # Writable cache (persistent ISL device-info between restarts).
       - ./data:/app/data:rw
+      # Docker socket — needed ONLY by /admin/self-update (which spawns
+      # a one-shot Watchtower container to recreate this proxy from the
+      # latest Docker Hub image). Comment this line out and clear
+      # ERPNET_ADMIN_TOKEN below to disable self-update entirely.
+      # SECURITY: equivalent to root on the Docker host.
+      - /var/run/docker.sock:/var/run/docker.sock:rw
 
     expose:
       - "8001"
+
+    environment:
+      # Self-update gate. Empty / unset → /admin/self-update returns 503
+      # (feature disabled). Generate a strong value with
+      # `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+      # and pass it via .env for the compose stack.
+      ERPNET_ADMIN_TOKEN: ${ERPNET_ADMIN_TOKEN:-}
 
     labels:
       - "traefik.enable=true"

@@ -165,6 +165,7 @@ def create_app(config: AppConfig) -> FastAPI:
             pass
         return response
 
+    from .routes.admin import router as admin_router
     from .routes.displays import router as displays_router
     from .routes.iot_compat import (
         v18_router as iot_compat_v18_router,
@@ -179,6 +180,7 @@ def create_app(config: AppConfig) -> FastAPI:
     app.include_router(scales_router)
     app.include_router(readers_router)
     app.include_router(displays_router)
+    app.include_router(admin_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
     # and Odoo 19+ (/iot_drivers) clients.

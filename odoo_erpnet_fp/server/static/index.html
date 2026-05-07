@@ -35,14 +35,64 @@
     gap: 1rem;
   }
   header h1 { font-size: 1.125rem; font-weight: 600; }
+  header .version-group {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    background: var(--surface-hi); border-radius: 4px;
+    padding: 0.15rem 0.25rem 0.15rem 0.5rem;
+  }
   header .version {
-    background: var(--surface-hi);
     color: var(--text-dim);
     font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 4px;
     font-family: monospace;
   }
+  header .version-menu {
+    background: transparent; border: none; color: var(--text-dim);
+    padding: 0 0.35rem; font-size: 1rem; cursor: pointer; border-radius: 3px;
+    line-height: 1;
+  }
+  header .version-menu:hover { background: var(--muted); color: var(--text); }
+  /* Self-update modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--surface-hi);
+    border-radius: 8px; padding: 1.5rem; min-width: 380px; max-width: 520px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .modal h2 { font-size: 1rem; margin-bottom: 0.75rem; }
+  .modal p { color: var(--text-dim); font-size: 0.875rem; margin-bottom: 1rem; }
+  .modal label {
+    display: block; font-size: 0.75rem; color: var(--text-dim);
+    margin-bottom: 0.25rem;
+  }
+  .modal input[type=password] {
+    width: 100%; padding: 0.5rem; border-radius: 4px;
+    border: 1px solid var(--muted); background: var(--surface-hi);
+    color: var(--text); font-family: monospace; margin-bottom: 1rem;
+  }
+  .modal .actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+  .modal .progress-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0; font-size: 0.875rem; font-family: monospace;
+  }
+  .modal .progress-row .spinner {
+    width: 12px; height: 12px; border: 2px solid var(--muted);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .modal .progress-row.done .spinner {
+    border-top-color: var(--ok); animation: none;
+    border: 2px solid var(--ok);
+  }
+  .modal .progress-row.fail .spinner {
+    border-top-color: var(--err); animation: none;
+    border: 2px solid var(--err);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   header .summary { color: var(--text-dim); font-size: 0.875rem; margin-left: auto; }
   .container { max-width: 1200px; margin: 1.5rem auto; padding: 0 1.5rem; }
   .toolbar {
@@ -191,9 +241,79 @@
 <header>
   <span style="font-size: 1.5rem;">🧾</span>
   <h1>Odoo.ErpNet.FP</h1>
-  <span class="version" id="version">v…</span>
+  <span class="version-group">
+    <span class="version" id="version">v…</span>
+    <button class="version-menu" id="version-menu" title="Self-update"
+            onclick="openUpdateModal()">⋮</button>
+  </span>
   <span class="summary" id="summary">…</span>
 </header>
+
+<!-- Self-update modal -->
+<div class="modal-backdrop" id="update-modal">
+  <div class="modal">
+    <div id="update-stage-confirm">
+      <h2>🔄 Self-update from Docker Hub</h2>
+      <p>
+        Pulls the latest image from
+        <code id="update-image">vladimirovrosen/odoo-erpnet-fp:latest</code>
+        and recreates this container via Watchtower.
+        The proxy will be unreachable for ~10–30 s during the swap.
+      </p>
+      <p id="update-disabled" style="display:none; color: var(--err);">
+        Self-update is disabled. Set <code>ERPNET_ADMIN_TOKEN</code>
+        on the proxy and mount <code>/var/run/docker.sock</code> RW
+        to enable.
+      </p>
+      <label for="update-token">Admin token</label>
+      <input type="password" id="update-token" placeholder="••••••••"
+             autocomplete="current-password"/>
+      <div class="actions">
+        <button onclick="closeUpdateModal()">Cancel</button>
+        <button class="primary" id="update-go" onclick="runUpdate()">
+          Update now
+        </button>
+      </div>
+    </div>
+    <div id="update-stage-progress" style="display:none;">
+      <h2>🔄 Updating…</h2>
+      <p id="update-from-to">
+        from <code id="update-from"></code>
+      </p>
+      <div class="progress-row" id="step-spawn">
+        <span class="spinner"></span> Spawning Watchtower…
+      </div>
+      <div class="progress-row" id="step-pull" style="opacity:0.4;">
+        <span class="spinner" style="opacity:0;"></span>
+        <span>Pulling new image…</span>
+      </div>
+      <div class="progress-row" id="step-recreate" style="opacity:0.4;">
+        <span class="spinner" style="opacity:0;"></span>
+        <span>Recreating container…</span>
+      </div>
+      <div class="progress-row" id="step-online" style="opacity:0.4;">
+        <span class="spinner" style="opacity:0;"></span>
+        <span>Waiting for proxy to come back online…</span>
+      </div>
+    </div>
+    <div id="update-stage-done" style="display:none;">
+      <h2>✅ Update complete</h2>
+      <p>
+        Now running <code id="update-new-version"></code>.
+      </p>
+      <div class="actions">
+        <button class="primary" onclick="location.reload()">Reload UI</button>
+      </div>
+    </div>
+    <div id="update-stage-error" style="display:none;">
+      <h2>❌ Update failed</h2>
+      <p id="update-error-msg" style="color: var(--err);"></p>
+      <div class="actions">
+        <button onclick="closeUpdateModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="container">
   <div class="toolbar">
@@ -288,10 +408,171 @@ async function loadVersion() {
     document.getElementById("summary").textContent =
       `${total} device${total===1?"":"s"} · ` +
       KINDS.map(k => `${(r[k]||[]).length} ${k}`).join(" · ");
+    return r.version;
   } catch (e) {
     document.getElementById("version").textContent = "offline";
     document.getElementById("summary").textContent = "proxy unreachable";
+    return null;
   }
+}
+
+// ─── Self-update modal ─────────────────────────────────────
+
+async function openUpdateModal() {
+  // Reset stages
+  document.getElementById("update-stage-confirm").style.display = "";
+  document.getElementById("update-stage-progress").style.display = "none";
+  document.getElementById("update-stage-done").style.display = "none";
+  document.getElementById("update-stage-error").style.display = "none";
+  document.getElementById("update-token").value = "";
+  document.getElementById("update-disabled").style.display = "none";
+  document.getElementById("update-go").disabled = false;
+
+  // Probe capability
+  try {
+    const r = await fetchJSON(ENDPOINT + "/admin/self-update");
+    if (!r.enabled || !r.docker_socket) {
+      document.getElementById("update-disabled").style.display = "";
+      document.getElementById("update-go").disabled = true;
+    }
+  } catch (e) {
+    document.getElementById("update-disabled").style.display = "";
+    document.getElementById("update-disabled").textContent =
+      "Self-update endpoint not available — proxy too old? Pull at "
+      + "least 0.2.11.";
+    document.getElementById("update-go").disabled = true;
+  }
+  document.getElementById("update-modal").classList.add("show");
+  setTimeout(() => document.getElementById("update-token").focus(), 50);
+}
+
+function closeUpdateModal() {
+  document.getElementById("update-modal").classList.remove("show");
+}
+
+function _setStep(id, state) {
+  // state: "active" | "done" | "fail" | "pending"
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("done", "fail");
+  if (state === "done" || state === "fail") {
+    el.classList.add(state);
+    el.style.opacity = "1";
+  } else if (state === "active") {
+    el.style.opacity = "1";
+    el.querySelector(".spinner").style.opacity = "1";
+  } else {
+    el.style.opacity = "0.4";
+  }
+}
+
+async function runUpdate() {
+  const token = document.getElementById("update-token").value.trim();
+  if (!token) {
+    document.getElementById("update-token").focus();
+    return;
+  }
+
+  // Capture current version BEFORE update — used to detect when the
+  // new container is online (version changed).
+  const oldVersion = document.getElementById("version").textContent;
+  document.getElementById("update-from").textContent = oldVersion;
+
+  // Switch to progress stage
+  document.getElementById("update-stage-confirm").style.display = "none";
+  document.getElementById("update-stage-progress").style.display = "";
+  _setStep("step-spawn", "active");
+  _setStep("step-pull", "pending");
+  _setStep("step-recreate", "pending");
+  _setStep("step-online", "pending");
+
+  // 1) POST /admin/self-update
+  let resp;
+  try {
+    const r = await fetch(ENDPOINT + "/admin/self-update", {
+      method: "POST",
+      headers: { "X-Admin-Token": token, "Content-Type": "application/json" },
+    });
+    resp = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      throw new Error(resp.detail || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    _setStep("step-spawn", "fail");
+    document.getElementById("update-stage-progress").style.display = "none";
+    document.getElementById("update-stage-error").style.display = "";
+    document.getElementById("update-error-msg").textContent = String(e.message || e);
+    return;
+  }
+  _setStep("step-spawn", "done");
+  _setStep("step-pull", "active");
+
+  // 2) Poll /healthz — proxy goes 5xx/timeout during recreate, then
+  //    comes back with a (potentially new) version. We watch for:
+  //      a. unreachable phase (= recreate is happening) → step pull/recreate
+  //      b. reachable again with version != oldVersion → success
+  //    Time budget: 4 minutes hard cap.
+  const startedAt = Date.now();
+  const HARD_CAP_MS = 240_000;
+  let everWentDown = false;
+  let pullDone = false;
+  let recreateDone = false;
+
+  while (Date.now() - startedAt < HARD_CAP_MS) {
+    await new Promise(r => setTimeout(r, 2000));
+
+    let online = false;
+    let version = null;
+    try {
+      const r = await fetch(ENDPOINT + "/healthz", { cache: "no-store" });
+      if (r.ok) {
+        const j = await r.json();
+        version = "v" + (j.version || "?");
+        online = true;
+      }
+    } catch (_) { /* network error → still down */ }
+
+    if (!online) {
+      // Recreate is in progress
+      everWentDown = true;
+      if (!pullDone) {
+        // Assume pull is done once the container actually goes down
+        // (watchtower pulls FIRST then stops).
+        _setStep("step-pull", "done");
+        _setStep("step-recreate", "active");
+        pullDone = true;
+      }
+      continue;
+    }
+
+    // Online — but is it the new container?
+    if (everWentDown) {
+      if (!recreateDone) {
+        _setStep("step-recreate", "done");
+        _setStep("step-online", "active");
+        recreateDone = true;
+      }
+      // Container is back. Show done regardless of version-string change
+      // (some deploys re-pull the same tag without a version bump).
+      _setStep("step-online", "done");
+      document.getElementById("update-stage-progress").style.display = "none";
+      document.getElementById("update-stage-done").style.display = "";
+      document.getElementById("update-new-version").textContent = version;
+      // Refresh in-page version display so subsequent open shows new
+      document.getElementById("version").textContent = version;
+      return;
+    }
+    // Still pre-restart phase — watchtower hasn't stopped us yet.
+    // Show "Pulling…" until container goes down.
+  }
+
+  // Hard cap exceeded
+  _setStep(pullDone ? (recreateDone ? "step-online" : "step-recreate") : "step-pull", "fail");
+  document.getElementById("update-stage-progress").style.display = "none";
+  document.getElementById("update-stage-error").style.display = "";
+  document.getElementById("update-error-msg").textContent =
+    "Timeout — proxy didn't come back within 4 minutes. Check Docker logs "
+    + "for the watchtower container.";
 }
 
 async function loadKind(kind) {
