@@ -508,12 +508,16 @@ async function runUpdate() {
   _setStep("step-pull", "active");
 
   // 2) Poll /healthz — proxy goes 5xx/timeout during recreate, then
-  //    comes back with a (potentially new) version. We watch for:
-  //      a. unreachable phase (= recreate is happening) → step pull/recreate
-  //      b. reachable again with version != oldVersion → success
-  //    Time budget: 4 minutes hard cap.
+  //    comes back. We watch for:
+  //      a. unreachable phase (= recreate is happening)
+  //      b. reachable again → success
+  //      c. proxy stays up + 60 s pass with NO downtime → watchtower
+  //         likely scanned 0 (e.g. wrong container name) — surface
+  //         the failure instead of spinning until the 4-min hard cap.
+  //    Hard cap: 4 minutes total.
   const startedAt = Date.now();
   const HARD_CAP_MS = 240_000;
+  const SHORT_CAP_MS = 60_000;  // if no downtime by here → fail fast
   let everWentDown = false;
   let pullDone = false;
   let recreateDone = false;
@@ -533,11 +537,8 @@ async function runUpdate() {
     } catch (_) { /* network error → still down */ }
 
     if (!online) {
-      // Recreate is in progress
       everWentDown = true;
       if (!pullDone) {
-        // Assume pull is done once the container actually goes down
-        // (watchtower pulls FIRST then stops).
         _setStep("step-pull", "done");
         _setStep("step-recreate", "active");
         pullDone = true;
@@ -545,28 +546,38 @@ async function runUpdate() {
       continue;
     }
 
-    // Online — but is it the new container?
     if (everWentDown) {
       if (!recreateDone) {
         _setStep("step-recreate", "done");
         _setStep("step-online", "active");
         recreateDone = true;
       }
-      // Container is back. Show done regardless of version-string change
-      // (some deploys re-pull the same tag without a version bump).
       _setStep("step-online", "done");
       document.getElementById("update-stage-progress").style.display = "none";
       document.getElementById("update-stage-done").style.display = "";
       document.getElementById("update-new-version").textContent = version;
-      // Refresh in-page version display so subsequent open shows new
       document.getElementById("version").textContent = version;
       return;
     }
-    // Still pre-restart phase — watchtower hasn't stopped us yet.
-    // Show "Pulling…" until container goes down.
+
+    // Pre-restart still: watchtower hasn't stopped us yet. If we hit
+    // the SHORT_CAP without the proxy ever going down, abort early —
+    // most likely the watchtower spawn matched 0 containers (e.g.
+    // wrong target name in old proxy versions). Better than spinning.
+    if (Date.now() - startedAt > SHORT_CAP_MS) {
+      _setStep("step-pull", "fail");
+      document.getElementById("update-stage-progress").style.display = "none";
+      document.getElementById("update-stage-error").style.display = "";
+      document.getElementById("update-error-msg").textContent =
+        "Watchtower didn't stop the proxy within 60 s. The most "
+        + "likely cause is a name-resolution bug in older proxy "
+        + "versions (watchtower scanned 0 containers). Run "
+        + "`docker logs " + (resp.watchtower_name || "<watchtower>") + "` "
+        + "to confirm. Upgrading to ≥0.2.12 fixes the resolver.";
+      return;
+    }
   }
 
-  // Hard cap exceeded
   _setStep(pullDone ? (recreateDone ? "step-online" : "step-recreate") : "step-pull", "fail");
   document.getElementById("update-stage-progress").style.display = "none";
   document.getElementById("update-stage-error").style.display = "";

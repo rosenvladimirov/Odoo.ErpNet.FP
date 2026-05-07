@@ -51,14 +51,28 @@ def _watchtower_image() -> str:
                           "containrrr/watchtower:latest")
 
 
-def _self_container_name() -> str:
-    """Best-effort own container name. Compose sets it to the
+def _self_container_name(client=None) -> str:
+    """Resolve our own container name. Compose sets it to the
     `container_name:` field; otherwise to `<project>-<service>-<n>`.
-    Falls back to the `HOSTNAME` env (= short container ID inside
-    Docker) which Watchtower also accepts as a target identifier."""
-    return (os.environ.get("ERPNET_SELF_CONTAINER")
-            or os.environ.get("HOSTNAME")
-            or "odoo-erpnet-fp")
+
+    Watchtower matches targets by **name**, not ID — and HOSTNAME
+    inside a Docker container is the short ID, not the name. So we
+    use the Docker SDK to translate HOSTNAME → name. If the SDK is
+    unavailable / lookup fails, fall back to `odoo-erpnet-fp`
+    (compose default), which still works for stock setups.
+    """
+    explicit = (os.environ.get("ERPNET_SELF_CONTAINER") or "").strip()
+    if explicit:
+        return explicit
+    hid = (os.environ.get("HOSTNAME") or "").strip()
+    if client is not None and hid:
+        try:
+            c = client.containers.get(hid)
+            # Docker SDK returns the name with a leading "/" — strip it.
+            return c.name.lstrip("/")
+        except Exception:  # noqa: BLE001
+            pass
+    return "odoo-erpnet-fp"
 
 
 def _check_token(provided: Optional[str]) -> None:
@@ -86,10 +100,20 @@ async def self_update_status():
     instead of erroring on hidden capability."""
     enabled = bool(_admin_token())
     docker_sock_present = os.path.exists("/var/run/docker.sock")
+    # Best-effort resolved name (may need Docker SDK so guard ImportError)
+    name = "odoo-erpnet-fp"
+    try:
+        if docker_sock_present:
+            import docker
+            name = _self_container_name(docker.from_env())
+        else:
+            name = _self_container_name(None)
+    except Exception:
+        name = _self_container_name(None)
     return {
         "enabled": enabled,
         "docker_socket": docker_sock_present,
-        "self_container": _self_container_name(),
+        "self_container": name,
         "watchtower_image": _watchtower_image(),
     }
 
@@ -130,7 +154,7 @@ async def trigger_self_update(
         )
 
     client = docker.from_env()
-    target = _self_container_name()
+    target = _self_container_name(client)
     image = _watchtower_image()
 
     # Watchtower one-shot: pulls latest of our image, stops + removes
