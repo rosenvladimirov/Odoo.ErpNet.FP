@@ -294,11 +294,29 @@ def cli(argv: list[str] | None = None) -> int:
     # /admin/logs/stream so admins can read recent logs without shell
     # access to the host (e.g. for CF-fronted instances).
     try:
-        from .routes.admin import install_log_buffer
+        from .routes.admin import install_log_buffer, bootstrap_admin_token
         install_log_buffer()
+        # Auto-bootstrap an admin token on first run if no env var was
+        # configured. Prints to logs so the operator can pick it up via
+        # `docker logs odoo-erpnet-fp | grep ADMIN_TOKEN_BOOTSTRAP`
+        # OR via GET /admin/bootstrap-info from a private-IP client.
+        new_token = bootstrap_admin_token()
+        if new_token:
+            banner = "═" * 70
+            logging.warning(
+                "\n%s\n"
+                "ADMIN_TOKEN_BOOTSTRAP=%s\n"
+                "Saved to /app/data/admin_token (mode 600). Use this token "
+                "to authenticate /admin/* endpoints (self-update, logs, "
+                "vat-rates). Fetch once via GET /admin/bootstrap-info from "
+                "any RFC1918 / loopback IP, OR scrape this log banner. "
+                "After first claim, /admin/bootstrap-info returns 410.\n"
+                "%s",
+                banner, new_token, banner,
+            )
     except Exception:
         # /admin/logs is optional — proxy must boot even if it fails.
-        logging.exception("install_log_buffer failed")
+        logging.exception("install_log_buffer / bootstrap_admin_token failed")
 
     # Lazy import so `odoo-erpnet-fp --help` works without uvicorn installed
     import uvicorn

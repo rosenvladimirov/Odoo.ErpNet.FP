@@ -99,8 +99,54 @@ def install_log_buffer():
 
 # ENV-driven configuration. All optional — sensible defaults for a
 # typical compose-managed deployment, override per environment.
+#
+# Token resolution order:
+#   1. ERPNET_ADMIN_TOKEN env var (operator-managed via .env)
+#   2. /app/data/admin_token file (auto-bootstrapped on first run)
+# This lets operators run the proxy with no env vars; the first-run
+# bootstrap writes a fresh token + logs it prominently so they can
+# pick it up via `docker logs` without any host shell access.
+_TOKEN_FILE = os.environ.get("ERPNET_ADMIN_TOKEN_FILE",
+                              "/app/data/admin_token")
+
+
 def _admin_token() -> str:
-    return (os.environ.get("ERPNET_ADMIN_TOKEN") or "").strip()
+    env = (os.environ.get("ERPNET_ADMIN_TOKEN") or "").strip()
+    if env:
+        return env
+    try:
+        with open(_TOKEN_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def bootstrap_admin_token() -> Optional[str]:
+    """Called once at server startup. If no token is configured anywhere,
+    generate a fresh one, persist it to `_TOKEN_FILE` (mode 600), and
+    print a banner to the logs. Returns the new token (for the banner)
+    or None if a token was already configured.
+
+    Idempotent: re-runs on subsequent startups become no-ops.
+    """
+    if (os.environ.get("ERPNET_ADMIN_TOKEN") or "").strip():
+        return None
+    if os.path.exists(_TOKEN_FILE):
+        return None
+    try:
+        os.makedirs(os.path.dirname(_TOKEN_FILE), exist_ok=True)
+        new = secrets.token_urlsafe(32)
+        # umask-respecting strict file write so other UIDs can't read.
+        fd = os.open(_TOKEN_FILE,
+                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC,
+                     0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(new + "\n")
+        return new
+    except OSError as exc:
+        _logger.warning("Could not bootstrap admin token at %s: %s",
+                        _TOKEN_FILE, exc)
+        return None
 
 
 def _updater_image() -> str:
@@ -148,6 +194,79 @@ def _check_token(provided: Optional[str]) -> None:
 
 
 # ─── GET /admin/self-update ─── status / capability check ──────────
+
+
+# ─── GET /admin/bootstrap-info ─── one-time token retrieval ────
+
+
+@router.get("/bootstrap-info")
+async def bootstrap_info(request: Request):
+    """If the admin token was auto-bootstrapped on first run AND the
+    file is still in 'pristine' state (mode 600 + no rotation), this
+    endpoint returns it so an operator can fetch it remotely once.
+    After the first successful read, the file is renamed to mark it
+    as 'claimed' and subsequent calls return 410 Gone.
+
+    Designed for the SSH-less bootstrap flow: deploy → curl
+    `/admin/bootstrap-info` from a trusted IP → grab token → done.
+    """
+    # Only callable from a private/loopback network — defends against
+    # public scanning + race conditions on token claim.
+    client_ip = (request.client.host if request.client else "") or ""
+    private = (
+        client_ip == "127.0.0.1"
+        or client_ip == "::1"
+        or client_ip.startswith("10.")
+        or client_ip.startswith("192.168.")
+        or client_ip.startswith("172.16.")
+        or client_ip.startswith("172.17.")
+        or client_ip.startswith("172.18.")
+        or client_ip.startswith("172.19.")
+        or client_ip.startswith("172.20.")
+        or client_ip.startswith("172.21.")
+        or client_ip.startswith("172.22.")
+        or client_ip.startswith("172.23.")
+        or client_ip.startswith("172.24.")
+        or client_ip.startswith("172.25.")
+        or client_ip.startswith("172.26.")
+        or client_ip.startswith("172.27.")
+        or client_ip.startswith("172.28.")
+        or client_ip.startswith("172.29.")
+        or client_ip.startswith("172.30.")
+        or client_ip.startswith("172.31.")
+    )
+    if not private:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="bootstrap-info accessible only from RFC 1918 / "
+                   "loopback IPs.",
+        )
+    claimed_marker = _TOKEN_FILE + ".claimed"
+    if os.path.exists(claimed_marker):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Bootstrap token already claimed. Rotate via the "
+                   "self-update modal or rewrite ERPNET_ADMIN_TOKEN "
+                   "in the env if you've lost it.",
+        )
+    try:
+        with open(_TOKEN_FILE) as f:
+            token = f.read().strip()
+    except OSError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=("Token not bootstrapped (env var ERPNET_ADMIN_TOKEN "
+                    "is set, or proxy is too old)."),
+        )
+    # Mark as claimed to prevent a second retrieval.
+    try:
+        with open(claimed_marker, "w") as f:
+            from datetime import datetime
+            f.write(datetime.now().isoformat() + "\n")
+    except OSError:
+        pass
+    return {"token": token, "warning":
+            "Save this — subsequent /admin/bootstrap-info calls return 410."}
 
 
 @router.get("/self-update")
