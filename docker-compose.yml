@@ -48,7 +48,7 @@ services:
 
   # ─── Our Python proxy (replaces ErpNet.FP C# container) ─────────
   odoo-erpnet-fp:
-    image: rosenvladimirov/odoo-erpnet-fp:latest
+    image: vladimirovrosen/odoo-erpnet-fp:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
