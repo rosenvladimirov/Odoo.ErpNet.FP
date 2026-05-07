@@ -569,11 +569,11 @@ async function runUpdate() {
       document.getElementById("update-stage-progress").style.display = "none";
       document.getElementById("update-stage-error").style.display = "";
       document.getElementById("update-error-msg").textContent =
-        "Watchtower didn't stop the proxy within 60 s. The most "
-        + "likely cause is a name-resolution bug in older proxy "
-        + "versions (watchtower scanned 0 containers). Run "
-        + "`docker logs " + (resp.watchtower_name || "<watchtower>") + "` "
-        + "to confirm. Upgrading to ≥0.2.12 fixes the resolver.";
+        "Updater didn't stop the proxy within 60 s. Run "
+        + "`docker logs " + (resp.updater_name || resp.watchtower_name || "<updater>") + "` "
+        + "to see what compose did. Common causes: missing "
+        + "compose labels on the proxy container, or the working "
+        + "directory mount is read-only.";
       return;
     }
   }

@@ -1,20 +1,24 @@
 """
 Admin endpoints — self-update orchestration.
 
-`POST /admin/self-update` triggers an out-of-band container recreate
-by spawning a one-shot **Watchtower** container with the local Docker
-socket mounted. Watchtower handles all the recreate semantics that
-`docker compose` would: pulls the configured image, stops + removes
-the targeted container, and creates a fresh one with the same env /
-volumes / labels / networks. Once the recreate completes, the new
-container has the new image.
+`POST /admin/self-update` spawns a one-shot **`docker:cli`** sidecar
+container that runs the literal `docker compose pull` +
+`docker compose up -d --force-recreate <service>` against this
+container's compose project. The sidecar has the host Docker socket
+mounted plus a bind mount of the compose project's working dir
+(read off the `com.docker.compose.project.working_dir` label that
+compose stamps on every container).
 
-Why Watchtower (containrrr/watchtower):
-  * Battle-tested orchestrator — reproduces compose recreate semantics
-    correctly (preserves networks aliased by name, copies labels, etc.)
-  * One-shot mode `--run-once` — exits as soon as the update is done,
-    leaves no daemon behind
-  * Tiny image (~30 MB), pulled lazily on first self-update
+Why `docker:cli` over Watchtower:
+  * Watchtower no-ops when the image digest hasn't changed — fine
+    for "update if newer" but doesn't match the user's "force
+    rebuild" intent.
+  * `compose up --force-recreate` always rebuilds the container
+    even when image is unchanged, which is what the UI promises.
+  * Same compose file → exact same env / volumes / networks /
+    labels / ports — no risk of drift from re-implementing recreate.
+  * Image is ~70 MB (vs Watchtower's ~30 MB), pulled lazily on
+    first self-update.
 
 Auth: gated by the `ERPNET_ADMIN_TOKEN` env var. If it's empty or unset,
 the endpoint returns 503 (feature disabled) — opt-in only. Default
@@ -46,9 +50,9 @@ def _admin_token() -> str:
     return (os.environ.get("ERPNET_ADMIN_TOKEN") or "").strip()
 
 
-def _watchtower_image() -> str:
-    return os.environ.get("ERPNET_WATCHTOWER_IMAGE",
-                          "containrrr/watchtower:latest")
+def _updater_image() -> str:
+    return os.environ.get("ERPNET_UPDATER_IMAGE",
+                          "docker:25-cli")
 
 
 def _self_container_name(client=None) -> str:
@@ -114,7 +118,7 @@ async def self_update_status():
         "enabled": enabled,
         "docker_socket": docker_sock_present,
         "self_container": name,
-        "watchtower_image": _watchtower_image(),
+        "updater_image": _updater_image(),
     }
 
 
@@ -155,51 +159,91 @@ async def trigger_self_update(
 
     client = docker.from_env()
     target = _self_container_name(client)
-    image = _watchtower_image()
+    image = _updater_image()
 
-    # Watchtower one-shot: pulls latest of our image, stops + removes
-    # the target, recreates it with the same compose-injected config,
-    # then exits. `--cleanup` removes the OLD image so disk doesn't
-    # accumulate stale layers.
+    # Read compose metadata off our own container's labels. The
+    # sidecar needs all three to run the right `compose --force-recreate`.
+    hid = (os.environ.get("HOSTNAME") or "").strip()
+    try:
+        me = client.containers.get(hid or target)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not introspect own container ({hid!r}): {exc}",
+        )
+    labels = me.attrs.get("Config", {}).get("Labels") or {}
+    compose_project = labels.get("com.docker.compose.project")
+    compose_service = labels.get("com.docker.compose.service")
+    compose_workdir = labels.get("com.docker.compose.project.working_dir")
+    compose_files = labels.get("com.docker.compose.project.config_files") or ""
+    if not (compose_project and compose_service and compose_workdir):
+        raise HTTPException(
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail="Self container is not managed by `docker compose` "
+                   "(missing com.docker.compose.* labels). Recreate "
+                   "the proxy via your stack manager or set "
+                   "`container_name:` and bring it up with compose.",
+        )
+
+    # Pre-pull the sidecar image so the user's progress modal doesn't
+    # spend the first 20–60 s on a cold pull of docker:cli.
     try:
         client.images.pull(image)
     except Exception as exc:  # noqa: BLE001
-        _logger.warning("Failed to pre-pull watchtower image %s: %s",
+        _logger.warning("Failed to pre-pull updater image %s: %s",
                         image, exc)
         # Proceed anyway — `containers.run` will pull on demand.
 
+    # The sidecar pulls our image fresh and force-recreates the target
+    # service. `sleep 3` lets THIS request return cleanly before the
+    # current container is stopped (we'd lose the response otherwise).
+    # Both `pull` and `up` operate on the SAME compose project, scoped
+    # to a single service — no traefik / prometheus / grafana churn.
+    script = (
+        f"sleep 3 && "
+        f"cd /work && "
+        f"docker compose -p {compose_project} pull {compose_service} && "
+        f"docker compose -p {compose_project} up -d --force-recreate "
+        f"--no-deps {compose_service}"
+    )
+
     try:
-        wt = client.containers.run(
+        sc = client.containers.run(
             image,
-            command=[
-                "--run-once",
-                "--cleanup",
-                "--include-restarting",
-                target,
-            ],
+            command=["sh", "-c", script],
             volumes={
                 "/var/run/docker.sock": {
                     "bind": "/var/run/docker.sock",
                     "mode": "rw",
                 },
+                compose_workdir: {
+                    "bind": "/work",
+                    "mode": "ro",
+                },
             },
             detach=True,
-            remove=False,  # keep around until manual cleanup so logs are inspectable
+            remove=False,  # keep so `docker logs` works for diagnostics
             name=f"odoo-erpnet-fp-updater-{secrets.token_hex(3)}",
         )
     except Exception as exc:  # noqa: BLE001
-        _logger.exception("Watchtower spawn failed")
+        _logger.exception("Updater sidecar spawn failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to spawn watchtower: {exc}",
+            detail=f"Failed to spawn updater sidecar: {exc}",
         )
 
     return {
         "status": "scheduled",
-        "watchtower_container": wt.id[:12],
-        "watchtower_name": wt.name,
+        "updater_container": sc.id[:12],
+        "updater_name": sc.name,
         "target": target,
+        "compose_project": compose_project,
+        "compose_service": compose_service,
         "image": image,
-        "message": "Watchtower one-shot scheduled. Poll /healthz to "
-                   "detect the new version coming online.",
+        "message": (
+            "docker:cli sidecar scheduled — will run "
+            "`compose pull` + `compose up -d --force-recreate "
+            f"{compose_service}` against project `{compose_project}` "
+            "in 3 s. Poll /healthz to detect the new container."
+        ),
     }
