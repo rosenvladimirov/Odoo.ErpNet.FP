@@ -161,6 +161,77 @@ class PmDevice:
         # cmd 0x4A response DATA is empty — only status bytes carry info
         return status.FiscalStatus.parse(resp.status)
 
+    def read_device_info(self) -> dict:
+        """0x7B — Device information.
+
+        Returns a dict with keys: model, firmware_version, firmware_date,
+        certificate, serial_number, fiscal_memory_serial_number. The
+        device sends them TAB-separated in the response data.
+
+        Per Datecs PM v2.11.4 §4.63: the response format is
+            <Type>\\t<Version>\\t<Date>\\t<Time>\\t<Cert>\\t<SerialNumber>\\t<FmSerialNumber>
+        Some firmware revisions may add or omit the time field; we
+        unpack tolerantly so a short response still yields a partial
+        info dict instead of raising.
+        """
+        resp = self._exchange(commands.CMD_DEVICE_INFO)
+        # No leading error code in this response — payload is just the
+        # TAB-separated fields. Decode as cp1251 (Cyrillic-friendly,
+        # matches PDF §1.5 character encoding).
+        text = resp.data.decode("cp1251", errors="replace").rstrip("\r\n\t ")
+        parts = text.split("\t")
+        # Tolerantly extract by index; pad with "" so callers don't
+        # crash on legacy short responses.
+        while len(parts) < 7:
+            parts.append("")
+        return {
+            "model": parts[0].strip(),
+            "firmware_version": parts[1].strip(),
+            "firmware_date": parts[2].strip(),
+            "firmware_time": parts[3].strip(),
+            "certificate": parts[4].strip(),
+            "serial_number": parts[5].strip(),
+            "fiscal_memory_serial_number": parts[6].strip(),
+        }
+
+    def read_tax_number(self) -> str:
+        """0x63 — Read the programmed tax (BULSTAT) number."""
+        resp = self._exchange(commands.CMD_TAX_NUMBER_READ)
+        text = resp.data.decode("cp1251", errors="replace").rstrip("\r\n\t ")
+        # Some firmware prefixes with the error code; _parse_error_code
+        # is designed for that.
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+        return (rest[0].strip() if rest else text).strip()
+
+    def detect(self) -> dict:
+        """Aggregate `read_device_info` + `read_tax_number` into a single
+        dict shaped like the ISL `IslDeviceInfo` cache used by
+        `printers.py:_device_info`. Tolerant — partial reads survive.
+        """
+        info: dict = {
+            "manufacturer": "Datecs",
+            "model": "PM (v2.11.4)",
+            "firmware_version": "",
+            "serial_number": "",
+            "fiscal_memory_serial_number": "",
+            "tax_identification_number": "",
+        }
+        try:
+            di = self.read_device_info()
+            info["model"] = di.get("model") or info["model"]
+            info["firmware_version"] = di.get("firmware_version", "")
+            info["serial_number"] = di.get("serial_number", "")
+            info["fiscal_memory_serial_number"] = (
+                di.get("fiscal_memory_serial_number", ""))
+        except Exception:
+            pass
+        try:
+            info["tax_identification_number"] = self.read_tax_number()
+        except Exception:
+            pass
+        return info
+
     def open_fiscal_receipt(
         self,
         nsale: str | None = None,

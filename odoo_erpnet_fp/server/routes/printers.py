@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ...drivers.fiscal.datecs_pm.errors import FiscalError
+from ...drivers.fiscal.datecs_isl.protocol import IslDeviceInfo
 from ..adapters import messages as msg_adapter
 from ..adapters import payment_type as pt_adapter
 from ..adapters import tax_group as tg_adapter
@@ -166,6 +167,41 @@ async def printer_status(id: str, request: Request):
             async with registry.with_driver(id) as drv:
                 if is_pm:
                     fs = await asyncio.to_thread(drv.read_status)
+                    # Opportunistic populate of device info (serial,
+                    # FM serial, firmware, TIN) — same trick as the
+                    # ISL branch below. PM-only devices were missing
+                    # this so /printers always reported empty serial.
+                    if not fs.has_critical_error():
+                        entry = registry.get(id)
+                        if (getattr(entry, "_isl_info_cache", None) is None
+                                and hasattr(drv, "detect")):
+                            try:
+                                pm_info = await asyncio.to_thread(drv.detect)
+                                if pm_info:
+                                    # Reuse the ISL IslDeviceInfo dataclass —
+                                    # _device_info reads via getattr() so any
+                                    # object exposing those names works.
+                                    entry._isl_info_cache = IslDeviceInfo(
+                                        manufacturer=pm_info.get(
+                                            "manufacturer", "Datecs"),
+                                        model=pm_info.get(
+                                            "model", "PM (v2.11.4)"),
+                                        firmware_version=pm_info.get(
+                                            "firmware_version", ""),
+                                        serial_number=pm_info.get(
+                                            "serial_number", ""),
+                                        fiscal_memory_serial_number=pm_info.get(
+                                            "fiscal_memory_serial_number", ""),
+                                        tax_identification_number=pm_info.get(
+                                            "tax_identification_number", ""),
+                                    )
+                                    try:
+                                        registry.persist_isl_info_cache()
+                                    except Exception:
+                                        pass
+                            except Exception as exc:
+                                _logger.debug(
+                                    "PM opportunistic detect failed: %s", exc)
                     return DeviceStatusWithDateTime(
                         ok=not fs.has_critical_error(),
                         device_date_time=_now_iso(),
