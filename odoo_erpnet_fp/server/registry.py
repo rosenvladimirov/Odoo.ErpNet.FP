@@ -401,6 +401,15 @@ async def fleet_loop(app, config_path: Path) -> None:
 
         _logger.info("Fleet heartbeat loop started → %s as %r (every %ds)",
                      cfg.url, name, interval)
+        # Adaptive cadence: when commands flow we want sub-second
+        # responsiveness so the UI shows results in real time. After
+        # execution we drain the queue immediately, and stay in
+        # "fast mode" (polling every 5 s) for `_FAST_WINDOW` seconds
+        # of inactivity before relaxing back to the configured interval.
+        import time as _t
+        _FAST_WINDOW = 60   # seconds of fast polling after activity
+        _FAST_TICK = 5      # poll cadence during fast window
+        fast_until = 0.0
         while True:
             commands: list[dict] = []
             try:
@@ -414,10 +423,8 @@ async def fleet_loop(app, config_path: Path) -> None:
                 result = HeartbeatResult.TRANSIENT
 
             # Execute any commands the server queued for us. Done in
-            # series — keeps logs readable, lets one bad command not
-            # block the next heartbeat tick. If a command takes long
-            # enough to push past `interval_seconds`, the next tick
-            # just runs late; the server tolerates loose intervals.
+            # series — keeps logs readable and lets one bad command
+            # not block the next.
             for cmd in commands or []:
                 cid = cmd.get("id")
                 _logger.info("Executing queued command: id=%s kind=%r",
@@ -429,6 +436,9 @@ async def fleet_loop(app, config_path: Path) -> None:
                 if cid:
                     await _post_command_result(client, cfg, cid, ok,
                                                 payload, err)
+                # Any activity → enter fast mode so the UI sees
+                # follow-up status promptly.
+                fast_until = _t.monotonic() + _FAST_WINDOW
 
             if result == HeartbeatResult.REENROL:
                 # Drop our local secret and auto-enrol again on this tick.
@@ -459,8 +469,18 @@ async def fleet_loop(app, config_path: Path) -> None:
                     raise
                 continue
 
+            # If we just executed commands, drain immediately —
+            # there might be more queued behind them. Otherwise stay
+            # in fast mode for `_FAST_WINDOW` after the last activity
+            # so admins see real-time feedback in the Fleet UI.
+            if commands:
+                tick_sleep = 0.5  # tiny gap so we don't hammer
+            elif _t.monotonic() < fast_until:
+                tick_sleep = _FAST_TICK
+            else:
+                tick_sleep = interval
             try:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(tick_sleep)
             except asyncio.CancelledError:
                 _logger.info("Fleet heartbeat loop cancelled — exiting")
                 raise
