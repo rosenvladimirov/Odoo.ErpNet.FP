@@ -199,9 +199,88 @@ class HeartbeatResult:
     BANNED = "banned"        # 403 — proxy archived, give up
 
 
+async def _execute_command(cmd: dict) -> tuple[bool, dict | None, str]:
+    """Run a queued command locally on this proxy.
+
+    Returns (ok, result_dict, error_string). All commands are short
+    HTTP calls against our own /admin/* or /printers/* endpoints,
+    authenticated with our own admin_token. We use httpx for this so
+    we don't depend on the FastAPI app instance — the loop runs out-
+    of-band.
+    """
+    kind = (cmd.get("kind") or "").strip()
+    payload = cmd.get("payload") or {}
+    token = _admin_token_value()
+    base = "http://127.0.0.1:8001"
+    headers = {"X-Admin-Token": token}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            if kind == "self_update":
+                r = await c.post(f"{base}/admin/self-update",
+                                  headers=headers)
+            elif kind == "get_logs":
+                tail = int(payload.get("tail", 200))
+                r = await c.get(
+                    f"{base}/admin/logs",
+                    headers=headers, params={"tail": tail},
+                )
+            elif kind == "program_vat":
+                printer_id = (payload.get("printer_id") or "").strip()
+                if not printer_id:
+                    return False, None, "printer_id required"
+                r = await c.post(
+                    f"{base}/printers/{printer_id}/vat-rates",
+                    headers=headers,
+                    json={"rates": payload.get("rates") or {}},
+                )
+            else:
+                return False, None, f"Unknown command kind: {kind!r}"
+            ok = r.status_code < 400
+            try:
+                data = r.json()
+            except ValueError:
+                data = {"raw": r.text[:2000]}
+            err = ""
+            if not ok:
+                err = f"HTTP {r.status_code}: {r.text[:500]}"
+            return ok, data, err
+    except Exception as exc:  # noqa: BLE001
+        return False, None, f"{type(exc).__name__}: {exc}"
+
+
+async def _post_command_result(client: httpx.AsyncClient,
+                                cfg: RegistryConfig,
+                                command_id: int, ok: bool,
+                                result: dict | None, error: str) -> None:
+    body = {
+        "command_id": command_id,
+        "ok": ok,
+        "result": result,
+        "error": error,
+    }
+    raw = json.dumps(body, separators=(",", ":"),
+                     sort_keys=True).encode("utf-8")
+    sig = _sign_body(raw, cfg.secret)
+    try:
+        r = await client.post(
+            f"{cfg.url}/erp_net_fp/registry/command-result",
+            content=raw,
+            headers={
+                "Content-Type": "application/json",
+                "X-Registry-Signature": sig,
+            },
+            timeout=15.0,
+        )
+        if r.status_code != 200:
+            _logger.warning("Command-result POST rejected (%s): %s",
+                            r.status_code, r.text[:200])
+    except httpx.HTTPError as exc:
+        _logger.warning("Command-result POST failed: %s", exc)
+
+
 async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
                      app, name: str, host: str, version: str,
-                     public_url: str) -> str:
+                     public_url: str) -> tuple[str, list[dict]]:
     body = {
         "name": name,
         "host": host,
@@ -227,22 +306,25 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         )
     except httpx.HTTPError as exc:
         _logger.debug("Heartbeat failed: %s", exc)
-        return HeartbeatResult.TRANSIENT
+        return HeartbeatResult.TRANSIENT, []
     if r.status_code == 200:
-        return HeartbeatResult.OK
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+        commands = data.get("commands") if isinstance(data, dict) else []
+        return HeartbeatResult.OK, list(commands or [])
     if r.status_code == 410:
-        # Server deleted our record — re-enrol on next loop tick.
-        _logger.info("Heartbeat → 410 Gone: server forgot us, "
-                     "will re-enrol")
-        return HeartbeatResult.REENROL
+        _logger.info("Heartbeat → 410 Gone: server forgot us, will re-enrol")
+        return HeartbeatResult.REENROL, []
     if r.status_code == 403:
         _logger.warning("Heartbeat → 403 Forbidden: proxy is archived "
                         "in fleet UI; will not retry until restart "
                         "after Unarchive.")
-        return HeartbeatResult.BANNED
+        return HeartbeatResult.BANNED, []
     _logger.warning("Heartbeat rejected (%s): %s",
                     r.status_code, r.text[:200])
-    return HeartbeatResult.TRANSIENT
+    return HeartbeatResult.TRANSIENT, []
 
 
 async def fleet_loop(app, config_path: Path) -> None:
@@ -320,15 +402,33 @@ async def fleet_loop(app, config_path: Path) -> None:
         _logger.info("Fleet heartbeat loop started → %s as %r (every %ds)",
                      cfg.url, name, interval)
         while True:
+            commands: list[dict] = []
             try:
-                result = await _heartbeat(client, cfg, app, name,
-                                           container_host, version,
-                                           public_url)
+                result, commands = await _heartbeat(
+                    client, cfg, app, name, container_host, version,
+                    public_url)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 _logger.exception("Heartbeat tick raised unexpectedly")
                 result = HeartbeatResult.TRANSIENT
+
+            # Execute any commands the server queued for us. Done in
+            # series — keeps logs readable, lets one bad command not
+            # block the next heartbeat tick. If a command takes long
+            # enough to push past `interval_seconds`, the next tick
+            # just runs late; the server tolerates loose intervals.
+            for cmd in commands or []:
+                cid = cmd.get("id")
+                _logger.info("Executing queued command: id=%s kind=%r",
+                             cid, cmd.get("kind"))
+                try:
+                    ok, payload, err = await _execute_command(cmd)
+                except Exception as exc:  # noqa: BLE001
+                    ok, payload, err = False, None, f"{type(exc).__name__}: {exc}"
+                if cid:
+                    await _post_command_result(client, cfg, cid, ok,
+                                                payload, err)
 
             if result == HeartbeatResult.REENROL:
                 # Drop our local secret and auto-enrol again on this tick.
