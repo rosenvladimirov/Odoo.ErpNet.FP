@@ -199,11 +199,22 @@ async def trigger_self_update(
     # current container is stopped (we'd lose the response otherwise).
     # Both `pull` and `up` operate on the SAME compose project, scoped
     # to a single service — no traefik / prometheus / grafana churn.
+    #
+    # PATH RESOLUTION TRAP:
+    # The sidecar talks to the SAME Docker daemon as us (shared socket).
+    # When `docker compose up` mounts `./config:/app/config`, the daemon
+    # resolves `./config` ON THE HOST, not inside the sidecar. So we
+    # MUST mount the project workdir at the *same host path* inside the
+    # sidecar — not at /work — and `--project-directory` it explicitly
+    # so compose stamps that exact path on the recreated container.
+    # Otherwise the recreated proxy gets an empty `./config` mount and
+    # crash-loops on missing config.yaml.
     script = (
         f"sleep 3 && "
-        f"cd /work && "
-        f"docker compose -p {compose_project} pull {compose_service} && "
-        f"docker compose -p {compose_project} up -d --force-recreate "
+        f"docker compose --project-directory {compose_workdir} "
+        f"-p {compose_project} pull {compose_service} && "
+        f"docker compose --project-directory {compose_workdir} "
+        f"-p {compose_project} up -d --force-recreate "
         f"--no-deps {compose_service}"
     )
 
@@ -216,11 +227,14 @@ async def trigger_self_update(
                     "bind": "/var/run/docker.sock",
                     "mode": "rw",
                 },
+                # Same path inside sidecar as on host so the daemon's
+                # `./config` resolution still works after recreate.
                 compose_workdir: {
-                    "bind": "/work",
+                    "bind": compose_workdir,
                     "mode": "ro",
                 },
             },
+            working_dir=compose_workdir,
             detach=True,
             remove=False,  # keep so `docker logs` works for diagnostics
             name=f"odoo-erpnet-fp-updater-{secrets.token_hex(3)}",
