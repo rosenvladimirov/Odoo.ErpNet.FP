@@ -80,6 +80,12 @@ services:
 
     expose:
       - "8001"
+    # Loopback-only host binding so the local hid2serial tray (and any
+    # other host-side helper) can reach the proxy at 127.0.0.1:8001.
+    # NOT exposed to LAN — public access still goes through Traefik
+    # with TLS+CORS at https://erpnet.lan.mcpworks.net/.
+    ports:
+      - "127.0.0.1:8001:8001"
 
     environment:
       # Self-update gate. Empty / unset → /admin/self-update returns 503
