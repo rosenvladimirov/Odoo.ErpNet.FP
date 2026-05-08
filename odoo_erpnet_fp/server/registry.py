@@ -313,6 +313,16 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         except ValueError:
             data = {}
         commands = data.get("commands") if isinstance(data, dict) else []
+        # Fleet-driven CORS allow-list: rewrite Traefik dynamic.yml
+        # in place if the list changed. Best-effort — never block the
+        # heartbeat path on writer failure.
+        try:
+            from .cors_writer import apply_cors_origins
+            origins = data.get("cors_origins") if isinstance(data, dict) else []
+            if isinstance(origins, list):
+                apply_cors_origins([str(o) for o in origins if o])
+        except Exception:  # noqa: BLE001
+            _logger.exception("CORS writer raised — ignoring")
         return HeartbeatResult.OK, list(commands or [])
     if r.status_code == 410:
         _logger.info("Heartbeat → 410 Gone: server forgot us, will re-enrol")

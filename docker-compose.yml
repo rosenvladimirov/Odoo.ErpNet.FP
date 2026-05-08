@@ -67,6 +67,10 @@ services:
       - ./certs:/app/certs:ro
       # Writable cache (persistent ISL device-info between restarts).
       - ./data:/app/data:rw
+      # Traefik dynamic config — RW so the fleet-driven CORS writer can
+      # rewrite accessControlAllowOriginList in place. Traefik's file
+      # provider hot-reloads the changes within ~1s without restart.
+      - ./docker/traefik/dynamic.yml:/app/traefik/dynamic.yml:rw
       # Docker socket — needed ONLY by /admin/self-update (which spawns
       # a one-shot Watchtower container to recreate this proxy from the
       # latest Docker Hub image). Comment this line out and clear
