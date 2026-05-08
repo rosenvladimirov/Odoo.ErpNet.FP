@@ -189,6 +189,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.admin import router as admin_router
     from .routes.displays import router as displays_router
     from .routes.iot_compat import (
+        legacy_router as iot_compat_legacy_router,
         v18_router as iot_compat_v18_router,
         v19_router as iot_compat_v19_router,
     )
@@ -207,6 +208,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     # and Odoo 19+ (/iot_drivers) clients.
     app.include_router(iot_compat_v18_router)
     app.include_router(iot_compat_v19_router)
+    app.include_router(iot_compat_legacy_router)
 
     @app.get("/metrics", include_in_schema=False)
     def prometheus_metrics():

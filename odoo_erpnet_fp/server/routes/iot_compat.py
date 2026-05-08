@@ -48,6 +48,7 @@ import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import PlainTextResponse
 
 _logger = logging.getLogger(__name__)
 
@@ -56,6 +57,20 @@ _logger = logging.getLogger(__name__)
 # Odoo 18 and Odoo 19 clients without configuration changes.
 v18_router = APIRouter(prefix="/hw_drivers", tags=["iot-compat-v18"])
 v19_router = APIRouter(prefix="/iot_drivers", tags=["iot-compat-v19"])
+
+# Legacy POS hardware-proxy probe. Pre-IoT Box era, but Odoo POS and
+# the fiscal-printer health-check still ping /hw_proxy/hello to decide
+# whether the box is "up". A 404 here flips fiscal.printer.device's
+# proxy_connected flag to False even when the modern /hw_drivers/*
+# handlers are fully functional, surfacing as "не е свързан с iot" in
+# the UI. Returning "ping" matches the Odoo built-in handler verbatim.
+legacy_router = APIRouter(prefix="/hw_proxy", tags=["iot-compat-legacy"])
+
+
+@legacy_router.get("/hello", response_class=PlainTextResponse)
+@legacy_router.post("/hello", response_class=PlainTextResponse)
+async def legacy_hello() -> str:
+    return "ping"
 
 
 # ─── Long-poll session bookkeeping (in-memory) ───────────────────────
