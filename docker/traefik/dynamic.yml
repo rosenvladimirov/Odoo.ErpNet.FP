@@ -43,6 +43,7 @@ http:
           - "https://www.odoo-shell.space"
           - "https://www1.odoo-shell.space"
           - "https://demo-18.odoo-shell.space"
+          - "https://dev-18.odoo-shell.space"
           - "https://rosenvladimirov-demo-l10n-bulgaria.odoo.com"
         accessControlAllowCredentials: true
         accessControlMaxAge: 1728000
