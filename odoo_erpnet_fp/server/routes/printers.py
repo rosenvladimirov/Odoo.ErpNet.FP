@@ -937,3 +937,250 @@ async def raw_request(id: str, frame_body: RequestFrame, request: Request):
             )
         ],
     )
+
+
+# ─── 16. POST /{id}/plu/sync — bulk PLU programming ───────────────
+
+
+@router.post("/{id}/plu/sync")
+async def sync_plu_bulk(id: str, body: dict, request: Request):
+    """Bulk-program PLUs on the device (Datecs PM only for now).
+
+    Request body: `{items: [{plu, name, price, vat_group, department,
+                             barcode?, currency?, measurement_unit?}, ...]}`
+
+    Iterates items in submission order; per-item failures don't abort
+    the batch — Odoo client marks each PLU's push_state from the
+    aggregate result.
+
+    Returns: `{ok, programmed: int, errors: [{plu, error}, ...]}`.
+
+    ISL devices currently return 501 — TODO when ISL PLU programming
+    command (typically 0x6F) is added to the ISL driver.
+    """
+    registry = _require_printer(request, id)
+    if not registry.is_pm(id):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="PLU programming is currently only implemented for "
+                   "the Datecs PM driver.",
+        )
+    items = body.get("items") or []
+    if not isinstance(items, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`items` must be a list",
+        )
+    programmed = 0
+    errors: list[dict] = []
+    try:
+        async with registry.with_driver(id) as drv:
+            for item in items:
+                try:
+                    await asyncio.to_thread(
+                        drv.program_plu,
+                        plu_number=int(item["plu"]),
+                        name=str(item.get("name", ""))[:72],
+                        price=float(item.get("price", 0.0)),
+                        vat_group=str(item.get("vat_group", "Б"))[:1],
+                        department=int(item.get("department", 0)),
+                        barcodes=tuple(
+                            b for b in (
+                                item.get("barcode"),
+                                *(item.get("barcodes") or []),
+                            ) if b
+                        )[:4],
+                        measurement_unit=int(
+                            item.get("measurement_unit", 0)
+                        ),
+                    )
+                    programmed += 1
+                except Exception as exc:  # noqa: BLE001
+                    errors.append({
+                        "plu": item.get("plu"),
+                        "error": str(exc)[:200],
+                    })
+        return {"ok": not errors, "programmed": programmed, "errors": errors}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "programmed": programmed,
+                "errors": errors + [{"plu": None, "error": str(exc)[:300]}]}
+
+
+# ─── 17. POST /{id}/operators — program cashier operators ────────
+
+
+@router.post("/{id}/operators")
+async def program_operators(id: str, body: dict, request: Request):
+    """Program cashier operator codes & passwords on the device.
+
+    Request body: `{operators: [{code: str, name: str, password: str},
+                                ...]}`
+
+    PM driver: cmd 0x66 'P'. ISL: 0x65 (different framing). Both will
+    be wired up as the drivers gain a `program_operator` helper —
+    until then we return 501 for missing capability.
+    """
+    registry = _require_printer(request, id)
+    operators = body.get("operators") or []
+    if not isinstance(operators, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`operators` must be a list",
+        )
+    try:
+        async with registry.with_driver(id) as drv:
+            program_op = getattr(drv, "program_operator", None)
+            if program_op is None:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=("Driver %s has no `program_operator` method "
+                            "yet." % type(drv).__name__),
+                )
+            programmed = 0
+            errors: list[dict] = []
+            for op in operators:
+                try:
+                    await asyncio.to_thread(
+                        program_op,
+                        code=str(op.get("code", ""))[:8],
+                        name=str(op.get("name", ""))[:24],
+                        password=str(op.get("password", ""))[:8],
+                    )
+                    programmed += 1
+                except Exception as exc:  # noqa: BLE001
+                    errors.append({
+                        "code": op.get("code"),
+                        "error": str(exc)[:200],
+                    })
+            return {"ok": not errors, "programmed": programmed,
+                    "errors": errors}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+# ─── 18. POST /{id}/logo — upload customer logo ─────────────────
+
+
+@router.post("/{id}/logo")
+async def upload_logo(id: str, body: dict, request: Request):
+    """Upload base64-encoded image as the device's customer logo.
+
+    Request body: `{image_b64: str}` — PNG or BMP, device-specific
+    size constraints (Datecs PM accepts up to 384×128 monochrome).
+
+    Both driver families need a `program_logo(image_bytes)` helper;
+    ISL family doesn't have one yet — returns 501 there.
+    """
+    registry = _require_printer(request, id)
+    image_b64 = body.get("image_b64") or ""
+    if not image_b64:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`image_b64` required (base64-encoded image)",
+        )
+    import base64
+    try:
+        image_bytes = base64.b64decode(image_b64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`image_b64` is not valid base64",
+        )
+    try:
+        async with registry.with_driver(id) as drv:
+            program_logo = getattr(drv, "program_logo", None)
+            if program_logo is None:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=("Driver %s has no `program_logo` method "
+                            "yet." % type(drv).__name__),
+                )
+            await asyncio.to_thread(program_logo, image_bytes)
+            return {"ok": True, "bytes": len(image_bytes)}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+# ─── 19. POST /{id}/template — header/footer text lines ─────────
+
+
+@router.post("/{id}/template")
+async def program_template_endpoint(id: str, body: dict, request: Request):
+    """Program the receipt header and footer text lines.
+
+    Request body: `{header: [str, ...], footer: [str, ...]}` — up to
+    10 lines each (device-specific limits apply).
+    """
+    registry = _require_printer(request, id)
+    header = body.get("header") or []
+    footer = body.get("footer") or []
+    if not isinstance(header, list) or not isinstance(footer, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`header` and `footer` must be lists of strings",
+        )
+    try:
+        async with registry.with_driver(id) as drv:
+            program_template = getattr(drv, "program_template", None)
+            if program_template is None:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=("Driver %s has no `program_template` method "
+                            "yet." % type(drv).__name__),
+                )
+            await asyncio.to_thread(
+                program_template,
+                header=[str(l)[:32] for l in header[:10]],
+                footer=[str(l)[:32] for l in footer[:10]],
+            )
+            return {"ok": True,
+                    "header_lines": len(header),
+                    "footer_lines": len(footer)}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+# ─── 20. GET /{id}/journal — pull electronic journal (КЛЕН) ─────
+
+
+@router.get("/{id}/journal")
+async def get_journal(
+    id: str, request: Request,
+    fromDate: Annotated[str | None, Query()] = None,
+    toDate: Annotated[str | None, Query()] = None,
+):
+    """Pull receipts from the device's electronic journal (КЛЕН).
+
+    Query: `?fromDate=ISO8601&toDate=ISO8601` (both optional; default
+    is "since last Z" on most devices).
+
+    Response: `{ok, receipts: [{number, datetime, operator, items[],
+                                payments[], total}, ...]}`
+
+    Used by `pos.session.action_pos_session_closing_control` in
+    external-POS mode to import the day's receipts back into Odoo.
+    """
+    registry = _require_printer(request, id)
+    try:
+        async with registry.with_driver(id) as drv:
+            read_journal = getattr(drv, "read_journal", None)
+            if read_journal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=("Driver %s has no `read_journal` method "
+                            "yet." % type(drv).__name__),
+                )
+            data = await asyncio.to_thread(
+                read_journal, from_date=fromDate, to_date=toDate,
+            )
+            return {"ok": True, "receipts": data or []}
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300], "receipts": []}
