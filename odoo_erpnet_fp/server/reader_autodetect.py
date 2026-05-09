@@ -171,13 +171,20 @@ async def _register_one(devnode: str, app) -> None:
         _logger.debug("autodetect: %s already configured manually — skipping",
                       devnode)
         return
+    # Try to resolve the device through udev so we can pick vendor-
+    # specific defaults. If it can't be resolved (typical for pseudo
+    # ttys like /dev/ttyV0 → /dev/pts/N from hid2serial — they live
+    # under devpts, not tty), fall back to generic CDC defaults.
+    vendor_info: dict = {}
     try:
         ctx = pyudev.Context()
         device = pyudev.Devices.from_device_file(ctx, devnode)
+        vendor_info = _vendor_info_for(device)
     except Exception:
-        _logger.exception("autodetect: cannot resolve %s in udev", devnode)
-        return
-    vendor_info = _vendor_info_for(device)
+        _logger.debug(
+            "autodetect: %s not in udev (likely pseudo-tty) — "
+            "registering with generic defaults", devnode,
+        )
     cfg = _build_reader_config(devnode, vendor_info)
     if cfg is None:
         return
@@ -227,9 +234,25 @@ async def autodetect_loop(app) -> None:
         return
 
     # ─── Initial sweep — register what's already plugged in. ──────
+    # Two passes:
+    #   1. pyudev tty subsystem — covers physical CDC ACM (ttyACM*).
+    #   2. Direct glob — pyudev's list_devices does NOT enumerate
+    #      pseudo-ttys (e.g. /dev/ttyV0 → /dev/pts/N from hid2serial)
+    #      because they live under devpts, not tty. The glob picks
+    #      them up; _register_one's `_devnode_in_use` check de-dupes
+    #      anything pass 1 already added.
+    import glob
     ctx = pyudev.Context()
+    seen_devnodes: set[str] = set()
     for device in ctx.list_devices(subsystem="tty"):
         devnode = device.device_node or ""
+        if not _is_tty_of_interest(devnode):
+            continue
+        seen_devnodes.add(devnode)
+        await _register_one(devnode, app)
+    for devnode in sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyV*")):
+        if devnode in seen_devnodes:
+            continue
         if not _is_tty_of_interest(devnode):
             continue
         await _register_one(devnode, app)
