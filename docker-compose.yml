@@ -104,14 +104,14 @@ services:
       - "traefik.http.routers.erpnet.rule=Host(`erpnet.local`) || Host(`localhost`) || Host(`erpnet-fp.odoo-shell.space`)"
       - "traefik.http.routers.erpnet.entrypoints=websecure"
       - "traefik.http.routers.erpnet.tls=true"
-      - "traefik.http.routers.erpnet.middlewares=cors@file"
+      - "traefik.http.routers.erpnet.middlewares=cors-pna@file"
       - "traefik.http.routers.erpnet-lan.rule=Host(`erpnet.lan.mcpworks.net`) || HostRegexp(`{sub:[a-z0-9-]+}.lan.mcpworks.net`)"
       - "traefik.http.routers.erpnet-lan.entrypoints=websecure"
       - "traefik.http.routers.erpnet-lan.tls=true"
       - "traefik.http.routers.erpnet-lan.tls.certresolver=cf"
       - "traefik.http.routers.erpnet-lan.tls.domains[0].main=*.lan.mcpworks.net"
       - "traefik.http.routers.erpnet-lan.tls.domains[0].sans=lan.mcpworks.net"
-      - "traefik.http.routers.erpnet-lan.middlewares=cors@file"
+      - "traefik.http.routers.erpnet-lan.middlewares=cors-pna@file"
       - "traefik.http.services.erpnet.loadbalancer.server.port=8001"
 
     healthcheck:

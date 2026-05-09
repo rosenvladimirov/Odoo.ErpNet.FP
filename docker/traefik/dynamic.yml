@@ -48,3 +48,21 @@ http:
         accessControlAllowCredentials: true
         accessControlMaxAge: 1728000
         addVaryHeader: true
+
+    # Private Network Access (Chrome) / Local Network Access (Firefox 150+).
+    # Browsers block fetches from a public site to a private IP (127.0.0.1,
+    # 10/8, 192.168/16, etc.) unless the target opts in via this header on
+    # the CORS preflight response. Kept in a dedicated middleware because
+    # Traefik's `cors` middleware short-circuits the request on OPTIONS
+    # before custom headers run; chaining `pna` AFTER `cors` ensures the
+    # header is applied to every response, including preflight.
+    pna:
+      headers:
+        customResponseHeaders:
+          Access-Control-Allow-Private-Network: "true"
+
+    cors-pna:
+      chain:
+        middlewares:
+          - pna
+          - cors
