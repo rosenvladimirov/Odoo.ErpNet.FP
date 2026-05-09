@@ -127,12 +127,51 @@ class RegistryConfig:
 
 
 @dataclass
+class IotSetupConfig:
+    """Outbound `/iot/setup` announcer to a remote Odoo instance.
+
+    Registers this proxy as an iot.box + populates iot.device records
+    on Odoo, exactly like the official Raspberry Pi IoT box image
+    does. Useful when Odoo cannot reach the proxy directly (LAN-only
+    DNS, browser-side Cloudflare tunnel, /etc/hosts hack on the
+    operator laptop) — the announcement flows the other way (proxy →
+    Odoo) over plain HTTPS, which is always routable.
+
+    Setup steps on Odoo (one-time):
+      1. Settings → Technical → Parameters → System Parameters → set
+         `iot_token` to a long random string. Copy it.
+      2. Set `token` below to that value.
+      3. Set `identifier` to a stable unique string (e.g. MAC of the
+         host's primary NIC, or a UUID). Reused across reboots.
+      4. Restart proxy. iot.box appears in Settings → Technical → IoT
+         after the first announcement; iot.device records appear under
+         it for every printer/scale/reader/display/pinpad in this
+         proxy's registry.
+
+    Disabled by default. `advertised_host` is what lands in
+    `iot.box.ip` — the hostname browsers will fetch the proxy at. If
+    empty, falls back to `socket.gethostname()` which is usually
+    wrong inside Docker (returns the container ID); operators in
+    containers MUST set this explicitly.
+    """
+
+    enabled: bool = False
+    odoo_url: str = ""
+    token: str = ""
+    identifier: str = ""
+    name: str = "ErpNet.FP proxy"
+    advertised_host: str = ""
+    interval_seconds: int = 60
+
+
+@dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8001
     log_level: str = "info"
     tls: TlsConfig = field(default_factory=TlsConfig)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
+    iot_setup: IotSetupConfig = field(default_factory=IotSetupConfig)
 
 
 @dataclass
@@ -275,6 +314,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
     server_data = data.get("server", {})
     tls_data = server_data.get("tls", {})
     registry_data = server_data.get("registry", {})
+    iot_setup_data = server_data.get("iot_setup", {})
     server = ServerConfig(
         host=server_data.get("host", "0.0.0.0"),
         port=int(server_data.get("port", 8001)),
@@ -297,6 +337,15 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             pairing_token=str(registry_data.get("pairing_token") or "").strip(),
             secret=str(registry_data.get("secret") or "").strip(),
             interval_seconds=int(registry_data.get("interval_seconds", 60)),
+        ),
+        iot_setup=IotSetupConfig(
+            enabled=bool(iot_setup_data.get("enabled", False)),
+            odoo_url=str(iot_setup_data.get("odoo_url") or "").rstrip("/"),
+            token=str(iot_setup_data.get("token") or "").strip(),
+            identifier=str(iot_setup_data.get("identifier") or "").strip(),
+            name=str(iot_setup_data.get("name") or "ErpNet.FP proxy").strip(),
+            advertised_host=str(iot_setup_data.get("advertised_host") or "").strip(),
+            interval_seconds=int(iot_setup_data.get("interval_seconds", 60)),
         ),
     )
     server.tls.validate()

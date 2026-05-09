@@ -104,15 +104,25 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                 fleet_loop(app, config_path or Path("config.yaml")),
                 name="fleet-heartbeat",
             )
+        # Outbound iot.box announcement to a remote Odoo. No-op when
+        # server.iot_setup.enabled is false.
+        from .iot_setup import iot_setup_loop
+        iot_setup_task: asyncio.Task | None = None
+        if app.state.config.server.iot_setup.enabled:
+            iot_setup_task = asyncio.create_task(
+                iot_setup_loop(app, config_path or Path("config.yaml")),
+                name="iot-setup-announce",
+            )
         try:
             yield
         finally:
-            if fleet_task is not None:
-                fleet_task.cancel()
-                try:
-                    await fleet_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+            for t in (fleet_task, iot_setup_task):
+                if t is not None:
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
             await reader_registry.stop_all()
             await display_registry.stop_all()
 

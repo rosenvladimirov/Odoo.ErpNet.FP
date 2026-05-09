@@ -28,6 +28,39 @@ server:
     ca_certs: null          # path to CA bundle for client-cert auth (mTLS)
     require_client_cert: false
 
+  # ─── Outbound iot.box announcement ──────────────────────────────
+  # When enabled, the proxy POSTs /iot/setup to a remote Odoo every
+  # `interval_seconds`, registering itself as an iot.box and creating
+  # iot.device records for everything in the printer/scale/reader/
+  # display/pinpad registries. Same wire format as Odoo's official
+  # Raspberry Pi IoT box image — Odoo EE iot module sees us as a
+  # normal IoT box without any custom code on the server side.
+  #
+  # Why outbound: the Odoo server can't always reach the proxy
+  # (LAN-only DNS, browser-side Cloudflare tunnel, /etc/hosts on the
+  # operator laptop). Going proxy → Odoo over plain HTTPS sidesteps
+  # the routing problem entirely.
+  #
+  # Setup:
+  #   1. On Odoo: Settings → Technical → Parameters → System
+  #      Parameters → set `iot_token` to a long random string. Copy.
+  #   2. Set `token` below to the same value.
+  #   3. Set `identifier` to a stable unique string (e.g. MAC of the
+  #      host's primary NIC, or a UUID generated once and persisted).
+  #   4. Set `advertised_host` to the hostname browsers will fetch
+  #      the proxy at — must NOT be left empty inside Docker (else
+  #      `socket.gethostname()` returns the container ID).
+  #   5. Restart proxy. iot.box appears in Odoo's IoT view; its
+  #      iot.device records appear under it.
+  iot_setup:
+    enabled: false
+    odoo_url: ""           # e.g. https://www1.odoo-shell.space
+    token: ""              # matches Odoo's iot_token system param
+    identifier: ""         # stable unique, e.g. rosen-laptop-ddb6f47
+    name: "ErpNet.FP proxy"
+    advertised_host: ""    # browser-routable hostname; required in Docker
+    interval_seconds: 60   # Odoo's official IoT image announces every 60s
+
 # Auto-detect connected fiscal devices on startup (probe COM ports).
 # When false (default), only printers explicitly listed below are loaded.
 auto_detect: false
