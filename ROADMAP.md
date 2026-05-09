@@ -83,11 +83,16 @@ disconnect). The remaining half stays as v0.3 below.
     with our existing DatecsPay driver). Free Partner Program,
     instant-approval sandbox at partners.mypos.com — application
     submitted 2026-05-09, awaiting access
-  - **Borica direct protocol** — single integration covers ALL bank-
-    issued terminals in BG (DSK, UBB, KBC, FiBank, Postbank, Allianz —
-    Ingenico Lane / Verifone V200 / PAX A920 hardware) since Borica
-    is the national card-scheme operator. Public TID protocol spec,
-    integrator registration with Borica needed
+  - **Borica direct protocol** (`borica_tid` driver, scheduled v0.7) —
+    single integration covers ALL bank-issued terminals in BG (DSK,
+    UBB, KBC, FiBank, Postbank, Allianz — Ingenico Lane/Move/Desk,
+    Verifone V200/V240/VX series, PAX A920 hardware) since Borica is
+    the national card-scheme operator and bank-issued terminals
+    expose ONLY the Borica TID ECR protocol (vendor SDKs locked
+    by bank firmware signing). Driver layout: `drivers/pinpad/
+    borica_tid/` with `protocol.py` + `transport_{tcp,serial,usb,
+    bluetooth}.py`. Public TID protocol spec, integrator registration
+    with Borica needed
   - **SumUp / Stripe Terminal** — EU mobile readers with public SDKs;
     nice-to-have for the SMB segment that uses pure-mobile checkout
 - **Customer-display driver**: Posiflex PD-2600 / PD-2800 native protocol
