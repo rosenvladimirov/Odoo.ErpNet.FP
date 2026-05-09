@@ -209,22 +209,33 @@ Koh Young) ship it natively. Adopting it as our wire format = out-of-
 the-box compatibility with hundreds of factory machines, instead of
 inventing a custom envelope.
 
-**Reference:** the official C# library is mirrored in the repo at
-`/home/rosen/Проекти/CFX/` (or moved into the IoT umbrella
-`Проекти/odoo/iot/CFX/`). It serves as the read-only schema source —
-we do not run the C# code, we port the envelope and selected message
-types to Python.
+**Existing Python library:** Rosen-authored `ipc-cfx` v0.1.0 alpha
+already exists at `/home/rosen/Проекти/amqp/proton-amqp/`
+(`github.com/rosenvladimirov/ipc_cfx`, branch
+`python-3.19-ipc-cfx-1.7`, ~1 yr dormant, 100 Python files, full
+domain coverage in `src/lib/cfx/`: production, information_system,
+maintenance, resourceperformance, structures, materials; plus
+runtime in `src/server/` with Apache Qpid Proton AMQP transport).
+Plan is **activate + integrate**, not port from scratch.
 
-**Python port scope** (new `odoo_erpnet_fp/cfx/` package):
-- Phase 1: core services — CFXEnvelope, Heartbeat, EndpointConnected /
-  ShuttingDown, AreYouThere, WhoIsThere, GetEndpointInformation,
-  NotSupportedResponse — Pydantic models, AMQP + MQTT transport
-  using `aio-pika` and `aiomqtt`
-- Phase 2: Production line events (StationStateChanged,
-  MaterialsConsumed, UnitsArrived, ...) — subset driven by first MES
-  client need
-- Phase 3: Materials + ResourcePerformance + InformationSystem
-  (DataTransfer, WorkOrderManagement) for full factory floor coverage
+**Reference:** the official C# library at `/home/rosen/Проекти/CFX/`
+serves as the audit source — diff its namespaces against the Python
+package, backfill any messages Rosen hasn't yet covered, on demand
+from the first MES customer.
+
+**Activation work** (planned for ErpNet.FP integration):
+- Refresh `ipc-cfx` against Python 3.12 (was tested on 3.9); resolve
+  one uncommitted change in `cfx_processor.py`
+- Decide repo strategy: keep `ipc-cfx` independent + `pip install`
+  into ErpNet.FP, OR monorepo / submodule
+- Optionally rebrand the folder from `proton-amqp` (transport-leaning)
+  to `ipc-cfx-py` (canonical) since CFX supports MQTT too
+- Audit completeness against the C# reference; backfill missing
+  message types per first MES client need
+- Wire into ErpNet.FP `odoo_erpnet_fp/server/` as broker client —
+  instantiate endpoint, register on startup, publish CFX-standard
+  Heartbeat / EndpointConnected, subscribe to production topics,
+  bridge events to Odoo via existing `/iot/event` HTTP path
 
 Topic conventions follow the CFX spec: `CFX.{Endpoint}`,
 `CFX.Production.Subscribers.<endpoint>`, etc. — the broker admin
