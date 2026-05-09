@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odoo-erpnet-fp"
-version = "0.5.2"
+version = "0.5.3"
 description = "Python drop-in replacement for ErpNet.FP HTTP fiscal-printer server, oriented for the Bulgarian POS market"
 readme = "README.md"
 license = { text = "LGPL-3.0-or-later" }

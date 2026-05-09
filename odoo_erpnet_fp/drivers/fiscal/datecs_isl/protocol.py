@@ -612,3 +612,69 @@ class IslDevice:
         amount = Decimal(str(amount))
         _t, status, _r = self._isl_request(cmd.CMD_MONEY_TRANSFER, f"-{amount:.2f}")
         return status
+
+    def program_plu(
+        self,
+        plu_number: int,
+        name: str,
+        price: Decimal | float,
+        vat_group: str = "Б",
+        department: int = 0,
+        barcodes: tuple = (),
+        measurement_unit: int = 0,
+        operation: str = "P",
+    ) -> DeviceStatus:
+        """Program a PLU slot (CMD_PROGRAM_PLU = 0x4B).
+
+        C variant DATA layout (DP-150 FW 3.00+, comma-separated):
+          {Pwd},{PLU},{Op},{TaxCd},{Dept},{Group},{Price},{Barcode},{Name},
+          {UM},{PriceFCY}
+
+        - `Op` = 'P' program/insert, 'D' delete, 'M' modify name only.
+        - `TaxCd` is the device letter (А/Б/В/Г) — same encoding as
+          `add_item`.
+        - `Department` 0..99; 0 = no department.
+        - `Group` 0..9 (commodity group); 0 = none.
+        - `Barcode` first up to 13-char EAN; multi-barcode requires
+          additional commands not handled here.
+        - `Name` truncated to `info.item_text_max_length` (typically
+          36) — Cyrillic CP1251 is encoded by the frame layer.
+        - `UM` measurement unit code (0=pcs, 1=kg, 2=l, ...). 0 default.
+        - `PriceFCY` foreign-currency price; empty = none.
+
+        TODO X variant (DP-150X, FP-700X) uses TAB separator, 6 mandatory
+        fields, password "0000" — when we extend to those models add a
+        subclass override (see `vendors.py` precedent) selecting the
+        layout based on `self.info.protocol`.
+        """
+        price_dec = Decimal(str(price))
+        if not 1 <= plu_number <= 100000:
+            raise ValueError(
+                f"PLU number {plu_number} out of 1..100000")
+        if operation not in ("P", "D", "M"):
+            raise ValueError(
+                f"Unknown PLU operation {operation!r}; "
+                "use 'P' (program), 'D' (delete) or 'M' (modify name)")
+        if vat_group not in ("А", "Б", "В", "Г"):
+            raise ValueError(
+                f"VAT group {vat_group!r} not in А/Б/В/Г")
+        item_text_max = self.info.item_text_max_length or 36
+        plu_name = (name or "")[: item_text_max]
+        first_barcode = ""
+        if barcodes:
+            first_barcode = str(barcodes[0])[:13]
+        payload = ",".join([
+            self.admin_password,
+            str(plu_number),
+            operation,
+            vat_group,
+            str(int(department)),
+            "0",                      # commodity group — 0 = none
+            f"{price_dec:.2f}",
+            first_barcode,
+            plu_name,
+            str(int(measurement_unit)),
+            "",                       # foreign-currency price
+        ])
+        _t, status, _r = self._isl_request(cmd.CMD_PROGRAM_PLU, payload)
+        return status

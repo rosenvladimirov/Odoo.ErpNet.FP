@@ -1002,7 +1002,7 @@ async def raw_request(id: str, frame_body: RequestFrame, request: Request):
 
 @router.post("/{id}/plu/sync")
 async def sync_plu_bulk(id: str, body: dict, request: Request):
-    """Bulk-program PLUs on the device (Datecs PM only for now).
+    """Bulk-program PLUs on the device (Datecs PM and ISL).
 
     Request body: `{items: [{plu, name, price, vat_group, department,
                              barcode?, currency?, measurement_unit?}, ...]}`
@@ -1013,15 +1013,19 @@ async def sync_plu_bulk(id: str, body: dict, request: Request):
 
     Returns: `{ok, programmed: int, errors: [{plu, error}, ...]}`.
 
-    ISL devices currently return 501 — TODO when ISL PLU programming
-    command (typically 0x6F) is added to the ISL driver.
+    Supported drivers:
+    * Datecs PM (CMD ProgramPLU) — full feature set.
+    * Datecs ISL (CMD 0x4B) — DP-150 C variant; TODO X variant in a
+      subclass override when DP-150X / FP-700X test coverage is added.
     """
     registry = _require_printer(request, id)
-    if not registry.is_pm(id):
+    if not (registry.is_pm(id) or registry.is_isl(id)):
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="PLU programming is currently only implemented for "
-                   "the Datecs PM driver.",
+            detail=(
+                "PLU programming is implemented only for Datecs PM and "
+                "Datecs ISL drivers."
+            ),
         )
     items = body.get("items") or []
     if not isinstance(items, list):
