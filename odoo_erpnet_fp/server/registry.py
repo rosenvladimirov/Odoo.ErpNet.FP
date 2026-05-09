@@ -219,11 +219,24 @@ async def _execute_command(cmd: dict) -> tuple[bool, dict | None, str]:
                 r = await c.post(f"{base}/admin/self-update",
                                   headers=headers)
             elif kind == "get_logs":
+                # Use the stock-IoT download_logs endpoint so a single
+                # URL serves both Fleet command-queue pulls and the
+                # native Odoo iot_download_logs.js browser path. tail
+                # caps the dump (5000 entries is excessive for a Fleet
+                # debug command).
                 tail = int(payload.get("tail", 200))
                 r = await c.get(
-                    f"{base}/admin/logs",
+                    f"{base}/hw_drivers/download_logs",
                     headers=headers, params={"tail": tail},
                 )
+                # download_logs returns plain text (matches Odoo's
+                # native expectation). Wrap so the command-result
+                # JSON has a real `logs` field instead of getting
+                # truncated by the generic JSON-or-raw fallback below.
+                ok_dl = r.status_code < 400
+                err_dl = "" if ok_dl else f"HTTP {r.status_code}: {r.text[:200]}"
+                return ok_dl, {"logs": r.text, "format": "text",
+                               "tail": tail}, err_dl
             elif kind == "program_vat":
                 printer_id = (payload.get("printer_id") or "").strip()
                 if not printer_id:

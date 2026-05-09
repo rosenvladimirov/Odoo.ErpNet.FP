@@ -75,17 +75,25 @@ async def legacy_hello() -> str:
 
 @v18_router.get("/download_logs", response_class=PlainTextResponse)
 @v19_router.get("/download_logs", response_class=PlainTextResponse)
-async def download_logs() -> PlainTextResponse:
+async def download_logs(tail: Optional[int] = None) -> PlainTextResponse:
     """Stock IoT Box endpoint — Odoo's iot_download_logs.js calls
     `window.location = ip_url + '/hw_drivers/download_logs'` and
     expects a downloadable text file with the box's recent log lines.
-    A 404 here surfaces as "Cannot download IoT Box logs" in the
-    backend; we serve the in-memory ring buffer (the same data the
-    /admin/logs SSE endpoint streams) so support has something to
-    grab without shell access.
+
+    Also reused by the Fleet command queue (`get_logs` kind) so the
+    Odoo backend has a single canonical endpoint to hit regardless of
+    whether it's a sync browser download or an async Fleet command.
+
+    `tail` query param caps the dump to the last N entries (handy for
+    the Fleet get_logs flow where 5000 lines is excessive). When
+    omitted, the whole ring buffer is dumped (matching native Odoo's
+    iot_download_logs.js expectation).
     """
     from .admin import _LOG_BUFFER
-    body = "\n".join(entry["msg"] for entry in list(_LOG_BUFFER))
+    snapshot = list(_LOG_BUFFER)
+    if tail is not None and tail > 0:
+        snapshot = snapshot[-tail:]
+    body = "\n".join(entry["msg"] for entry in snapshot)
     return PlainTextResponse(
         content=body or "(log buffer empty)\n",
         headers={
