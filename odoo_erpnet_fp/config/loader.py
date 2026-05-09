@@ -162,6 +162,13 @@ class IotSetupConfig:
     name: str = "ErpNet.FP proxy"
     advertised_host: str = ""
     interval_seconds: int = 60
+    # Which Odoo IoT module the announcement targets:
+    #   "ee"   — POST /iot/setup       (Odoo EE iot module, default)
+    #   "oca"  — POST /iot_oca/setup   (OCA iot_oca + l10n_bg_erp_net_fp_iot_oca)
+    #   "both" — POST both endpoints in sequence each tick
+    # Set "oca" or "both" only when the corresponding bridge module is
+    # actually installed on the Odoo side; "ee" is safe everywhere.
+    endpoint: str = "ee"
 
 
 @dataclass
@@ -346,6 +353,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             name=str(iot_setup_data.get("name") or "ErpNet.FP proxy").strip(),
             advertised_host=str(iot_setup_data.get("advertised_host") or "").strip(),
             interval_seconds=int(iot_setup_data.get("interval_seconds", 60)),
+            endpoint=str(iot_setup_data.get("endpoint") or "ee").strip().lower(),
         ),
     )
     server.tls.validate()

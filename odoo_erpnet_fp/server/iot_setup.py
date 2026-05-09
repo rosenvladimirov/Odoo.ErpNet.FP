@@ -134,9 +134,13 @@ def _device_inventory(app) -> dict[str, dict[str, Any]]:
 
 async def _post_setup(client: httpx.AsyncClient,
                       cfg: IotSetupConfig,
-                      app) -> bool:
-    """One-shot POST. Returns True on 200 OK, False otherwise.
-    Best-effort — never raises into the caller."""
+                      app,
+                      endpoint_path: str = "/iot/setup") -> bool:
+    """One-shot POST to a single setup endpoint. Returns True on
+    200 OK, False otherwise. Best-effort — never raises into the
+    caller. `endpoint_path` selects EE (`/iot/setup`) vs OCA
+    (`/iot_oca/setup`); both accept the same body shape.
+    """
     body = {
         "params": {
             "iot_box": {
@@ -149,27 +153,39 @@ async def _post_setup(client: httpx.AsyncClient,
             "devices": _device_inventory(app),
         }
     }
-    url = f"{cfg.odoo_url.rstrip('/')}/iot/setup"
+    url = f"{cfg.odoo_url.rstrip('/')}{endpoint_path}"
     try:
         r = await client.post(url, json=body, timeout=15.0)
     except httpx.HTTPError as exc:
-        _logger.debug("iot/setup POST %s failed: %s", url, exc)
+        _logger.debug("%s POST %s failed: %s", endpoint_path, url, exc)
         return False
     if r.status_code != 200:
-        _logger.warning("iot/setup → HTTP %d: %s",
-                        r.status_code, r.text[:200])
+        _logger.warning("%s → HTTP %d: %s",
+                        endpoint_path, r.status_code, r.text[:200])
         return False
     try:
         data = r.json()
     except ValueError:
-        _logger.warning("iot/setup non-JSON response: %s", r.text[:200])
+        _logger.warning("%s non-JSON response: %s",
+                        endpoint_path, r.text[:200])
         return False
     # Odoo JSON-RPC wraps response in {"result": <iot_channel>}
     result = data.get("result") if isinstance(data, dict) else None
     devices = body["params"]["devices"]
-    _logger.info("iot/setup ok — iot_channel=%r, %d device(s) announced",
-                 result, len(devices))
+    _logger.info("%s ok — result=%r, %d device(s) announced",
+                 endpoint_path, result, len(devices))
     return True
+
+
+def _resolve_endpoints(endpoint_kind: str) -> list[str]:
+    """Map config 'endpoint' kind → list of paths to POST per tick."""
+    kind = (endpoint_kind or "ee").strip().lower()
+    if kind == "oca":
+        return ["/iot_oca/setup"]
+    if kind == "both":
+        return ["/iot/setup", "/iot_oca/setup"]
+    # Default: EE iot only.
+    return ["/iot/setup"]
 
 
 async def iot_setup_loop(app, config_path: Path) -> None:
@@ -182,19 +198,22 @@ async def iot_setup_loop(app, config_path: Path) -> None:
             "iot_setup enabled but odoo_url / identifier missing — skipping")
         return
 
+    endpoints = _resolve_endpoints(cfg.endpoint)
     _logger.info(
-        "iot_setup loop started → %s as %r (every %ds)",
-        cfg.odoo_url, cfg.identifier, cfg.interval_seconds,
+        "iot_setup loop started → %s as %r (endpoints=%s, every %ds)",
+        cfg.odoo_url, cfg.identifier, endpoints, cfg.interval_seconds,
     )
     async with httpx.AsyncClient() as client:
         while True:
-            try:
-                await _post_setup(client, cfg, app)
-            except asyncio.CancelledError:
-                _logger.info("iot_setup loop cancelled")
-                raise
-            except Exception:  # noqa: BLE001
-                _logger.exception("iot_setup tick raised")
+            for endpoint_path in endpoints:
+                try:
+                    await _post_setup(client, cfg, app, endpoint_path)
+                except asyncio.CancelledError:
+                    _logger.info("iot_setup loop cancelled")
+                    raise
+                except Exception:  # noqa: BLE001
+                    _logger.exception("iot_setup tick raised on %s",
+                                      endpoint_path)
             try:
                 await asyncio.sleep(cfg.interval_seconds)
             except asyncio.CancelledError:
