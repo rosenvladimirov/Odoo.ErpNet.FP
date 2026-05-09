@@ -816,11 +816,9 @@ async def print_z_report_with_totals(
     Caller should always have its own Odoo-side aggregate as fallback.
     """
     registry = _require_printer(request, id)
-    entry = registry.get(id)
     try:
-        async with entry.lock:
-            with entry.opened() as driver:
-                result = driver.print_z_report()
+        async with registry.with_driver(id) as driver:
+            result = await asyncio.to_thread(driver.print_z_report)
         # PM-style return: (report_number, dict)
         if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
             report_number, totals = result
