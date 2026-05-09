@@ -61,13 +61,14 @@ _logger = logging.getLogger(__name__)
 
 
 # ErpNet.FP device kind → (iot.device.type, default subtype) mapping.
-# `subtype` is optional in /iot/setup (Odoo defaults to '') but POS
-# uses it for printers to distinguish fiscal/receipt/label hardware,
-# and quality_iot uses it for fiscal_data_module BODO001 routing. We
-# tag every printer as `fiscal` since that's the only kind ErpNet.FP
-# drives.
+# `subtype` is a Selection on iot.device with a fixed value list (see
+# iot/models/iot_device.py:subtype) — sending an unlisted value raises
+# `ValueError: Wrong value for iot.device.subtype: ...` and aborts
+# device creation. Empty is always valid; populating beyond '' is
+# something the operator can do manually if a downstream module
+# (pos_iot, quality_iot, etc.) expects a specific subtype.
 _KIND_TO_IOT_TYPE = {
-    "printer": ("printer", "fiscal"),
+    "printer": ("printer", ""),
     "reader":  ("scanner", ""),
     "scale":   ("scale", ""),
     "display": ("display", ""),

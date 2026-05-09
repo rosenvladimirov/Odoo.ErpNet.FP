@@ -18,4 +18,13 @@ Layout:
       └── config/          ← configuration.json loader (ErpNet.FP-compat)
 """
 
-__version__ = "0.1.0"
+try:
+    # Python 3.8+: pull the runtime version from package metadata so
+    # __version__ stays in lockstep with pyproject.toml without manual
+    # bumps in two places.
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("odoo-erpnet-fp")
+except Exception:  # noqa: BLE001
+    # Falls back to a known-old value when running from a source tree
+    # without the package being installed (e.g. pre-build smoke tests).
+    __version__ = "0.0.0+source"
