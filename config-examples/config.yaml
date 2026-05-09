@@ -43,7 +43,13 @@ server:
   #
   # Setup:
   #   1. On Odoo: Settings → Technical → Parameters → System
-  #      Parameters → set `iot_token` to a long random string. Copy.
+  #      Parameters → create the token param. The key DEPENDS ON
+  #      the Odoo version:
+  #         • Odoo 18: key = `iot_token` (no prefix); reusable
+  #         • Odoo 19+: key = `iot.iot_token` (prefixed); single-use,
+  #           Odoo wipes the param after the first successful setup,
+  #           so re-set it before each new box pairing.
+  #      Set the value to a long random string and copy it.
   #   2. Set `token` below to the same value.
   #   3. Set `identifier` to a stable unique string (e.g. MAC of the
   #      host's primary NIC, or a UUID generated once and persisted).

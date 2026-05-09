@@ -59,13 +59,19 @@ from ..config.loader import IotSetupConfig, load_config
 _logger = logging.getLogger(__name__)
 
 
-# ErpNet.FP device kind → iot.device.type (Odoo selection)
+
+# ErpNet.FP device kind → (iot.device.type, default subtype) mapping.
+# `subtype` is optional in /iot/setup (Odoo defaults to '') but POS
+# uses it for printers to distinguish fiscal/receipt/label hardware,
+# and quality_iot uses it for fiscal_data_module BODO001 routing. We
+# tag every printer as `fiscal` since that's the only kind ErpNet.FP
+# drives.
 _KIND_TO_IOT_TYPE = {
-    "printer": "printer",
-    "reader": "scanner",
-    "scale": "scale",
-    "display": "display",
-    "pinpad": "payment",
+    "printer": ("printer", "fiscal"),
+    "reader":  ("scanner", ""),
+    "scale":   ("scale", ""),
+    "display": ("display", ""),
+    "pinpad":  ("payment", ""),
 }
 
 
@@ -110,7 +116,7 @@ def _device_inventory(app) -> dict[str, dict[str, Any]]:
             inner = getattr(reg, _key, None) if reg else None
             if not inner:
                 continue
-            iot_type = _KIND_TO_IOT_TYPE.get(kind, kind)
+            iot_type, subtype = _KIND_TO_IOT_TYPE.get(kind, (kind, ""))
             for dev_id in inner.keys():
                 identifier = f"{kind}.{dev_id}"
                 out[identifier] = {
@@ -118,6 +124,7 @@ def _device_inventory(app) -> dict[str, dict[str, Any]]:
                     "type": iot_type,
                     "manufacturer": "ErpNet.FP",
                     "connection": "network",
+                    "subtype": subtype,
                 }
         except Exception:  # noqa: BLE001
             _logger.exception("iot_setup: enumerating %s failed", attr)
