@@ -138,48 +138,101 @@ every deployed ErpNet.FP proxy without per-instance SSH.
 
 ---
 
-## MES integration via RabbitMQ (AMQP + MQTT) — pre-v1.0
+## MES integration as broker client (AMQP + MQTT) — pre-v1.0
 
 Real customer use case: ErpNet.FP proxy bridges MES (Manufacturing
 Execution System) devices — PLCs, sensors, scales, machines on the
-factory floor — to the Odoo backend through a RabbitMQ broker that
-serves both protocols on the same instance (`rabbitmq_mqtt` plugin).
+factory floor — to the Odoo backend through an **external** broker
+(typically RabbitMQ with `rabbitmq_mqtt` plugin enabled, but any
+AMQP-0-9-1 / MQTT-3.1.1 compatible broker works). ErpNet.FP and
+Odoo are clients only — broker deployment, topology, users, ACLs,
+TLS certs are the customer's IT operation, outside of our scope.
 
 ```
-MES devices  ─MQTT─►  RabbitMQ  ─MQTT─►  ErpNet.FP  ─HTTP─►  Odoo
-     ▲                                       ▲
-     └──MQTT◄─ RabbitMQ ◄─MQTT─ ErpNet.FP ◄─HTTP─┘
+MES devices  ─MQTT─►  [external broker]  ─MQTT─►  ErpNet.FP  ─HTTP─►  Odoo
+     ▲                                                ▲
+     └──MQTT◄─ [external broker] ◄─MQTT─ ErpNet.FP ◄─HTTP─┘
 ```
 
-**Phase 1 — broker + MQTT bridge** (mid-development, before v1.0):
-- Add RabbitMQ 3.13+ to `docker-compose.yml` with AMQP 5672 + MQTT
-  1883 listeners, management UI 15672, plugins:
-  `rabbitmq_mqtt + rabbitmq_management + rabbitmq_prometheus`
-- `odoo_erpnet_fp/server/mqtt_bridge.py` (`aiomqtt`) — subscribes to
-  topic patterns from `config.yaml` `mqtt.subscriptions:[]`, per-message
-  handler dispatches to `/iot/event` POST or to internal proxy state
-- Topic conventions:
+**Phase 1 — MQTT client bridge** (mid-development, before v1.0):
+- `odoo_erpnet_fp/server/mqtt_bridge.py` (`aiomqtt`) — connects to
+  the configured broker as a regular client; subscribes to topic
+  patterns from `config.yaml` `mqtt.subscriptions:[]`; per-message
+  handler dispatches to `/iot/event` POST to Odoo or to internal
+  proxy state
+- `config.yaml` adds `mqtt:` section: `url`, `username`, `password`,
+  `tls`, `subscriptions: []`, `qos`, `keepalive_seconds`
+- Topic conventions (recommended; broker admin can rename):
   - MES events: `mes/<plant>/<line>/<machine>/<event>`
   - Fiscal events: `fp/<tenant>/<device-kind>/<id>/<event>`
   - Commands: `cmd/<tenant>/<target>/<command>`
-- Initial auth: anonymous on LAN (dev); production tightens later
+- Auto-reconnect with backoff; clean session on reconnect
+- Documentation: minimum broker requirements (RabbitMQ 3.13+ with
+  `rabbitmq_mqtt`; HiveMQ; Mosquitto with bridge to AMQP if Odoo
+  uses AMQP); zero opinion on how the customer runs it
 
-**Phase 2 — AMQP exchange + Odoo consumer** (right before v1.0):
-- `odoo_erpnet_fp/server/amqp.py` (`aio-pika`) — topic exchange
-  `erpnet.fp.events` (proxy → Odoo) + `erpnet.fp.commands`
-  (Odoo → proxy)
+**Phase 2 — AMQP client + Odoo consumer** (right before v1.0):
+- `odoo_erpnet_fp/server/amqp.py` (`aio-pika`) — connects to the
+  broker as an AMQP client; declares (idempotently) topic exchange
+  bindings the customer's broker admin pre-created OR allows on-
+  connect declare per `config.yaml` flag
 - New Odoo module `l10n_bg_erp_net_fp_amqp` — cron-driven worker,
-  manual ack, idempotency by event id, retry to DLQ
+  manual ack, idempotency by event id, retry with backoff before
+  redelivery (DLQ routing left to broker admin)
 - JSON envelope: `{schema_version, ts, tenant, source_kind,
-  source_id, event_type, payload}` — same format on both AMQP and
-  MQTT sides for handler reuse
+  source_id, event_type, payload}` — same format on AMQP and MQTT
+  sides for handler reuse
+- Sample `rabbitmqctl` / `rabbitmqadmin` snippets in docs to help
+  customer admin pre-create the expected exchange + binding when
+  on-connect declare is disabled
 
 **Phase 3 — production hardening** (post-v1.0):
-- Per-machine MQTT credentials + ACL by topic pattern in RabbitMQ
-- TLS+SASL PLAIN on AMQP side
-- Circuit-breaker fallback to HTTP webhook if broker unreachable >5min
-- Prometheus metrics: publish rate, retries, DLQ depth, ack latency
-- Helm chart for the RabbitMQ + ErpNet.FP combo
+- TLS for both protocols (client cert paths in config)
+- Circuit-breaker fallback to HTTP webhook if broker unreachable
+  >5min — the existing webhook path stays as default; broker is
+  opt-in
+- Prometheus metrics: publish rate, retries, broker reconnects,
+  ack latency
+
+**Out of scope** (customer's IT operation, not ours):
+- Broker installation, container orchestration, Helm
+- User accounts, MQTT ACLs, AMQP virtual hosts
+- Cluster topology, HA, mirrored queues, federation
+- TLS cert issuance for the broker itself
+
+### CFX wire format — IPC-CFX schemas
+
+IPC-CFX (Connected Factory Exchange, Apache-2.0) is the industry
+standard for SMT / electronics manufacturing line messaging — major
+equipment vendors (ASM/SIPLACE, Yamaha, Panasonic, Mycronic, MIRTEC,
+Koh Young) ship it natively. Adopting it as our wire format = out-of-
+the-box compatibility with hundreds of factory machines, instead of
+inventing a custom envelope.
+
+**Reference:** the official C# library is mirrored in the repo at
+`/home/rosen/Проекти/CFX/` (or moved into the IoT umbrella
+`Проекти/odoo/iot/CFX/`). It serves as the read-only schema source —
+we do not run the C# code, we port the envelope and selected message
+types to Python.
+
+**Python port scope** (new `odoo_erpnet_fp/cfx/` package):
+- Phase 1: core services — CFXEnvelope, Heartbeat, EndpointConnected /
+  ShuttingDown, AreYouThere, WhoIsThere, GetEndpointInformation,
+  NotSupportedResponse — Pydantic models, AMQP + MQTT transport
+  using `aio-pika` and `aiomqtt`
+- Phase 2: Production line events (StationStateChanged,
+  MaterialsConsumed, UnitsArrived, ...) — subset driven by first MES
+  client need
+- Phase 3: Materials + ResourcePerformance + InformationSystem
+  (DataTransfer, WorkOrderManagement) for full factory floor coverage
+
+Topic conventions follow the CFX spec: `CFX.{Endpoint}`,
+`CFX.Production.Subscribers.<endpoint>`, etc. — the broker admin
+configures bindings per the spec; ErpNet.FP just publishes/subscribes
+on the standard names.
+
+`docs/cfx-compliance.md` lists which CFX message types are supported
+in each release with a link back to the C# reference for the rest.
 
 ---
 
