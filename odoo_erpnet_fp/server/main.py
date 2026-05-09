@@ -113,10 +113,19 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                 iot_setup_loop(app, config_path or Path("config.yaml")),
                 name="iot-setup-announce",
             )
+        # Hot-plug autodetect of CDC ACM scanners + hid2serial pseudo
+        # ttys via udev. No-op when auto_detect is false at top level.
+        from .reader_autodetect import autodetect_loop
+        autodetect_task: asyncio.Task | None = None
+        if app.state.config.auto_detect:
+            autodetect_task = asyncio.create_task(
+                autodetect_loop(app),
+                name="reader-autodetect",
+            )
         try:
             yield
         finally:
-            for t in (fleet_task, iot_setup_task):
+            for t in (fleet_task, iot_setup_task, autodetect_task):
                 if t is not None:
                     t.cancel()
                     try:

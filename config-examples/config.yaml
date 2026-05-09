@@ -67,8 +67,23 @@ server:
     advertised_host: ""    # browser-routable hostname; required in Docker
     interval_seconds: 60   # Odoo's official IoT image announces every 60s
 
-# Auto-detect connected fiscal devices on startup (probe COM ports).
-# When false (default), only printers explicitly listed below are loaded.
+# Auto-detect connected devices.
+#
+# When true:
+#   * Printers — startup probe of COM ports for known fiscal-printer
+#     vendors (Datecs, Eltrade, Tremol).
+#   * Readers — udev-based hot-plug listener for CDC ACM scanners
+#     (Honeywell 1470g, Datalogic, generic CN scanners) and pseudo
+#     ttys from hid2serial (`/dev/ttyV*`). Vendor-specific defaults
+#     (baudrate, encoding) are applied automatically; manual entries
+#     in `readers:` below take precedence on port collision.
+#
+# When false (default): only entries explicitly listed below are loaded.
+#
+# Production tip: leave it FALSE on shop-floor deploys where the
+# device set is fixed — predictability beats convenience there.
+# Leave it TRUE on dev / pilot machines so swapping a USB scanner
+# doesn't require a config edit + restart cycle.
 auto_detect: false
 
 # ─── Printers ─────────────────────────────────────────────────────

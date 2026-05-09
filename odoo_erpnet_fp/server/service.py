@@ -564,6 +564,67 @@ class ReaderRegistry:
                     "Failed to close bus for reader %r", entry.config.id
                 )
 
+    # ─── Hot-plug add/remove (called from reader_autodetect.py) ──
+
+    async def add_dynamic(
+        self,
+        cfg: ReaderConfig,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> bool:
+        """Register + start a reader at runtime (from udev hot-plug).
+
+        Returns True on success, False on duplicate id or driver
+        failure. Idempotent — silently no-ops if `cfg.id` is already
+        registered.
+        """
+        if cfg.id in self.readers:
+            return False
+        loop = loop or asyncio.get_running_loop()
+        bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks)
+        bus._loop = loop
+        entry = ReaderEntry(config=cfg, bus=bus)
+        try:
+            driver = self._make_driver(cfg)
+            driver.set_listener(bus.publish_threadsafe)
+            driver.start()
+            entry.driver = driver
+        except Exception:
+            _logger.exception(
+                "add_dynamic: failed to start reader %r", cfg.id
+            )
+            return False
+        self.readers[cfg.id] = entry
+        _logger.info(
+            "Hot-plug registered reader %r — transport=%s addr=%s",
+            cfg.id, cfg.transport, cfg.port or cfg.device_path or "?",
+        )
+        return True
+
+    async def remove_dynamic(self, reader_id: str) -> bool:
+        """Stop + unregister a reader at runtime (from udev unplug).
+
+        Returns True if the reader was removed, False if it wasn't
+        registered. Idempotent.
+        """
+        entry = self.readers.pop(reader_id, None)
+        if entry is None:
+            return False
+        if entry.driver is not None:
+            try:
+                entry.driver.stop()
+            except Exception:
+                _logger.exception(
+                    "remove_dynamic: stop failed for %r", reader_id
+                )
+        try:
+            await entry.bus.close()
+        except Exception:
+            _logger.exception(
+                "remove_dynamic: bus close failed for %r", reader_id
+            )
+        _logger.info("Hot-plug unregistered reader %r", reader_id)
+        return True
+
     @staticmethod
     def _make_driver(cfg: ReaderConfig) -> BarcodeReader:
         if cfg.transport == "hid":
