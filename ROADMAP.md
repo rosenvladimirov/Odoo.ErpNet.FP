@@ -138,6 +138,51 @@ every deployed ErpNet.FP proxy without per-instance SSH.
 
 ---
 
+## MES integration via RabbitMQ (AMQP + MQTT) — pre-v1.0
+
+Real customer use case: ErpNet.FP proxy bridges MES (Manufacturing
+Execution System) devices — PLCs, sensors, scales, machines on the
+factory floor — to the Odoo backend through a RabbitMQ broker that
+serves both protocols on the same instance (`rabbitmq_mqtt` plugin).
+
+```
+MES devices  ─MQTT─►  RabbitMQ  ─MQTT─►  ErpNet.FP  ─HTTP─►  Odoo
+     ▲                                       ▲
+     └──MQTT◄─ RabbitMQ ◄─MQTT─ ErpNet.FP ◄─HTTP─┘
+```
+
+**Phase 1 — broker + MQTT bridge** (mid-development, before v1.0):
+- Add RabbitMQ 3.13+ to `docker-compose.yml` with AMQP 5672 + MQTT
+  1883 listeners, management UI 15672, plugins:
+  `rabbitmq_mqtt + rabbitmq_management + rabbitmq_prometheus`
+- `odoo_erpnet_fp/server/mqtt_bridge.py` (`aiomqtt`) — subscribes to
+  topic patterns from `config.yaml` `mqtt.subscriptions:[]`, per-message
+  handler dispatches to `/iot/event` POST or to internal proxy state
+- Topic conventions:
+  - MES events: `mes/<plant>/<line>/<machine>/<event>`
+  - Fiscal events: `fp/<tenant>/<device-kind>/<id>/<event>`
+  - Commands: `cmd/<tenant>/<target>/<command>`
+- Initial auth: anonymous on LAN (dev); production tightens later
+
+**Phase 2 — AMQP exchange + Odoo consumer** (right before v1.0):
+- `odoo_erpnet_fp/server/amqp.py` (`aio-pika`) — topic exchange
+  `erpnet.fp.events` (proxy → Odoo) + `erpnet.fp.commands`
+  (Odoo → proxy)
+- New Odoo module `l10n_bg_erp_net_fp_amqp` — cron-driven worker,
+  manual ack, idempotency by event id, retry to DLQ
+- JSON envelope: `{schema_version, ts, tenant, source_kind,
+  source_id, event_type, payload}` — same format on both AMQP and
+  MQTT sides for handler reuse
+
+**Phase 3 — production hardening** (post-v1.0):
+- Per-machine MQTT credentials + ACL by topic pattern in RabbitMQ
+- TLS+SASL PLAIN on AMQP side
+- Circuit-breaker fallback to HTTP webhook if broker unreachable >5min
+- Prometheus metrics: publish rate, retries, DLQ depth, ack latency
+- Helm chart for the RabbitMQ + ErpNet.FP combo
+
+---
+
 ## Module independence — Grafana embed vs ErpNet.FP monitoring stack
 
 The Odoo Grafana embed and the ErpNet.FP-bundled monitoring stack are
