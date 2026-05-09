@@ -792,6 +792,64 @@ async def print_z_report(
     return await _dispatch_simple(registry, id, "print_z_report", "print_z_report")
 
 
+# ─── 10b. POST /{id}/zreport-totals ───────────────────────────────
+
+
+@router.post("/{id}/zreport-totals")
+async def print_z_report_with_totals(
+    id: str,
+    request: Request,
+    asyncTimeout: Annotated[int, Query()] = 120000,
+):
+    """Print Z-report AND return parsed totals when the driver supports it.
+
+    Some drivers (Datecs PM v2.11.4) return `(report_number, dict[group, turnover])`
+    from `print_z_report()`; others (Datecs ISL) only flip device status. The
+    response shape adapts:
+
+        Driver returns tuple    → {ok, report_number, totals_by_group, device_returned_totals: true}
+        Driver returns DeviceStatus → {ok, device_returned_totals: false, status: ...}
+
+    Designed for Odoo's pos.session close-shift hook: gives the backend a
+    real reconcile baseline against pos.order aggregates when the device
+    cooperates, and a clean "totals unavailable" signal when it doesn't.
+    Caller should always have its own Odoo-side aggregate as fallback.
+    """
+    registry = _require_printer(request, id)
+    entry = registry.get(id)
+    try:
+        async with entry.lock:
+            with entry.opened() as driver:
+                result = driver.print_z_report()
+        # PM-style return: (report_number, dict)
+        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
+            report_number, totals = result
+            return {
+                "ok": True,
+                "report_number": int(report_number),
+                "totals_by_group": {k: float(v) for k, v in totals.items()},
+                "device_returned_totals": True,
+            }
+        # ISL-style return: DeviceStatus (just an ack — no totals)
+        ok = bool(getattr(result, "ok", False))
+        messages = [str(m) for m in getattr(result, "messages", []) or []]
+        return {
+            "ok": ok,
+            "report_number": None,
+            "totals_by_group": {},
+            "device_returned_totals": False,
+            "messages": messages,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "report_number": None,
+            "totals_by_group": {},
+            "device_returned_totals": False,
+            "messages": [str(exc)],
+        }
+
+
 # ─── 11. POST /{id}/xreport ───────────────────────────────────────
 
 
