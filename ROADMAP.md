@@ -48,7 +48,13 @@ clean integration.
 
 ### What's still missing for v1.0
 
-- Hardware coverage gaps: **Borica** / **myPOS** pinpads, **Posiflex PD-2600/2800** displays, **Datecs ETS** / **Elicom EPS** label-printing scales
+- Hardware coverage gaps:
+  - **Pinpads**: myPOS + Borica direct protocol (Tier 1 — БГ retail
+    mainstream); SumUp + Stripe Terminal (Tier 2 — EU mobile);
+    Worldline / Verifone / Ingenico SDK contracts (Tier 3 — enterprise,
+    post-v1.0)
+  - **Customer displays**: Posiflex PD-2600 / PD-2800
+  - **Scales**: Datecs ETS / Elicom EPS label-printing
 - Fiscal printers: **Tremol** / **Eltrade** / **Incotex** — stubs exist, need full driver
 - ~~l10n_bg_erp_net_fp v19 deploy~~ — **DONE 2026-05-07**
 - Persistent device state, webhook delivery retry/DLQ, audit log JSONL rotation
@@ -70,7 +76,20 @@ disconnect). The remaining half stays as v0.3 below.
 
 **Goal:** cover the last 5% of the BG market.
 
-- **Pinpad drivers**: Borica + myPOS terminal (no NDA blocker; spec is public)
+- **Pinpad drivers**:
+  - **myPOS** — BluePad-50 / BlueCash-50 (same hardware vendor as
+    Datecs Pay — myPOS is a Datecs Holdings spin-off, terminals are
+    literally Datecs hardware with myPOS firmware → expect code reuse
+    with our existing DatecsPay driver). Free Partner Program,
+    instant-approval sandbox at partners.mypos.com — application
+    submitted 2026-05-09, awaiting access
+  - **Borica direct protocol** — single integration covers ALL bank-
+    issued terminals in BG (DSK, UBB, KBC, FiBank, Postbank, Allianz —
+    Ingenico Lane / Verifone V200 / PAX A920 hardware) since Borica
+    is the national card-scheme operator. Public TID protocol spec,
+    integrator registration with Borica needed
+  - **SumUp / Stripe Terminal** — EU mobile readers with public SDKs;
+    nice-to-have for the SMB segment that uses pure-mobile checkout
 - **Customer-display driver**: Posiflex PD-2600 / PD-2800 native protocol
 - **Scale drivers**: Datecs ETS / Elicom EPS label-printing (with PLU sync from Odoo product list) — required for butcher / deli clients
 - **Fiscal printer drivers**: finish Tremol / Eltrade / Incotex
