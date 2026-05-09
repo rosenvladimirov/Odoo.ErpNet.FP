@@ -113,8 +113,15 @@ class ReaderEventBus:
         #    iot.device event under identifier `reader.<reader_id>`.
         try:
             from .routes.iot_compat import get_iot_sessions
-            await get_iot_sessions().push(
-                f"reader.{self.reader_id}",
+            sessions = get_iot_sessions()
+            ident = f"reader.{self.reader_id}"
+            waiter_count = len(sessions._waiters.get(ident, []))
+            _logger.info(
+                "IoT push: %s barcode=%r waiters=%d",
+                ident, scan.barcode, waiter_count,
+            )
+            await sessions.push(
+                ident,
                 {
                     "result": scan.barcode,
                     "value": scan.barcode,  # legacy alias

@@ -90,12 +90,25 @@ class _IotSessionRegistry:
         self._sessions: dict[str, dict[str, float]] = {}
         # device_identifier → list[(session_id, asyncio.Event, payload_holder)]
         self._waiters: dict[str, list[tuple[str, asyncio.Event, list]]] = {}
+        # device_identifier → most recent payload pushed while no waiters
+        # were registered. Native Odoo long-poll cycles have a ~100ms gap
+        # between response and re-poll; a barcode scan landing in that
+        # gap would be lost without this buffer. Latest-wins policy: if
+        # two scans arrive before the next poll, only the second is
+        # delivered (matches operator intent — fast double-scans should
+        # not double-fire on the POS).
+        self._pending: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
     async def push(self, device_identifier: str, payload: dict) -> None:
-        """Wake up every long-poll waiter listening for this device."""
+        """Wake up every long-poll waiter listening for this device. If
+        no waiter is currently registered, buffer the payload so the
+        next wait() returns it immediately.
+        """
         async with self._lock:
             waiters = self._waiters.pop(device_identifier, [])
+            if not waiters:
+                self._pending[device_identifier] = payload
         for _sid, evt, holder in waiters:
             holder.append(payload)
             evt.set()
@@ -106,7 +119,14 @@ class _IotSessionRegistry:
         device_identifier: str,
         timeout: float,
     ) -> Optional[dict]:
-        """Block until an event is pushed for this device, or timeout."""
+        """Block until an event is pushed for this device, or timeout.
+        Returns immediately if there is a buffered payload from a push
+        that arrived between long-poll cycles.
+        """
+        async with self._lock:
+            buffered = self._pending.pop(device_identifier, None)
+        if buffered is not None:
+            return buffered
         evt = asyncio.Event()
         holder: list = []
         async with self._lock:
