@@ -68,6 +68,7 @@ from .reader_bus import ReaderEventBus
 from ..drivers.fiscal.datecs_isl import (
     DaisyIslDevice,
     DatecsIslDevice,
+    DatecsIslXDevice,
     EltradeIslDevice,
     IncotexIslDevice,
     IslDevice,
@@ -85,8 +86,11 @@ from ..drivers.fiscal.datecs_pm.transport_tcp import TcpTransport
 from .schemas import DeviceInfo
 
 # Map driver name → IslDevice subclass.
+# `datecs.isl`  = C variant (DP-150 base, comma-sep, admin pw "9999")
+# `datecs.islx` = X variant (DP-150X / FP-700X / FMP-350X, TAB-sep, pw "0000")
 _ISL_DRIVERS: dict[str, type[IslDevice]] = {
     "datecs.isl": DatecsIslDevice,
+    "datecs.islx": DatecsIslXDevice,
     "daisy.isl": DaisyIslDevice,
     "eltrade.isl": EltradeIslDevice,
     "incotex.isl": IncotexIslDevice,

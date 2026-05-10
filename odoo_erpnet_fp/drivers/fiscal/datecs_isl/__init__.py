@@ -31,6 +31,7 @@ from .status import DeviceStatus, StatusMessage, StatusMessageType
 from .vendors import (
     DaisyIslDevice,
     DatecsIslDevice,
+    DatecsIslXDevice,
     EltradeIslDevice,
     IncotexIslDevice,
     TremolIslDevice,
@@ -39,6 +40,7 @@ from .vendors import (
 __all__ = [
     "IslDevice",
     "DatecsIslDevice",
+    "DatecsIslXDevice",
     "DaisyIslDevice",
     "EltradeIslDevice",
     "IncotexIslDevice",

@@ -474,10 +474,12 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
 _URI_DRIVER_MAP = {
     # Maps the `bg.<vendor>.<protocol>` part of an ErpNet.FP URI to our
     # dotted driver path. Extend as more drivers are ported.
+    # X-variant Datecs (DP-150X / FP-700X / FMP-350X) routes to
+    # `datecs.islx` so the X subclass picks up TAB-sep headers + pw=0000.
     "bg.dt.pm": "datecs.pm",
     "bg.dt.c.isl": "datecs.isl",
     "bg.dt.p.isl": "datecs.isl",
-    "bg.dt.x.isl": "datecs.isl",
+    "bg.dt.x.isl": "datecs.islx",
     "bg.dt.fp.isl": "datecs.isl",
     "bg.dy": "daisy",
     "bg.tr.zfp": "tremol.zfp",
