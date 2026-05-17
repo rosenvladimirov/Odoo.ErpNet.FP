@@ -388,5 +388,23 @@ printers:
 #     active_high: true
 #     pulse_seconds: 3
 #
+#   - id: gate4                         # Polimex iCON130 (BG) via WebSDK
+#     driver: polimex
+#     host: 192.168.1.20                # webstack (LAN module) IP
+#     port: 80
+#     user: SDK                         # WebSDK user ("SDK" or "admin")
+#     password: "0000"                  # 4-digit module key
+#     bus_id: 1                         # iCON id on the RS-485 bus
+#     output: 1                         # door lock output number
+#     pulse_seconds: 3                  # controller auto-closes (1 round-trip)
+#
 #   # driver: miv  → MIV Electronics slot (protocol pending vendor spec)
 #   # driver: wiegand → scaffold (needs MCU bit-banger)
+#
+# Polimex iCON 50/110/115/130/180 — open HTTP/JSON WebSDK
+# (websdk.polimex.online/docs). Synchronous "direct command":
+# POST http://<webstack>/sdk/cmd.json → {"cmd":{"id":bus_id,"c":"DB",
+# "d":"<out hex><state 01|00><time 00-99>"}} — one round-trip, the
+# controller auto-closes after `pulse_seconds` (no second call, no
+# queue). The webstack must be directly reachable from the proxy
+# (NOT behind NAT — NAT mode is the queued event-answer path).

@@ -328,6 +328,7 @@
     <button class="tab" data-kind="readers" onclick="switchTab('readers')">🔍 Readers <span class="count" id="cnt-readers">0</span></button>
     <button class="tab" data-kind="pinpads" onclick="switchTab('pinpads')">💳 Pinpads <span class="count" id="cnt-pinpads">0</span></button>
     <button class="tab" data-kind="cameras" onclick="switchTab('cameras')">📷 Cameras <span class="count" id="cnt-cameras">0</span></button>
+    <button class="tab" data-kind="access" onclick="switchTab('access')">🚪 Access <span class="count" id="cnt-access">0</span></button>
   </div>
 
   <section class="devices active" data-kind="printers">
@@ -353,6 +354,10 @@
   <section class="devices" data-kind="cameras">
     <div class="grid" id="grid-cameras"><div class="empty">Loading…</div></div>
   </section>
+
+  <section class="devices" data-kind="access">
+    <div class="grid" id="grid-access"><div class="empty">Loading…</div></div>
+  </section>
 </div>
 
 <footer>
@@ -367,10 +372,10 @@
 
 <script>
 const ENDPOINT = window.location.origin;
-const KINDS = ["printers", "scales", "displays", "readers", "pinpads", "cameras"];
+const KINDS = ["printers", "scales", "displays", "readers", "pinpads", "cameras", "access"];
 let state = {
-  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, cameras: {},
-  statuses: {}, scans: {}, readerLast: {}, plates: {}, cameraLast: {},
+  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, cameras: {}, access: {},
+  statuses: {}, scans: {}, readerLast: {}, plates: {}, cameraLast: {}, accessLast: {},
 };
 
 function toast(msg, kind = "ok") {
@@ -636,6 +641,7 @@ function emptyCard(kind) {
     readers: 'Add a <code>readers:</code> entry. Transports: <code>hid</code> · <code>serial</code> · <code>external</code>',
     pinpads: 'Add a <code>pinpads:</code> entry. Driver: <code>datecs_pay</code>',
     cameras: 'Add a <code>cameras:</code> entry. Drivers: <code>rtsp</code> · <code>onvif</code> · <code>go2rtc</code> · <code>external</code>. Bring siblings up: <code>docker compose --profile cameras up -d go2rtc alpr</code>',
+    access: 'Add an <code>access:</code> entry. Drivers: <code>relay_tcp</code> · <code>onvif</code> · <code>gpio</code> · <code>polimex</code> (Polimex iCON) · <code>miv</code>. Odoo takes the decision (fail-secure) and POSTs <code>/access/&lt;id&gt;/open</code> synchronously.',
   };
   return `<div class="empty">No ${kind} configured.<br>${hints[kind] || ""}</div>`;
 }
@@ -654,6 +660,7 @@ function renderKind(kind) {
     readers: renderReader,
     pinpads: renderPinpad,
     cameras: renderCamera,
+    access: renderAccess,
   }[kind];
   grid.innerHTML = Object.entries(items).map(([id, info]) => renderer(id, info)).join("");
 }
@@ -884,6 +891,64 @@ async function fetchCameraLast(id) {
 async function fetchAllCameraLast() {
   const ids = Object.keys(state.cameras || {});
   await Promise.all(ids.map(fetchCameraLast));
+}
+
+// ─── Access controllers (barrier / relay / turnstile) ────────
+
+function renderAccess(id, info) {
+  const last = state.accessLast?.[id];
+  const fs = info.failSecure
+    ? '<span class="badge ok">fail-secure</span>' : '';
+  const eid = encodeURIComponent(id);
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        ${fs}
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>Decision</dt><dd>taken in Odoo (fail-secure)</dd>
+          ${last ? `<dt>Last</dt><dd style="font-family:monospace">${last.action} → ${last.state || (last.ok ? "ok" : "err")} <span style="color:var(--text-dim);font-size:0.7rem">(${last.detail || ""} ${fmtAgo(new Date(last.timestamp).getTime())})</span></dd>` : ""}
+        </dl>
+      </div>
+      <div class="card-actions">
+        <button class="sm primary" onclick="accessOpen('${id}')">🔓 Open</button>
+        <button class="sm warn" onclick="accessCmd('${id}','deny')">🔒 Deny</button>
+        <button class="sm" onclick="accessCmd('${id}','status')">⟳ Status</button>
+      </div>
+    </div>`;
+}
+
+async function accessOpen(id) {
+  const s = prompt(`Open ${id} — pulse seconds (blank = latched open):`, "3");
+  if (s === null) return;
+  const body = s.trim() ? { seconds: parseFloat(s) } : {};
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/access/${encodeURIComponent(id)}/open`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body) });
+    state.accessLast = state.accessLast || {};
+    state.accessLast[id] = r;
+    renderKind("access");
+    toast(`${id}: ${r.action} → ${r.state || "ok"}`, r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+async function accessCmd(id, action) {
+  try {
+    const method = action === "status" ? "GET" : "POST";
+    const r = await fetchJSON(
+      `${ENDPOINT}/access/${encodeURIComponent(id)}/${action}`,
+      { method, headers: { Accept: "application/json" } });
+    state.accessLast = state.accessLast || {};
+    state.accessLast[id] = r;
+    renderKind("access");
+    toast(`${id}: ${r.action} → ${r.state || (r.ok ? "ok" : "err")}`,
+          r.ok ? "ok" : "err");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
 }
 
 async function cameraInject(id) {

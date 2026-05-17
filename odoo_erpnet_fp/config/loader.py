@@ -367,6 +367,9 @@ class AccessConfig:
       onvif     — camera's own ONVIF Device IO relay (`host`,`user`,
                   `password`,`relay_output`)
       gpio      — Pi/SBC GPIO (`pin`,`active_high`) — lazy [gpio]
+      polimex   — Polimex iCON (50/110/115/130/180) via the open
+                  WebSDK direct command (`host`=webstack IP,
+                  `user`/`password`=SDK/key, `bus_id`,`output`)
       wiegand   — scaffold (not implemented)
       miv       — MIV Electronics vendor slot (protocol pending)
 
@@ -386,6 +389,8 @@ class AccessConfig:
     off_cmd: str = "off"          # relay_tcp off payload
     pin: int = 0                  # gpio BCM pin
     active_high: bool = True      # gpio polarity
+    bus_id: int = 1               # polimex: iCON id on the RS-485 bus
+    output: int = 1               # polimex: door lock output number
     pulse_seconds: float = 3.0    # momentary open duration
     fail_secure: bool = True
     extras: dict[str, Any] = field(default_factory=dict)
@@ -638,6 +643,8 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 off_cmd=str(entry.get("off_cmd", "off")),
                 pin=int(entry.get("pin", 0)),
                 active_high=bool(entry.get("active_high", True)),
+                bus_id=int(entry.get("bus_id", 1)),
+                output=int(entry.get("output", 1)),
                 pulse_seconds=float(entry.get("pulse_seconds", 3.0)),
                 fail_secure=bool(entry.get("fail_secure", True)),
                 extras=entry.get("extras", {}),

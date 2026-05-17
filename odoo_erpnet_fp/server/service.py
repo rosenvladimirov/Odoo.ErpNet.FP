@@ -57,6 +57,7 @@ from ..drivers.access import (
     GpioActuator,
     MivActuator,
     OnvifRelayActuator,
+    PolimexWebSdkActuator,
     RelayTcpActuator,
     WiegandActuator,
 )
@@ -949,7 +950,7 @@ class AccessRegistry:
     open/deny; it never decides and never auto-opens (fail-secure).
     """
 
-    _VALID = ("relay_tcp", "onvif", "gpio", "wiegand", "miv")
+    _VALID = ("relay_tcp", "onvif", "gpio", "polimex", "wiegand", "miv")
 
     def __init__(self) -> None:
         self.access: dict[str, AccessEntry] = {}
@@ -1000,6 +1001,14 @@ class AccessRegistry:
         if cfg.driver == "gpio":
             return GpioActuator(
                 cfg.id, pin=cfg.pin, active_high=cfg.active_high,
+                pulse_seconds=cfg.pulse_seconds,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "polimex":
+            return PolimexWebSdkActuator(
+                cfg.id, host=cfg.host or "", port=cfg.port or 80,
+                user=cfg.user or "SDK", password=cfg.password or "0000",
+                bus_id=cfg.bus_id, output=cfg.output,
                 pulse_seconds=cfg.pulse_seconds,
                 fail_secure=cfg.fail_secure,
             )

@@ -138,3 +138,58 @@ def test_fail_secure_default():
     assert all(a.fail_secure for a in cfg.access)  # default True
     a = RelayTcpActuator("g", host="h")
     assert a.fail_secure is True
+
+
+def test_polimex_payload_encoding():
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    p = PolimexWebSdkActuator._payload
+    assert p(1, 1, 3) == "010103"      # output 1, open, 3 s
+    assert p(1, 0, 0) == "010000"      # output 1, close, latched
+    assert p(10, 1, 5) == "0a0105"     # output hex, open, 5 s
+    assert p(1, 1, 250) == "010199"    # time clamped to 99
+
+
+def test_polimex_direct_command(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"ok": True}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            captured["auth"] = k.get("auth")
+        def post(self, url, json=None, **k):
+            captured["url"] = url
+            captured["body"] = json
+            return _Resp()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    a = PolimexWebSdkActuator("gate4", host="192.168.1.20", user="SDK",
+                              password="0000", bus_id=1, output=1,
+                              pulse_seconds=3)
+    res = a.open()
+    assert res.ok and res.state == "closed"
+    assert captured["auth"] == ("SDK", "0000")
+    assert captured["url"] == "http://192.168.1.20/sdk/cmd.json"
+    assert captured["body"] == {"cmd": {"id": 1, "c": "DB", "d": "010103"}}
+    a.deny()
+    assert captured["body"] == {"cmd": {"id": 1, "c": "DB", "d": "010000"}}
+
+
+def test_polimex_registry_select():
+    cfg = _yaml_to_app_config(yaml.safe_load("""
+access:
+  - {id: g, driver: polimex, host: 10.0.0.20, user: SDK, password: "0000",
+     bus_id: 2, output: 3, pulse_seconds: 5}
+"""))
+    from odoo_erpnet_fp.drivers.access import PolimexWebSdkActuator
+    reg = AccessRegistry.from_config(cfg)
+    act = reg._make(cfg.access[0])
+    assert isinstance(act, PolimexWebSdkActuator)
+    assert act.bus_id == 2 and act.output == 3 and act.default_pulse == 5
