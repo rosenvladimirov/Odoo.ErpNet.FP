@@ -390,7 +390,9 @@ class AccessConfig:
     pin: int = 0                  # gpio BCM pin
     active_high: bool = True      # gpio polarity
     bus_id: int = 1               # polimex: iCON id on the RS-485 bus
-    output: int = 1               # polimex: door lock output number
+    output: int = 1               # polimex: door lock / relay output number
+    relay_ctrl: bool = False      # polimex: iCON-R / iCON110R (hw 30/31/32)
+    mode: int = 2                 # polimex relay-type: 1/2/3
     pulse_seconds: float = 3.0    # momentary open duration
     fail_secure: bool = True
     extras: dict[str, Any] = field(default_factory=dict)
@@ -645,6 +647,8 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 active_high=bool(entry.get("active_high", True)),
                 bus_id=int(entry.get("bus_id", 1)),
                 output=int(entry.get("output", 1)),
+                relay_ctrl=bool(entry.get("relay_ctrl", False)),
+                mode=int(entry.get("mode", 2)),
                 pulse_seconds=float(entry.get("pulse_seconds", 3.0)),
                 fail_secure=bool(entry.get("fail_secure", True)),
                 extras=entry.get("extras", {}),

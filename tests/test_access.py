@@ -140,13 +140,29 @@ def test_fail_secure_default():
     assert a.fail_secure is True
 
 
-def test_polimex_payload_encoding():
+def test_polimex_door_payload_encoding():
     from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
-    p = PolimexWebSdkActuator._payload
+    p = PolimexWebSdkActuator._door_payload
     assert p(1, 1, 3) == "010103"      # output 1, open, 3 s
     assert p(1, 0, 0) == "010000"      # output 1, close, latched
     assert p(10, 1, 5) == "0a0105"     # output hex, open, 5 s
     assert p(1, 1, 250) == "010199"    # time clamped to 99
+
+
+def test_polimex_relay_payload_encoding():
+    # Ported 1:1 from the AGPL reference; hand-computed expectations
+    # lock the byte layout (1F<reader> + 4 bytes as 3-dec, each char
+    # prefixed with '0' → 24 chars).
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    r = PolimexWebSdkActuator._relay_payload
+    z22 = "0" * 22
+    assert r(1, 2) == "1F01" + z22 + "01"   # reader1, data=1<<0
+    assert r(2, 2) == "1F01" + z22 + "02"   # data=1<<1
+    # output17,mode2 → reader2, data=1<<16 → b2=1 → inner "000001000000"
+    assert r(17, 2) == "1F02" + "000000000001000000000000"
+    assert r(5, 3) == "1F01" + z22 + "05"   # mode3 → data=output
+    with pytest.raises(ValueError):
+        r(1, 9)                              # unsupported mode
 
 
 def test_polimex_direct_command(monkeypatch):
