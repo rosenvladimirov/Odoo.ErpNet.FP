@@ -287,6 +287,11 @@ class ReaderConfig:
     max_length: int = 4096
     caps_lock_strategy: str = "ignore"  # ignore | respect
     webhooks: list[str] = field(default_factory=list)
+    # Channel-1 access control: всеки скан се push-ва ДОПЪЛНИТЕЛНО на
+    # `hac.card/<id>` (отделен native-IoT канал за
+    # hr_attendance_access_control) БЕЗ да блокира стандартния
+    # `reader.<id>` (таблет/POS с директно закачен четец).
+    access_control: bool = False
     extras: dict[str, Any] = field(default_factory=dict)
 
 
@@ -554,6 +559,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                     (entry.get("keymap") or {}).get("caps_lock_strategy", "ignore"),
                 ),
                 webhooks=list(entry.get("webhooks", []) or []),
+                access_control=bool(entry.get("access_control", False)),
                 extras=entry.get("extras", {}),
             )
         )

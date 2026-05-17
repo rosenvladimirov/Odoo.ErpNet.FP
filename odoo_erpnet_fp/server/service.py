@@ -524,7 +524,8 @@ class ReaderRegistry:
                     f"Unknown reader transport {cfg.transport!r} on {cfg.id!r}; "
                     f"expected 'hid', 'serial', or 'external'"
                 )
-            bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks)
+            bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks,
+                              access_control=cfg.access_control)
             registry.readers[cfg.id] = ReaderEntry(config=cfg, bus=bus)
             _logger.info(
                 "Registered reader %r — transport=%s addr=%s webhooks=%d",
@@ -606,7 +607,8 @@ class ReaderRegistry:
         if cfg.id in self.readers:
             return False
         loop = loop or asyncio.get_running_loop()
-        bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks)
+        bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks,
+                              access_control=cfg.access_control)
         bus._loop = loop
         entry = ReaderEntry(config=cfg, bus=bus)
         try:

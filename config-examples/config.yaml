@@ -234,10 +234,21 @@ printers:
 #   # keys are all optional (omitted = wildcard match).
 #   - id: gate_card
 #     transport: external
+#     access_control: true              # ALSO push to hac.card/<id>
 #     extras:
 #       polimex: { convertor: 414468, controller_id: 40, reader: 1 }
 #     webhooks:
 #       - https://odoo.example.com/hr_attendance_access_control/card
+#
+# `access_control: true` works on ANY reader transport — `hid`
+# (directly-attached reader), `serial` (reader → hid2serial → proxy),
+# or `external` (Polimex/BLE inject). It publishes each scan on a
+# SECOND native-IoT identifier `hac.card/<id>` that
+# hr_attendance_access_control long-polls — a separate waiter queue,
+# so it NEVER blocks/steals the standard `reader.<id>` events the
+# tablet/POS consumes (the standard directly-attached-reader → POS
+# scenario keeps working unchanged). Decision stays in Odoo
+# (fail-secure); the open is the synchronous /access/<id>/open.
 
 # ─── Customer-facing pole displays ──────────────────────────────
 #

@@ -42,9 +42,16 @@ class ReaderEventBus:
         reader_id: str,
         webhooks: Optional[list[str]] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        access_control: bool = False,
     ) -> None:
         self.reader_id = reader_id
         self.webhooks = webhooks or []
+        # Когато reader-ът е маркиран за контрол на достъп, всеки скан
+        # се push-ва ДОПЪЛНИТЕЛНО на отделен native-IoT идентификатор
+        # `hac.card/<id>` — отделна waiter опашка, така че консуматорът
+        # `hr_attendance_access_control` НЕ се конкурира със стандартния
+        # `reader.<id>` (таблет/POS с директно закачен четец).
+        self.access_control = access_control
         self._loop = loop  # captured at create time; reader thread schedules onto it
         self._subscribers: set[asyncio.Queue] = set()
         self._history: deque[BarcodeScan] = deque(maxlen=self.HISTORY_SIZE)
@@ -120,14 +127,25 @@ class ReaderEventBus:
                 "IoT push: %s barcode=%r waiters=%d",
                 ident, scan.barcode, waiter_count,
             )
-            await sessions.push(
-                ident,
-                {
-                    "result": scan.barcode,
-                    "value": scan.barcode,  # legacy alias
-                    "status": {"status": "success"},
-                },
-            )
+            payload = {
+                "result": scan.barcode,
+                "value": scan.barcode,  # legacy alias
+                "status": {"status": "success"},
+            }
+            await sessions.push(ident, payload)
+            # 4b. Паралелен access-control канал — НЕ замества горния
+            #     (стандартният reader.<id> към таблет/POS остава
+            #     непокътнат). Отделен идентификатор → отделна waiter
+            #     опашка → нулева конкуренция.
+            if self.access_control:
+                hac_ident = f"hac.card/{self.reader_id}"
+                await sessions.push(hac_ident, {
+                    **payload,
+                    "card": scan.barcode,
+                    "reader_id": self.reader_id,
+                    "timestamp": scan.timestamp.strftime(
+                        "%Y-%m-%dT%H:%M:%S.%f"),
+                })
         except Exception:  # noqa: BLE001
             _logger.debug(
                 "Reader %r IoT push failed (compat layer not loaded?)",
