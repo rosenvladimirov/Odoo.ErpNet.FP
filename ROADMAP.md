@@ -162,6 +162,91 @@ every deployed ErpNet.FP proxy without per-instance SSH.
 
 ---
 
+## Access-control add-on — camera streaming + live access control (pre-v1.0)
+
+> Added 2026-05-17. This is an **add-on to the proxy, not a special
+> version / fork** — config-gated, additive driver families in the
+> same repo, riding the existing reader/registry/EventBus pattern.
+> Zero regression to fiscal / pinpad / readers / scales / displays
+> (independent `app.state.*` registries, separate `APIRouter`
+> prefixes, additive `iot_compat` kind-branches, additive
+> `registry._execute_command` kind). Driving consumer: the OPL-1
+> Odoo module `hr_attendance_access_control` (l10n-bulgaria-expert)
+> — two-channel access control (Channel 1 = standard `hr_attendance`
+> via credential/biometric transports; Channel 2 = camera/LPR →
+> Fleet). The **access decision is taken in Odoo** (Channel1⊕Channel2);
+> the proxy only streams cameras and executes open/deny commands.
+> Transport = existing native IoT long-poll + HTTP webhook + Fleet
+> command-queue (the AMQP/MQTT broker section below stays roadmap-only
+> and is **not** a prerequisite here).
+
+**Phase A — Camera-stream driver family** (`drivers/cameras/`):
+- ABC `CameraStream(camera_id)` modelled on `drivers/readers/`
+  (`BarcodeReader`/`BarcodeScan` analog); `OnvifCameraStream`,
+  `Go2RtcCameraStream`, generic RTSP
+- `server/camera_bus.py` (`CameraEventBus`, copy of `reader_bus.py`
+  pattern: history + webhook + native IoT push)
+- `routes/cameras.py` — `/cameras/{id}/{ws,events,last,snapshot}`
+  (shape mirrors `routes/readers.py`)
+- New native-IoT device prefix `camera.<id>` in `iot_compat.py`
+  (additive `elif kind == "camera"` branch + `_camera_action`)
+- LPR plate event → `CameraEventBus` → Odoo (existing webhook /
+  long-poll path; Odoo resolves plate → `fleet.vehicle` →
+  `fleet.vehicle.assignation.log` → driver/employee)
+
+**Phase B — Live access control** (`drivers/access/`):
+- ABC `AccessActuator(controller_id)` — barrier / relay / turnstile
+  (GPIO, relay-over-TCP, Wiegand), command-style like
+  `drivers/customer_displays/`
+- `routes/access.py` — `POST /access/{id}/{open,deny,status}`
+- Additive `registry._execute_command` `kind == "access_open"`
+  branch (alongside `self_update` / `get_logs` / `program_vat`,
+  same `X-Admin-Token` pattern) — this is the Fleet command-queue
+  channel by which Odoo executes the access decision
+- **Target hardware: MIV Electronics access controller** — Rosen
+  to discuss a compatible controller with MIV Electronics; the
+  `AccessActuator` abstraction is designed vendor-agnostic so the
+  MIV protocol slots in as one transport (same approach as the
+  Borica/myPOS pinpad entries) without touching the others
+- Fail-secure: timeout / unreachable Odoo → deny, never open
+
+**Phase C — Biometric face-auth client driver** (`drivers/biometric/`):
+- Thin `httpx` client to the external Node face-auth μservice
+  (author Довид Росенов Милев, `odoo-face-auth/tuning`) — **NOT
+  reimplemented in Python** (heavy `@vladmandic/face-api` + tfjs +
+  ONNX + `@simplewebauthn` stack stays Node; no native deps enter
+  the fiscal Python process)
+- face-auth runs as a sibling process/service; `BiometricRegistry`
+  config points at its base URL; proxy is reverse-orchestrator,
+  not decision maker
+- New native-IoT device prefix `biometric.<id>`; **dedicated new
+  Odoo bus channel `hac.biometric/<terminal_id>`** for verify/enroll
+  results — additive, scoped per physical terminal, **must not touch
+  the InfoPay bus channel** (separately owned/active) nor the
+  LPR/kiosk channels
+- Liveness + anti-spoof are mandatory and enforced **server-side in
+  the Odoo bridge controller**, not on the kiosk
+- Biometric template storage (personal encrypted wallet) is a
+  **separate Rosen-owned workstream — out of scope for this proxy
+  add-on and for the implementing agent's plan**
+- Visitors: **no biometrics** — visitor access is handled by live
+  human security, not by this add-on
+
+**Licensing:** the proxy stays LGPL-3.0-or-later; the access-control
+add-on driver families ride the same proxy unchanged. The Odoo-side
+consumer module is OPL-1 and HTTP-coupled (no Python import, not in
+`depends`) → no copyleft combination through the proxy. This is the
+concrete realisation of Open decision #5 ("LGPL-3 core + OPL-1
+premium add-ons").
+
+**Sequencing:** Phase A and B can ship independently of C. C depends
+on the external face-auth μservice and the Rosen-owned wallet
+workstream. All three are config-gated (`config.yaml`
+`features.access_control: true`) → byte-identical behaviour for
+pure-fiscal deployments when disabled.
+
+---
+
 ## MES integration as broker client (AMQP + MQTT) — pre-v1.0
 
 Real customer use case: ErpNet.FP proxy bridges MES (Manufacturing
@@ -335,6 +420,7 @@ or wire formats beyond standard Prometheus scrape and HTTPS iframe.
 | v0.4 | 2 weeks | week 4 |
 | v0.5 | 2 weeks | week 6 |
 | v0.6 | 1-2 weeks | week 8 |
+| Access-control add-on (A/B/C) | parallel, pre-v1.0; A+B independent of C | overlaps v0.4–v0.6 |
 | v1.0 release | 1 week | **week 9** |
 
 **Revised target:** **~early July 2026**, faster than original (we picked up time today with HID scanner work and end-to-end test).

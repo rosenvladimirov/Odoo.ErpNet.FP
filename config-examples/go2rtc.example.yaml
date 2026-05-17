@@ -1,0 +1,26 @@
+# go2rtc sibling config for the camera-stream add-on.
+# Copy to ./config/go2rtc.yaml (the path the compose `go2rtc` service
+# mounts read-only).
+#
+# In most setups you DON'T need to list streams here — the proxy
+# registers each camera's source over the go2rtc REST API
+# (PUT /api/streams) on startup, driven by the `cameras:` block in the
+# ErpNet.FP config. Define streams below ONLY for cameras configured
+# with `driver: go2rtc` (server-side managed).
+
+api:
+  listen: ":1984"        # REST API + web UI (MSE / WebRTC / MJPEG / HLS)
+
+rtsp:
+  listen: ":8554"        # optional RTSP re-publish
+
+webrtc:
+  listen: ":8555"        # optional; needed only for WebRTC low-latency
+
+log:
+  level: info            # trace | debug | info | warn | error
+
+# streams:
+#   # `driver: go2rtc` cameras reference these names via `stream_name`
+#   gate_main: rtsp://user:pass@192.168.1.50:554/Streaming/Channels/101
+#   door_onvif: onvif://admin:secret@192.168.1.77:80?subtype=0

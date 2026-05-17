@@ -255,6 +255,8 @@ async def _do_action(
             return await _printer_action(app_state, dev_id, data)
         if kind == "pinpad":
             return await _pinpad_action(app_state, dev_id, data)
+        if kind == "camera":
+            return await _camera_action(app_state, dev_id, data)
         if kind == "reader":
             # Readers don't support `action` — they're event-only.
             return {
@@ -309,6 +311,71 @@ async def _scale_action(state, scale_id: str, data: dict) -> dict:
         }
     return {"status": {"status": "error",
                        "message_body": f"Unknown scale action: {action!r}"}}
+
+
+async def _camera_action(state, camera_id: str, data: dict) -> dict:
+    """Cameras: plates push as `camera.<id>` IoT events (event-only,
+    like a barcode reader). `action` adds synchronous pull/control —
+    this is the SAME request→response channel scales/displays use, so
+    Odoo drives the barrier with zero queue latency (NOT the Fleet
+    command-queue):
+
+      `{action: "last"}`     — last recognised plate (or null)
+      `{action: "snapshot"}` — current JPEG, base64-encoded
+      `{action: "open"}`     — pulse the ONVIF relay (barrier open)
+      `{action: "relay", state: "active"|"inactive"}`
+      `{action: "close"}`    — relay inactive
+      `{action: "ptz", ptz_action: "goto_preset", preset: "1"}`
+    """
+    reg = getattr(state, "camera_registry", None)
+    if reg is None or not reg.has(camera_id):
+        raise KeyError(camera_id)
+    action = data.get("action", "last")
+    if action == "last":
+        last = reg.get_bus(camera_id).last_event()
+        return {
+            "result": last.to_json() if last is not None else None,
+            "status": {"status": "success"},
+        }
+    if action == "snapshot":
+        import base64
+        entry = reg.get(camera_id)
+        if entry.driver is None:
+            return {"status": {"status": "error",
+                               "message_body": "Camera has no live driver"}}
+        jpeg = await asyncio.to_thread(entry.driver.snapshot)
+        return {
+            "result": base64.b64encode(jpeg).decode("ascii"),
+            "status": {"status": "success"},
+        }
+    # ─── Синхронен ONVIF контрол — нула queue латентност ──────
+    # Същият request→response канал като scale read; Odoo командва
+    # бариерата без лаг (НЕ Fleet command-queue).
+    if action in ("open", "close", "relay", "ptz"):
+        entry = reg.get(camera_id)
+        drv = entry.driver
+        if drv is None or not getattr(drv, "has_control", False):
+            return {"status": {"status": "error",
+                               "message_body": "Camera has no ONVIF control"}}
+        try:
+            if action in ("open",):
+                res = await asyncio.to_thread(
+                    drv.pulse, float(data.get("seconds", 2.0)))
+            elif action == "close":
+                res = await asyncio.to_thread(drv.relay, "inactive")
+            elif action == "relay":
+                res = await asyncio.to_thread(
+                    drv.relay, str(data.get("state", "active")))
+            else:  # ptz
+                res = await asyncio.to_thread(
+                    drv.ptz, str(data.get("ptz_action", "stop")),
+                    preset=data.get("preset"))
+        except Exception as exc:  # noqa: BLE001
+            return {"status": {"status": "error",
+                               "message_body": str(exc)}}
+        return {"result": res, "status": {"status": "success"}}
+    return {"status": {"status": "error",
+                       "message_body": f"Unknown camera action: {action!r}"}}
 
 
 async def _display_action(state, display_id: str, data: dict) -> dict:

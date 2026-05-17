@@ -1,0 +1,9 @@
+# fast-alpr sidecar — pinned for reproducible CPU inference.
+# All MIT/Apache-licensed; no copyleft combines with the LGPL-3 proxy
+# (HTTP-coupled, separate process).
+fast-alpr==0.1.* ; python_version >= "3.10"
+opencv-python-headless>=4.9
+numpy>=1.26
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9

@@ -239,6 +239,64 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  # ─── Access-control add-on siblings (config-gated) ─────────────
+  # Опционални — стартират САМО с `--profile cameras`, така че чисто-
+  # фискалните деплои са байт-идентични (services-ите изобщо не вървят).
+  #   docker compose --profile cameras up -d go2rtc alpr
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: erpnet-go2rtc
+    restart: unless-stopped
+    profiles: ["cameras"]
+    networks:
+      - erpnet
+    volumes:
+      # Минимален конфиг — стриймовете се push-ват от proxy-то през
+      # go2rtc REST API; виж config-examples/go2rtc.example.yaml.
+      - ./config/go2rtc.yaml:/config/go2rtc.yaml:ro
+    expose:
+      - "1984"   # API + web UI (MSE/WebRTC/MJPEG/HLS)
+      - "8554"   # RTSP (re-publish)
+    labels:
+      # Публичен go2rtc през Traefik (Cloudflare wildcard cert
+      # *.lan.mcpworks.net, конфигуриран глобално на websecure).
+      # Браузърът/Odoo стриймват ДИРЕКТНО оттук → proxy-то НЕ е в
+      # пътя на видеото. priority=100 слага този router ПРЕД
+      # erpnet-lan HostRegexp catch-all-а (иначе go2rtc.lan.* пада
+      # в proxy-то и връща 404) — същият трик като grafana.
+      # В config-а на камерите задай:
+      #   go2rtc_public_url: https://go2rtc.lan.mcpworks.net
+      - "traefik.enable=true"
+      - "traefik.http.routers.go2rtc.rule=Host(`go2rtc.lan.mcpworks.net`)"
+      - "traefik.http.routers.go2rtc.entrypoints=websecure"
+      - "traefik.http.routers.go2rtc.tls=true"
+      - "traefik.http.routers.go2rtc.priority=100"
+      - "traefik.http.services.go2rtc.loadbalancer.server.port=1984"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  alpr:
+    image: vladimirovrosen/erpnet-alpr-sidecar:latest
+    build:
+      context: ./tools/alpr_sidecar
+      dockerfile: Dockerfile
+    container_name: erpnet-alpr
+    restart: unless-stopped
+    profiles: ["cameras"]
+    networks:
+      - erpnet
+    expose:
+      - "8002"   # POST /v1/recognize  (fast-alpr ONNX, CPU)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 volumes:
   prometheus-data:
   grafana-data:

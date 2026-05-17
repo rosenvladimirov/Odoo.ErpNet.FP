@@ -251,3 +251,104 @@ printers:
 #     encoding: cp1251              # for Bulgarian; use cp437/cp850 for Latin
 #     chars_per_line: 20
 #     lines: 2
+
+# ─── Cameras — live stream + license-plate recognition ──────────
+#
+# Access-control add-on (config-gated). Pure-fiscal deployments that
+# omit the `cameras:` key behave byte-identically — no go2rtc / ALPR
+# sidecar is contacted. Bring the siblings up with:
+#
+#     docker compose --profile cameras up -d go2rtc alpr
+#
+# Every camera funnels through the go2rtc sibling (the universal media
+# hub). `driver`:
+#   rtsp     — `source` is a plain rtsp:// URL
+#   onvif    — `onvif:` block; go2rtc resolves the RTSP URI + PTZ
+#   go2rtc   — stream already defined server-side in go2rtc.yaml
+#   external — bus only; plates arrive via POST /cameras/{id}/inject
+#
+# The access DECISION is taken in Odoo (hr_attendance_access_control,
+# fail-secure). This proxy only streams + reports plates via `webhooks`
+# and the native `camera.<id>` IoT event channel.
+
+# Proxy-load model (important):
+#   • go2rtc_url        — INTERNAL (Docker net). Proxy → go2rtc API +
+#                         the ~1 small JPEG/interval it grabs for LPR.
+#                         Never browser-reachable.
+#   • go2rtc_public_url — PUBLIC HTTPS (Cloudflare/Traefik). Returned
+#                         to the browser/Odoo so live video flows
+#                         DIRECTLY browser↔go2rtc — the proxy is NOT
+#                         in the video path (zero proxy load while
+#                         streaming). Compose exposes go2rtc at
+#                         https://go2rtc.lan.mcpworks.net.
+#   • mjpeg_relay       — pipes video THROUGH the proxy. Loads the
+#                         fiscal process. Default false; turn on only
+#                         for a LAN-only box with no public go2rtc.
+#
+# Two LPR offload modes:
+#   A) proxy-pull (gate1 below) — proxy grabs 1 JPEG/interval and
+#      POSTs it to the fast-alpr sidecar. Light, fine for a few cams.
+#   B) zero-proxy (gateB below) — driver: external; the ALPR sidecar
+#      consumes the stream itself and POSTs only recognised plates to
+#      POST /cameras/{id}/inject. The proxy does NO frame work at all.
+
+# cameras:
+#   - id: gate1
+#     driver: rtsp
+#     source: rtsp://user:pass@192.168.1.50:554/Streaming/Channels/101
+#     go2rtc_url: http://go2rtc:1984                 # internal (LPR/API)
+#     go2rtc_public_url: https://go2rtc.lan.mcpworks.net   # browser/Odoo
+#     mjpeg_relay: false                             # keep proxy unloaded
+#     lpr:
+#       enabled: true
+#       engine: fast_alpr               # fast-alpr sidecar (default)
+#       url: http://alpr:8002           # sibling μservice base URL
+#       region: bg                      # plate-format hint (bg / eu / ...)
+#       min_confidence: 0.55
+#       interval_seconds: 1.0           # JPEG sampling cadence
+#     dedupe_cooldown_seconds: 8        # same plate fires once per 8s
+#     webhooks:
+#       - https://odoo.example.com/hr_attendance_access_control/plate
+#
+#   - id: door2                         # Edge-ANPR camera over ONVIF
+#     driver: onvif
+#     go2rtc_public_url: https://go2rtc.lan.mcpworks.net
+#     onvif:
+#       host: 192.168.1.77
+#       port: 80
+#       user: admin
+#       password: secret
+#       subtype: 0                      # 0 = main stream, 1 = sub-stream
+#       anpr: true                      # camera's own ANPR → ONVIF events
+#       events_topic: ""                # vendor topic filter (optional)
+#       control: true                   # ONVIF Device IO relay / PTZ
+#       relay_output: ""                # relay token (empty = first)
+#     lpr: { enabled: false }           # camera is the recogniser
+#
+# ── ANPR plate delivery — IMPORTANT (sourced research 2026-05-17) ──
+# Plain ONVIF S/T does NOT carry plate text. Two paths:
+#   • Profile-M cameras (Axis ALPV, Milesight PlateXpert, Hanwha
+#     Road AI) push plate over standard ONVIF events/MQTT → use
+#     onvif.anpr: true (PullPoint subscription, needs the [onvif]
+#     extra). Lowest latency, zero proxy/sidecar work.
+#   • Hikvision (ISAPI), Dahua, Uniview, Vivotek, Provision push
+#     plate via a proprietary "HTTP listener / alarm host" → point
+#     that at  POST /cameras/<id>/plate  (driver: external or any) —
+#     the tolerant parser handles their JSON/XML, zero per-vendor
+#     config, no [onvif] extra needed.
+# Barrier: Odoo takes the decision (fail-secure) and fires the relay
+#   synchronously via POST /cameras/<id>/control {action: open}  OR
+#   the native IoT /action {action:"open"} — request→response, NO
+#   60 s Fleet-queue latency (same channel a barcode read uses).
+# Optics rule of thumb: EN 62676-4 ≥250 px/m on the plate, ~100 px
+#   plate width, camera ≤30° both axes, locked shutter ≥1/1000 s + IR.
+#   A varifocal ANPR cam beats a generic 4K cam for a gate.
+# Recommended (BG/EU): Axis P1465-LE-3 LPV kit or Milesight PlateXpert
+#   (clean ONVIF/Profile-M + relay) · Dahua ITC413-PW4D (best value,
+#   HTTP-listener) · server-side ALPR cam: Dahua IPC-HFW5842E-ZE.
+#
+#   - id: gateB                         # Mode B — zero proxy frame work
+#     driver: external                  # sidecar pulls stream + POSTs
+#     go2rtc_public_url: https://go2rtc.lan.mcpworks.net  # for live view
+#     webhooks:
+#       - https://odoo.example.com/hr_attendance_access_control/plate

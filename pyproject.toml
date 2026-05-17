@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odoo-erpnet-fp"
-version = "0.5.5"
+version = "0.6.0"
 description = "Python drop-in replacement for ErpNet.FP HTTP fiscal-printer server, oriented for the Bulgarian POS market"
 readme = "README.md"
 license = { text = "LGPL-3.0-or-later" }
@@ -36,6 +36,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ONVIF-native ANPR events + Device IO relay / PTZ control. Lazy-
+# imported — pure-fiscal deployments never load it. Only needed for
+# Profile-M edge-ANPR cameras (Axis/Milesight/Hanwha) or ONVIF relay
+# barrier control. Hikvision/Dahua HTTP-listener path needs nothing.
+onvif = [
+    "onvif-zeep>=0.2.12",
+]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",

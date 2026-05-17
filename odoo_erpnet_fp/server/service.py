@@ -36,11 +36,20 @@ from typing import Any, Optional, Union
 
 from ..config.loader import (
     AppConfig,
+    CameraConfig,
     DisplayConfig,
     PinpadConfig,
     PrinterConfig,
     ReaderConfig,
     ScaleConfig,
+)
+from ..drivers.cameras import (
+    CameraStream,
+    GenericRtspCameraStream,
+    Go2RtcCameraStream,
+    OnvifAnprCameraStream,
+    OnvifCameraStream,
+    make_lpr_engine,
 )
 from ..drivers.customer_displays import (
     CustomerDisplay,
@@ -65,6 +74,7 @@ _DISPLAY_DRIVERS: dict[str, type[CustomerDisplay]] = {
     "datecs.dpd201": DatecsDpd201,
 }
 from .reader_bus import ReaderEventBus
+from .camera_bus import CameraEventBus
 from ..drivers.fiscal.datecs_isl import (
     DaisyIslDevice,
     DatecsIslDevice,
@@ -758,3 +768,155 @@ class DisplayRegistry:
                 drv.open()
                 entry.driver = drv
             yield entry.driver
+
+
+# ─── Camera registry — push model, go2rtc-backed, LPR events ─────
+
+
+@dataclass
+class CameraEntry:
+    config: CameraConfig
+    bus: CameraEventBus
+    driver: Optional[CameraStream] = None  # populated by start_all()
+
+
+class CameraRegistry:
+    """Long-lived camera registry — same lifecycle as ReaderRegistry.
+
+    Each camera keeps a background sampling thread that pulls JPEG
+    frames from the go2rtc sibling, runs them through the pluggable
+    LPR engine, and `publish_threadsafe()`-es every recognised plate
+    onto a `CameraEventBus` (WS / SSE / webhook / native-IoT fanout).
+    """
+
+    _VALID_DRIVERS = ("rtsp", "onvif", "go2rtc", "external")
+
+    def __init__(self) -> None:
+        self.cameras: dict[str, CameraEntry] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig) -> "CameraRegistry":
+        registry = cls()
+        for cfg in config.cameras:
+            if cfg.id in registry.cameras:
+                raise ValueError(f"Duplicate camera id: {cfg.id!r}")
+            if cfg.driver not in cls._VALID_DRIVERS:
+                raise ValueError(
+                    f"Unknown camera driver {cfg.driver!r} on {cfg.id!r}; "
+                    f"expected one of {', '.join(cls._VALID_DRIVERS)}"
+                )
+            bus = CameraEventBus(camera_id=cfg.id, webhooks=cfg.webhooks)
+            registry.cameras[cfg.id] = CameraEntry(config=cfg, bus=bus)
+            _logger.info(
+                "Registered camera %r — driver=%s lpr=%s webhooks=%d",
+                cfg.id, cfg.driver,
+                cfg.lpr_engine if cfg.lpr_enabled else "off",
+                len(cfg.webhooks),
+            )
+        return registry
+
+    # ─── Public access ────────────────────────────────────────
+
+    def get(self, camera_id: str) -> CameraEntry:
+        if camera_id not in self.cameras:
+            raise KeyError(camera_id)
+        return self.cameras[camera_id]
+
+    def has(self, camera_id: str) -> bool:
+        return camera_id in self.cameras
+
+    def get_bus(self, camera_id: str) -> CameraEventBus:
+        return self.get(camera_id).bus
+
+    # ─── Driver factory ───────────────────────────────────────
+
+    @staticmethod
+    def _make_driver(cfg: CameraConfig) -> CameraStream:
+        lpr = make_lpr_engine(
+            enabled=cfg.lpr_enabled,
+            engine=cfg.lpr_engine,
+            url=cfg.lpr_url,
+            min_confidence=cfg.lpr_min_confidence,
+            region=cfg.lpr_region,
+        )
+        common = dict(
+            go2rtc_url=cfg.go2rtc_url,
+            go2rtc_public_url=cfg.go2rtc_public_url,
+            stream_name=cfg.stream_name or cfg.id,
+            lpr_engine=lpr,
+            interval_seconds=cfg.lpr_interval_seconds,
+            dedupe_cooldown_seconds=cfg.dedupe_cooldown_seconds,
+            include_image=cfg.include_image,
+        )
+        if cfg.driver == "rtsp":
+            if not cfg.source:
+                raise ValueError(
+                    f"Camera {cfg.id!r}: rtsp driver needs `source` "
+                    f"(rtsp:// URL)"
+                )
+            return GenericRtspCameraStream(
+                camera_id=cfg.id, rtsp_url=cfg.source, **common
+            )
+        if cfg.driver == "onvif":
+            onvif_kw = dict(
+                camera_id=cfg.id,
+                host=cfg.onvif_host or "",
+                port=cfg.onvif_port,
+                user=cfg.onvif_user,
+                password=cfg.onvif_password,
+                subtype=cfg.onvif_subtype,
+                control=cfg.onvif_control,
+                relay_output=cfg.onvif_relay_output,
+                **common,
+            )
+            if cfg.onvif_anpr:
+                # Камерата сама прави ANPR → events, без sidecar.
+                onvif_kw["events_topic"] = cfg.onvif_events_topic
+                return OnvifAnprCameraStream(**onvif_kw)
+            return OnvifCameraStream(**onvif_kw)
+        # "go2rtc" — стриймът е дефиниран server-side в go2rtc.yaml;
+        # `source` може да липсва (Go2RtcCameraStream го толерира).
+        return Go2RtcCameraStream(
+            camera_id=cfg.id, source=cfg.source, **common
+        )
+
+    # ─── Lifecycle (called from FastAPI startup/shutdown) ──────
+
+    async def start_all(
+        self, loop: Optional[asyncio.AbstractEventLoop] = None
+    ) -> None:
+        loop = loop or asyncio.get_running_loop()
+        for entry in self.cameras.values():
+            entry.bus._loop = loop  # bind bus to running loop
+            if entry.config.driver == "external":
+                _logger.info(
+                    "Camera %r is external — listening on "
+                    "/cameras/%s/inject",
+                    entry.config.id, entry.config.id,
+                )
+                continue
+            try:
+                driver = self._make_driver(entry.config)
+                driver.set_listener(entry.bus.publish_threadsafe)
+                driver.start()
+                entry.driver = driver
+            except Exception:
+                _logger.exception(
+                    "Failed to start camera %r", entry.config.id
+                )
+
+    async def stop_all(self) -> None:
+        for entry in self.cameras.values():
+            if entry.driver is not None:
+                try:
+                    entry.driver.stop()
+                except Exception:
+                    _logger.exception(
+                        "Failed to stop camera %r", entry.config.id
+                    )
+            try:
+                await entry.bus.close()
+            except Exception:
+                _logger.exception(
+                    "Failed to close bus for camera %r", entry.config.id
+                )

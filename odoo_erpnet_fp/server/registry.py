@@ -80,6 +80,7 @@ def _device_summary(app) -> dict[str, list[str]]:
         ("scale_registry", "scales"),
         ("reader_registry", "readers"),
         ("display_registry", "displays"),
+        ("camera_registry", "cameras"),
     ):
         try:
             reg = getattr(app.state, attr, None)

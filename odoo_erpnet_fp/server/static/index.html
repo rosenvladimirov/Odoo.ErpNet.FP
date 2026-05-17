@@ -327,6 +327,7 @@
     <button class="tab" data-kind="displays" onclick="switchTab('displays')">🪧 Displays <span class="count" id="cnt-displays">0</span></button>
     <button class="tab" data-kind="readers" onclick="switchTab('readers')">🔍 Readers <span class="count" id="cnt-readers">0</span></button>
     <button class="tab" data-kind="pinpads" onclick="switchTab('pinpads')">💳 Pinpads <span class="count" id="cnt-pinpads">0</span></button>
+    <button class="tab" data-kind="cameras" onclick="switchTab('cameras')">📷 Cameras <span class="count" id="cnt-cameras">0</span></button>
   </div>
 
   <section class="devices active" data-kind="printers">
@@ -348,6 +349,10 @@
   <section class="devices" data-kind="pinpads">
     <div class="grid" id="grid-pinpads"><div class="empty">Loading…</div></div>
   </section>
+
+  <section class="devices" data-kind="cameras">
+    <div class="grid" id="grid-cameras"><div class="empty">Loading…</div></div>
+  </section>
 </div>
 
 <footer>
@@ -362,10 +367,10 @@
 
 <script>
 const ENDPOINT = window.location.origin;
-const KINDS = ["printers", "scales", "displays", "readers", "pinpads"];
+const KINDS = ["printers", "scales", "displays", "readers", "pinpads", "cameras"];
 let state = {
-  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {},
-  statuses: {}, scans: {}, readerLast: {},
+  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, cameras: {},
+  statuses: {}, scans: {}, readerLast: {}, plates: {}, cameraLast: {},
 };
 
 function toast(msg, kind = "ok") {
@@ -599,9 +604,10 @@ async function loadKind(kind) {
 
 async function loadAll() {
   await Promise.all(KINDS.map(loadKind));
-  // After listings render, fetch printer statuses + reader last-scan
+  // After listings render, fetch printer statuses + reader/camera last
   fetchAllStatuses();
   fetchAllReaderLast();
+  fetchAllCameraLast();
 }
 
 async function fetchStatus(id) {
@@ -629,6 +635,7 @@ function emptyCard(kind) {
     displays: 'Add a <code>displays:</code> entry. Driver: <code>datecs.dpd201</code>',
     readers: 'Add a <code>readers:</code> entry. Transports: <code>hid</code> · <code>serial</code> · <code>external</code>',
     pinpads: 'Add a <code>pinpads:</code> entry. Driver: <code>datecs_pay</code>',
+    cameras: 'Add a <code>cameras:</code> entry. Drivers: <code>rtsp</code> · <code>onvif</code> · <code>go2rtc</code> · <code>external</code>. Bring siblings up: <code>docker compose --profile cameras up -d go2rtc alpr</code>',
   };
   return `<div class="empty">No ${kind} configured.<br>${hints[kind] || ""}</div>`;
 }
@@ -646,6 +653,7 @@ function renderKind(kind) {
     displays: renderDisplay,
     readers: renderReader,
     pinpads: renderPinpad,
+    cameras: renderCamera,
   }[kind];
   grid.innerHTML = Object.entries(items).map(([id, info]) => renderer(id, info)).join("");
 }
@@ -775,6 +783,146 @@ async function fetchReaderLast(id) {
 async function fetchAllReaderLast() {
   const ids = Object.keys(state.readers || {});
   await Promise.all(ids.map(fetchReaderLast));
+}
+
+// ─── Cameras (mirrors the reader pattern + snapshot/stream) ───
+
+// Камери в live-режим — показваме go2rtc плеъра в <iframe> ДИРЕКТНО
+// от публичния go2rtc (browser↔go2rtc, proxy-то НЕ е в пътя → нулев
+// товар при стрийма). Set-ът преживява re-render; 5s refresh-ът се
+// паузира докато има жив live, за да не се пресъздава iframe-ът.
+const _liveCams = new Set();
+
+function renderCamera(id, info) {
+  const recent = (state.plates[id] || []).slice(-5).reverse();
+  const last = state.cameraLast?.[id];
+  const running = info.running;
+  const runBadge = running
+    ? '<span class="badge ok">● running</span>'
+    : '<span class="badge muted">○ stopped</span>';
+  const urls = info.streamUrls || {};
+  const lpr = info.lprEngine || "none";
+  const eid = encodeURIComponent(id);
+  const page = urls.page || "";
+  const live = _liveCams.has(id) && !!page;
+  const liveBadge = live ? '<span class="badge ok">● LIVE (direct)</span>' : "";
+  // Live → go2rtc плеърът в <iframe> ДИРЕКТНО от публичния go2rtc
+  // (WebRTC/MSE ниска латентност, Cloudflare-safe fallback; proxy НЕ
+  // участва). Idle → евтин единичен snapshot през proxy (LPR-grade).
+  const media = live
+    ? `<iframe src="${page}" allow="autoplay; fullscreen"
+             style="width:100%;aspect-ratio:16/9;border:0;border-radius:6px;background:#0b0b0b"></iframe>`
+    : `<img id="cam-snap-${id}" src="${ENDPOINT}/cameras/${eid}/snapshot?ts=${Date.now()}" loading="lazy"
+             style="width:100%;border-radius:6px;background:#0b0b0b;aspect-ratio:16/9;object-fit:cover"
+             onerror="this.style.opacity=0.25;this.alt='(snapshot unavailable — go2rtc sibling down?)'"/>`;
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        ${runBadge}${liveBadge}
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        ${media}
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>LPR engine</dt><dd>${lpr}</dd>
+          <dt>Subscribers</dt><dd>${info.subscriberCount ?? 0}</dd>
+          ${last ? `<dt>Last plate</dt><dd style="font-family:monospace">${last.plate} <span style="color:var(--text-dim);font-size:0.7rem">(${(last.confidence*100).toFixed(0)}% · ${fmtAgo(new Date(last.timestamp).getTime())})</span></dd>` : ""}
+        </dl>
+        <div class="reader-feed">
+          ${recent.length ? recent.map(p => `<div class="scan">▶ ${p}</div>`).join("")
+                          : (last ? "" : "(no plates yet — LPR off or no vehicle in frame)")}
+        </div>
+      </div>
+      <div class="card-actions">
+        ${page
+          ? `<button class="sm ${live ? "warn" : "primary"}" onclick="cameraLive('${id}')">${live ? "⏸ Stop live" : "🎬 Live"}</button>
+             <button class="sm" onclick="window.open('${page}','_blank')">🎥 Open go2rtc</button>`
+          : `<button class="sm" disabled title="Set go2rtc_public_url (public Cloudflare/Traefik URL) to stream directly — keeps proxy load zero">🎬 Live (set go2rtc_public_url)</button>`}
+        <button class="sm" onclick="cameraSnapshot('${id}')">📷 Snapshot</button>
+        <button class="sm" onclick="cameraSubscribe('${id}')">▶ Listen</button>
+        <button class="sm" onclick="cameraInject('${id}')">🧪 Test plate</button>
+        <button class="sm" onclick="fetchCameraLast('${id}')">⟳ Refresh</button>
+      </div>
+    </div>`;
+}
+
+function cameraLive(id) {
+  if (_liveCams.has(id)) {
+    _liveCams.delete(id);
+    toast(`${id}: live stopped`, "ok");
+  } else {
+    _liveCams.add(id);
+    toast(`${id}: live (MJPEG via proxy relay)`, "ok");
+  }
+  renderKind("cameras");
+}
+
+function cameraSnapshot(id) {
+  // Snapshot значи „still режим" — спираме live ако е включен.
+  _liveCams.delete(id);
+  const img = document.getElementById("cam-snap-" + id);
+  if (img) {
+    img.style.opacity = 1;
+    img.src = `${ENDPOINT}/cameras/${encodeURIComponent(id)}/snapshot?ts=${Date.now()}`;
+  }
+  renderKind("cameras");
+}
+
+async function fetchCameraLast(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/cameras/${encodeURIComponent(id)}/last`);
+    state.cameraLast = state.cameraLast || {};
+    state.cameraLast[id] = r;          // null if no plates yet
+    renderKind("cameras");
+  } catch (e) {
+    // 404 = camera not found; network error = proxy down — ignore
+  }
+}
+
+async function fetchAllCameraLast() {
+  const ids = Object.keys(state.cameras || {});
+  await Promise.all(ids.map(fetchCameraLast));
+}
+
+async function cameraInject(id) {
+  const plate = prompt(`Inject a test plate for ${id} (publishes onto the live bus):`, "CA1234AB");
+  if (!plate) return;
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/cameras/${encodeURIComponent(id)}/inject`,
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plate, confidence: 1.0 }) });
+    toast(`${id}: injected ${r.plate || plate}`, "ok");
+    fetchCameraLast(id);
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
+}
+
+const _cameraStreams = {};
+function cameraSubscribe(id) {
+  if (_cameraStreams[id]) {
+    _cameraStreams[id].close();
+    delete _cameraStreams[id];
+    toast(`${id}: stopped listening`, "ok");
+    return;
+  }
+  try {
+    const es = new EventSource(`${ENDPOINT}/cameras/${encodeURIComponent(id)}/events`);
+    _cameraStreams[id] = es;
+    es.addEventListener("plate", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        const txt = `${data.plate} (${(data.confidence*100).toFixed(0)}%)`;
+        state.plates[id] = state.plates[id] || [];
+        state.plates[id].push(txt);
+        if (state.plates[id].length > 20) state.plates[id].shift();
+        renderKind("cameras");
+        toast(`${id}: ${txt}`, "ok");
+      } catch {}
+    });
+    es.onerror = () => { es.close(); delete _cameraStreams[id]; };
+    toast(`${id}: listening (click again to stop)`, "ok");
+  } catch (e) { toast(`${id}: ${e.message}`, "err"); }
 }
 
 function renderPinpad(id, info) {
@@ -922,6 +1070,12 @@ loadAll().then(_initTabFromHash);
 // readers faster so the running-badge + last-scan stay current.
 setInterval(fetchAllStatuses, 30000);
 setInterval(() => loadKind("readers").then(fetchAllReaderLast), 5000);
+// Пауза докато има жив live поток — re-render на грида би пресъздал
+// <img> елемента и преподключил MJPEG-а (фликер + товар на go2rtc).
+setInterval(() => {
+  if (_liveCams.size) return;
+  loadKind("cameras").then(fetchAllCameraLast);
+}, 5000);
 </script>
 </body>
 </html>

@@ -73,6 +73,10 @@ _KIND_TO_IOT_TYPE = {
     "scale":   ("scale", ""),
     "display": ("display", ""),
     "pinpad":  ("payment", ""),
+    # Odoo `iot` модулът има `camera` в iot.device.type Selection-а
+    # (camera/keyboard/scanner/display/device/payment/scale/printer/
+    # fiscal_data_module) → валидно. subtype "" винаги е валидно.
+    "camera":  ("camera", ""),
 }
 
 
@@ -110,6 +114,7 @@ def _device_inventory(app) -> dict[str, dict[str, Any]]:
         ("scale_registry", "scales", "scale"),
         ("reader_registry", "readers", "reader"),
         ("display_registry", "displays", "display"),
+        ("camera_registry", "cameras", "camera"),
     )
     for attr, _key, kind in layout:
         try:

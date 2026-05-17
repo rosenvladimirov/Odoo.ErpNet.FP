@@ -149,6 +149,18 @@ reader_subscribers = _gauge(
     ("reader_id",),
 )
 
+# Per-device — cameras (LPR)
+camera_plates_total = _counter(
+    "erpnet_fp_camera_plates_total",
+    "License plates recognised + published by each camera.",
+    ("camera_id",),
+)
+camera_subscribers = _gauge(
+    "erpnet_fp_camera_subscribers",
+    "Live SSE / WebSocket subscribers per camera.",
+    ("camera_id",),
+)
+
 # Per-device — pinpads
 pinpad_actions_total = _counter(
     "erpnet_fp_pinpad_actions_total",

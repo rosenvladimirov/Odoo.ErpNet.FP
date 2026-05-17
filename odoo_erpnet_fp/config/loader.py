@@ -291,6 +291,73 @@ class ReaderConfig:
 
 
 @dataclass
+class CameraConfig:
+    """Camera-stream entry — push-model LPR (no polling).
+
+    Every camera funnels through a go2rtc sibling. `driver` selects how
+    the go2rtc `src` is computed:
+      rtsp      — `source` is a plain rtsp:// URL
+      onvif     — `onvif_*` build an onvif:// source go2rtc resolves
+      go2rtc    — `stream_name` already exists in go2rtc.yaml
+      external  — bus only; plates arrive via POST /cameras/{id}/inject
+
+    `lpr_*` configure the pluggable ALPR engine. With `lpr_enabled`
+    false the camera still streams + serves snapshots; it just never
+    emits plate events. The default engine is the fast-alpr sibling
+    μservice — see tools/alpr_sidecar/.
+
+    `webhooks` receive a POST `{cameraId, plate, confidence, ...,
+    imageB64}` per recognition — typically the Odoo
+    `hr_attendance_access_control` controller (Odoo takes the access
+    decision; the proxy only reports).
+    """
+
+    id: str
+    driver: str = "rtsp"
+    # Вътрешен go2rtc — proxy → go2rtc API / snapshot за LPR. Бърз,
+    # без TLS, в Docker мрежата. НЕ е browser-достъпен.
+    go2rtc_url: str = "http://127.0.0.1:1984"
+    # Публичен go2rtc (Cloudflare/Traefik HTTPS) — това връщаме в
+    # stream_urls() за браузъра/Odoo, така че видеото тече ДИРЕКТНО
+    # browser↔go2rtc и proxy-то НЕ е в пътя на потока. Празно →
+    # fallback към go2rtc_url (LAN-only).
+    go2rtc_public_url: str = ""
+    # MJPEG релей през proxy-то — НАТОВАРВА фискалния процес с целия
+    # видео-поток. Default OFF. Включи само за LAN-only деплой без
+    # публичен go2rtc, където друг вариант няма.
+    mjpeg_relay: bool = False
+    stream_name: Optional[str] = None
+    source: Optional[str] = None
+    onvif_host: Optional[str] = None
+    onvif_port: int = 80
+    onvif_user: str = ""
+    onvif_password: str = ""
+    onvif_subtype: int = 0
+    # Камерата има ВГРАДЕНО ANPR и хвърля номерата по ONVIF
+    # analytics/metadata events → абонираме се (PullPoint), без
+    # sidecar, най-ниска латентност, нулев proxy frame товар.
+    onvif_anpr: bool = False
+    # Vendor-specific ONVIF analytics topic филтър (празно = приемай
+    # всяко съобщение, в което има plate-поле — толерантен парсер).
+    onvif_events_topic: str = ""
+    # Камерата излага ONVIF Device IO релеен изход / PTZ → Odoo може
+    # да го командва СИНХРОННО (без латентност, като четенето от
+    # баркод четец — native IoT /action, НЕ Fleet command-queue).
+    onvif_control: bool = False
+    onvif_relay_output: str = ""  # ONVIF relay output token (празно = първи)
+    lpr_enabled: bool = False
+    lpr_engine: str = "fast_alpr"
+    lpr_url: str = "http://127.0.0.1:8002"
+    lpr_interval_seconds: float = 1.0
+    lpr_min_confidence: float = 0.5
+    lpr_region: str = "bg"
+    dedupe_cooldown_seconds: float = 8.0
+    include_image: bool = True
+    webhooks: list[str] = field(default_factory=list)
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
@@ -298,6 +365,7 @@ class AppConfig:
     scales: list[ScaleConfig] = field(default_factory=list)
     readers: list[ReaderConfig] = field(default_factory=list)
     displays: list[DisplayConfig] = field(default_factory=list)
+    cameras: list[CameraConfig] = field(default_factory=list)
     auto_detect: bool = False
 
 
@@ -457,6 +525,69 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    cameras: list[CameraConfig] = []
+    for entry in data.get("cameras", []) or []:
+        # Подобно на readers: приемаме nested `onvif:` / `lpr:`
+        # под-секции ИЛИ flat top-level полета.
+        onvif = entry.get("onvif") or {}
+        lpr = entry.get("lpr") or {}
+        cameras.append(
+            CameraConfig(
+                id=str(entry["id"]),
+                driver=entry.get("driver", "rtsp"),
+                go2rtc_url=str(
+                    entry.get("go2rtc_url", "http://127.0.0.1:1984")
+                ).rstrip("/"),
+                go2rtc_public_url=str(
+                    entry.get("go2rtc_public_url", "")
+                ).rstrip("/"),
+                mjpeg_relay=bool(entry.get("mjpeg_relay", False)),
+                stream_name=entry.get("stream_name"),
+                source=entry.get("source"),
+                onvif_host=entry.get("onvif_host", onvif.get("host")),
+                onvif_port=int(entry.get("onvif_port", onvif.get("port", 80))),
+                onvif_user=str(entry.get("onvif_user", onvif.get("user", ""))),
+                onvif_password=str(
+                    entry.get("onvif_password", onvif.get("password", ""))
+                ),
+                onvif_subtype=int(
+                    entry.get("onvif_subtype", onvif.get("subtype", 0))
+                ),
+                onvif_anpr=bool(
+                    entry.get("onvif_anpr", onvif.get("anpr", False))
+                ),
+                onvif_events_topic=str(
+                    entry.get("onvif_events_topic",
+                              onvif.get("events_topic", ""))
+                ),
+                onvif_control=bool(
+                    entry.get("onvif_control", onvif.get("control", False))
+                ),
+                onvif_relay_output=str(
+                    entry.get("onvif_relay_output",
+                              onvif.get("relay_output", ""))
+                ),
+                lpr_enabled=bool(entry.get("lpr_enabled", lpr.get("enabled", False))),
+                lpr_engine=str(entry.get("lpr_engine", lpr.get("engine", "fast_alpr"))),
+                lpr_url=str(
+                    entry.get("lpr_url", lpr.get("url", "http://127.0.0.1:8002"))
+                ).rstrip("/"),
+                lpr_interval_seconds=float(
+                    entry.get("lpr_interval_seconds", lpr.get("interval_seconds", 1.0))
+                ),
+                lpr_min_confidence=float(
+                    entry.get("lpr_min_confidence", lpr.get("min_confidence", 0.5))
+                ),
+                lpr_region=str(entry.get("lpr_region", lpr.get("region", "bg"))),
+                dedupe_cooldown_seconds=float(
+                    entry.get("dedupe_cooldown_seconds", 8.0)
+                ),
+                include_image=bool(entry.get("include_image", True)),
+                webhooks=list(entry.get("webhooks", []) or []),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     return AppConfig(
         server=server,
         printers=printers,
@@ -464,6 +595,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         scales=scales,
         readers=readers,
         displays=displays,
+        cameras=cameras,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 
