@@ -180,7 +180,36 @@ every deployed ErpNet.FP proxy without per-instance SSH.
 > command-queue (the AMQP/MQTT broker section below stays roadmap-only
 > and is **not** a prerequisite here).
 
-**Phase A — Camera-stream driver family** (`drivers/cameras/`):
+### Status — 2026-05-17 (committed + pushed, NOT deployed)
+
+- **Phase A — ✅ DONE** (Odoo.ErpNet.FP `81ccc87`, `9be05cb..`; pyproject 0.6.0).
+  go2rtc media hub (internal vs `go2rtc_public_url` Cloudflare → video
+  flows browser↔go2rtc, zero proxy load); ALPR = fast-alpr sibling
+  (proxy-pull or zero-proxy `external`+`ALPR_WATCH`); ONVIF edge-ANPR
+  PullPoint + tolerant `POST /cameras/{id}/plate` (Hik ISAPI / Dahua);
+  BG Cyrillic→Latin plate canon. Dashboard 📷 tab + iot.device
+  (`type=camera`) + Fleet heartbeat. l10n-bulgaria Fleet camera-kind
+  `2896ea7` (v19 `19.0.3.x`).
+- **Phase B — ✅ DONE** (`9be05cb`, `9140a44`, `6944047`). `drivers/access/`
+  command-style actuators; **synchronous zero-latency**
+  `POST /access/{id}/{open,deny,status}` + native IoT `/action`
+  (Fleet `access_open` = secondary slow path only). Transports:
+  `relay_tcp`, `onvif` (reuses A), `gpio` (lazy `[gpio]`), **`polimex`
+  — Polimex iCON WebSDK, ONE driver covers the whole BG range**
+  (door-type iCON50/110/115/130/180/SmartVend + relay-type
+  iCON-R/110R via `relay_ctrl`), `wiegand` scaffold, `miv` vendor
+  slot (still pending vendor spec — superseded in practice by
+  `polimex` for the BG market). Dashboard 🚪 tab + Fleet access-kind
+  (l10n-bulgaria `ffb8253` `19.0.3.2.0`). Decision stays in Odoo
+  (fail-secure). ⚠ Audit trap: shop "iCON100"=IDTECK, "iTDC"=SOYAL —
+  NOT covered (separate vendors).
+- **Phase C — ⏳ NOT STARTED** (biometric face-auth client).
+- **Deploy — ⏳ GATED** (not on any live instance; iot.mcpworks.net
+  Fleet `-u` + proxy image are a separate explicit step).
+- Research (sourced, agents): edge-ANPR/4K camera shortlist; iCON130 =
+  Polimex Holding (open WebSDK, AGPL `polimex/polimex-rfid`).
+
+**Phase A — Camera-stream driver family** (`drivers/cameras/`): ✅ DONE
 - ABC `CameraStream(camera_id)` modelled on `drivers/readers/`
   (`BarcodeReader`/`BarcodeScan` analog); `OnvifCameraStream`,
   `Go2RtcCameraStream`, generic RTSP
@@ -194,10 +223,10 @@ every deployed ErpNet.FP proxy without per-instance SSH.
   long-poll path; Odoo resolves plate → `fleet.vehicle` →
   `fleet.vehicle.assignation.log` → driver/employee)
 
-**Phase B — Live access control** (`drivers/access/`):
+**Phase B — Live access control** (`drivers/access/`): ✅ DONE
 - ABC `AccessActuator(controller_id)` — barrier / relay / turnstile
-  (GPIO, relay-over-TCP, Wiegand), command-style like
-  `drivers/customer_displays/`
+  (GPIO, relay-over-TCP, Wiegand, **Polimex iCON WebSDK**),
+  command-style like `drivers/customer_displays/`
 - `routes/access.py` — `POST /access/{id}/{open,deny,status}`
 - Additive `registry._execute_command` `kind == "access_open"`
   branch (alongside `self_update` / `get_logs` / `program_vat`,
@@ -210,7 +239,7 @@ every deployed ErpNet.FP proxy without per-instance SSH.
   Borica/myPOS pinpad entries) without touching the others
 - Fail-secure: timeout / unreachable Odoo → deny, never open
 
-**Phase C — Biometric face-auth client driver** (`drivers/biometric/`):
+**Phase C — Biometric face-auth client driver** (`drivers/biometric/`): ⏳ NOT STARTED
 - Thin `httpx` client to the external Node face-auth μservice
   (author Довид Росенов Милев, `odoo-face-auth/tuning`) — **NOT
   reimplemented in Python** (heavy `@vladmandic/face-api` + tfjs +
@@ -420,7 +449,8 @@ or wire formats beyond standard Prometheus scrape and HTTPS iframe.
 | v0.4 | 2 weeks | week 4 |
 | v0.5 | 2 weeks | week 6 |
 | v0.6 | 1-2 weeks | week 8 |
-| Access-control add-on (A/B/C) | parallel, pre-v1.0; A+B independent of C | overlaps v0.4–v0.6 |
+| ~~Access-control add-on A+B~~ | **DONE 2026-05-17** (committed, not deployed) | — |
+| Access-control add-on C (biometric) | pending; depends on external face-auth μsvc | overlaps v0.4–v0.6 |
 | v1.0 release | 1 week | **week 9** |
 
 **Revised target:** **~early July 2026**, faster than original (we picked up time today with HID scanner work and end-to-end test).
