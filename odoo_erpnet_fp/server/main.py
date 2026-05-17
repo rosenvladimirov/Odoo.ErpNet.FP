@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse
 
 from ..config.loader import AppConfig, load_config
 from .service import (
+    AccessRegistry,
     CameraRegistry,
     DisplayRegistry,
     PinpadRegistry,
@@ -53,7 +54,7 @@ def _normalise_path(raw: str) -> str:
     normalised: list[str] = []
     # Known top-level resource collections that take an :id segment
     id_after = {"printers", "readers", "scales", "displays", "pinpads",
-                "cameras", "iot_drivers", "hw_drivers"}
+                "cameras", "access", "iot_drivers", "hw_drivers"}
     skip_next = False
     for i, part in enumerate(parts):
         if skip_next:
@@ -97,6 +98,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         await reader_registry.start_all()
         await display_registry.start_all()
         await camera_registry.start_all()
+        await access_registry.start_all()
         # Fleet registry — pair once if needed, then heartbeat in
         # background. No-op when server.registry.enabled is false.
         from .registry import fleet_loop
@@ -137,6 +139,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             await reader_registry.stop_all()
             await display_registry.stop_all()
             await camera_registry.stop_all()
+            await access_registry.stop_all()
 
     app = FastAPI(
         title="Odoo.ErpNet.FP",
@@ -156,12 +159,14 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     reader_registry = ReaderRegistry.from_config(config)
     display_registry = DisplayRegistry.from_config(config)
     camera_registry = CameraRegistry.from_config(config)
+    access_registry = AccessRegistry.from_config(config)
     app.state.registry = registry
     app.state.pinpad_registry = pinpad_registry
     app.state.scale_registry = scale_registry
     app.state.reader_registry = reader_registry
     app.state.display_registry = display_registry
     app.state.camera_registry = camera_registry
+    app.state.access_registry = access_registry
     app.state.config = config
 
     from . import metrics
@@ -222,12 +227,14 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.readers import router as readers_router
     from .routes.scales import router as scales_router
     from .routes.cameras import router as cameras_router
+    from .routes.access import router as access_router
     app.include_router(printers_router)
     app.include_router(pinpads_router)
     app.include_router(scales_router)
     app.include_router(readers_router)
     app.include_router(displays_router)
     app.include_router(cameras_router)
+    app.include_router(access_router)
     app.include_router(admin_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
@@ -287,6 +294,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "readers": list(reader_registry.readers.keys()),
             "displays": list(display_registry.displays.keys()),
             "cameras": list(camera_registry.cameras.keys()),
+            "access": list(access_registry.access.keys()),
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the

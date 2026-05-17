@@ -257,6 +257,8 @@ async def _do_action(
             return await _pinpad_action(app_state, dev_id, data)
         if kind == "camera":
             return await _camera_action(app_state, dev_id, data)
+        if kind == "access":
+            return await _access_action(app_state, dev_id, data)
         if kind == "reader":
             # Readers don't support `action` — they're event-only.
             return {
@@ -376,6 +378,39 @@ async def _camera_action(state, camera_id: str, data: dict) -> dict:
         return {"result": res, "status": {"status": "success"}}
     return {"status": {"status": "error",
                        "message_body": f"Unknown camera action: {action!r}"}}
+
+
+async def _access_action(state, access_id: str, data: dict) -> dict:
+    """Execute an Odoo-authorised access command, synchronously (same
+    zero-latency request→response channel as a barcode read; NOT the
+    Fleet command-queue). The decision is taken in Odoo (fail-secure);
+    this only executes.
+
+      `{action: "open", seconds: 3}` — grant (pulse if seconds)
+      `{action: "deny"}`             — explicit close
+      `{action: "status"}`           — best-effort state
+    """
+    reg = getattr(state, "access_registry", None)
+    if reg is None or not reg.has(access_id):
+        raise KeyError(access_id)
+    action = data.get("action", "status")
+    try:
+        async with reg.with_access(access_id) as act:
+            if action == "open":
+                res = await asyncio.to_thread(
+                    act.open, data.get("seconds"))
+            elif action in ("deny", "close"):
+                res = await asyncio.to_thread(act.deny)
+            elif action == "status":
+                res = await asyncio.to_thread(act.status)
+            else:
+                return {"status": {"status": "error",
+                                   "message_body":
+                                   f"Unknown access action: {action!r}"}}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": {"status": "error",
+                           "message_body": str(exc)}}
+    return {"result": res.to_json(), "status": {"status": "success"}}
 
 
 async def _display_action(state, display_id: str, data: dict) -> dict:

@@ -43,6 +43,11 @@ dependencies = [
 onvif = [
     "onvif-zeep>=0.2.12",
 ]
+# GPIO barrier actuator on a Pi/SBC at the gate (Phase B). Lazy —
+# only the gpio access driver needs it; relay_tcp/onvif need nothing.
+gpio = [
+    "gpiozero>=2.0",
+]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",

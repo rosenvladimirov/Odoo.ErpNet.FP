@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 from ..config.loader import (
+    AccessConfig,
     AppConfig,
     CameraConfig,
     DisplayConfig,
@@ -50,6 +51,14 @@ from ..drivers.cameras import (
     OnvifAnprCameraStream,
     OnvifCameraStream,
     make_lpr_engine,
+)
+from ..drivers.access import (
+    AccessActuator,
+    GpioActuator,
+    MivActuator,
+    OnvifRelayActuator,
+    RelayTcpActuator,
+    WiegandActuator,
 )
 from ..drivers.customer_displays import (
     CustomerDisplay,
@@ -920,3 +929,120 @@ class CameraRegistry:
                 _logger.exception(
                     "Failed to close bus for camera %r", entry.config.id
                 )
+
+
+# ─── Access-control registry (Phase B) — command-style, per-id lock ──
+
+
+@dataclass
+class AccessEntry:
+    config: AccessConfig
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    actuator: Optional[AccessActuator] = None
+
+
+class AccessRegistry:
+    """Barrier / relay / turnstile controllers.
+
+    Same shape as DisplayRegistry — discrete synchronous commands
+    under a per-id lock. The proxy only EXECUTES an Odoo-authorised
+    open/deny; it never decides and never auto-opens (fail-secure).
+    """
+
+    _VALID = ("relay_tcp", "onvif", "gpio", "wiegand", "miv")
+
+    def __init__(self) -> None:
+        self.access: dict[str, AccessEntry] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig) -> "AccessRegistry":
+        registry = cls()
+        for cfg in config.access:
+            if cfg.id in registry.access:
+                raise ValueError(f"Duplicate access id: {cfg.id!r}")
+            if cfg.driver not in cls._VALID:
+                raise ValueError(
+                    f"Unknown access driver {cfg.driver!r} on {cfg.id!r}; "
+                    f"expected one of {', '.join(cls._VALID)}"
+                )
+            registry.access[cfg.id] = AccessEntry(config=cfg)
+            _logger.info(
+                "Registered access %r — driver=%s fail_secure=%s",
+                cfg.id, cfg.driver, cfg.fail_secure,
+            )
+        return registry
+
+    def get(self, access_id: str) -> AccessEntry:
+        if access_id not in self.access:
+            raise KeyError(access_id)
+        return self.access[access_id]
+
+    def has(self, access_id: str) -> bool:
+        return access_id in self.access
+
+    @staticmethod
+    def _make(cfg: AccessConfig) -> AccessActuator:
+        if cfg.driver == "relay_tcp":
+            return RelayTcpActuator(
+                cfg.id, host=cfg.host or "", port=cfg.port,
+                on_cmd=cfg.on_cmd, off_cmd=cfg.off_cmd,
+                pulse_seconds=cfg.pulse_seconds,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "onvif":
+            return OnvifRelayActuator(
+                cfg.id, host=cfg.host or "", port=cfg.port or 80,
+                user=cfg.user, password=cfg.password,
+                relay_output=cfg.relay_output,
+                pulse_seconds=cfg.pulse_seconds,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "gpio":
+            return GpioActuator(
+                cfg.id, pin=cfg.pin, active_high=cfg.active_high,
+                pulse_seconds=cfg.pulse_seconds,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "wiegand":
+            return WiegandActuator(cfg.id, fail_secure=cfg.fail_secure)
+        return MivActuator(
+            cfg.id, host=cfg.host or "", port=cfg.port,
+            extras=cfg.extras, fail_secure=cfg.fail_secure,
+        )
+
+    async def start_all(self) -> None:
+        for entry in self.access.values():
+            try:
+                act = self._make(entry.config)
+                # Само персистентните транспорти (gpio) реално отварят
+                # тук; relay_tcp/onvif connect() е no-op (lazy per cmd).
+                act.connect()
+                entry.actuator = act
+            except Exception:
+                # Стартът не блокира — командите ще пробват пак чрез
+                # with_access() (важно за wiegand/miv stub-овете).
+                _logger.warning(
+                    "Access %r not ready at boot (%s) — lazy on command",
+                    entry.config.id, entry.config.driver,
+                )
+
+    async def stop_all(self) -> None:
+        for entry in self.access.values():
+            if entry.actuator is not None:
+                try:
+                    entry.actuator.disconnect()
+                except Exception:
+                    _logger.exception(
+                        "Failed to disconnect access %r", entry.config.id
+                    )
+            entry.actuator = None
+
+    @asynccontextmanager
+    async def with_access(self, access_id: str):
+        entry = self.get(access_id)
+        async with entry.lock:
+            if entry.actuator is None:
+                act = self._make(entry.config)
+                act.connect()
+                entry.actuator = act
+            yield entry.actuator

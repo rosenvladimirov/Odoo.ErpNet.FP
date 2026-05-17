@@ -352,3 +352,41 @@ printers:
 #     go2rtc_public_url: https://go2rtc.lan.mcpworks.net  # for live view
 #     webhooks:
 #       - https://odoo.example.com/hr_attendance_access_control/plate
+
+# ─── Access control — barrier / relay / turnstile (Phase B) ─────
+#
+# The DECISION is taken in Odoo (Channel-1 ⊕ Channel-2, fail-secure).
+# Odoo POSTs the authorised command SYNCHRONOUSLY — zero latency,
+# same channel a barcode read uses:
+#     POST /access/<id>/open   {"seconds": 3}   (pulse) | {}  (latched)
+#     POST /access/<id>/deny
+#     GET  /access/<id>/status
+# (Fleet command-queue kind `access_open` exists only as a slow
+#  secondary remote-management path — NOT the decision path.)
+# The proxy NEVER auto-opens — no call ⇒ barrier stays shut.
+
+# access:
+#   - id: gate1                         # generic TCP relay board
+#     driver: relay_tcp
+#     host: 192.168.1.9
+#     port: 23
+#     on_cmd: "hex:A00101A2"            # or plain text e.g. "on1\n"
+#     off_cmd: "hex:A00100A1"
+#     pulse_seconds: 3
+#
+#   - id: gate2                         # camera's own ONVIF relay
+#     driver: onvif                     # (reuses Phase A OnvifNativeClient)
+#     host: 192.168.1.77
+#     user: admin
+#     password: secret
+#     relay_output: ""                  # token (empty = first)
+#     pulse_seconds: 3
+#
+#   - id: gate3                         # Raspberry Pi GPIO ([gpio] extra)
+#     driver: gpio
+#     pin: 17
+#     active_high: true
+#     pulse_seconds: 3
+#
+#   # driver: miv  → MIV Electronics slot (protocol pending vendor spec)
+#   # driver: wiegand → scaffold (needs MCU bit-banger)

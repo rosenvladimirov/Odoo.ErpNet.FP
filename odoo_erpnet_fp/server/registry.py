@@ -81,6 +81,7 @@ def _device_summary(app) -> dict[str, list[str]]:
         ("reader_registry", "readers"),
         ("display_registry", "displays"),
         ("camera_registry", "cameras"),
+        ("access_registry", "access"),
     ):
         try:
             reg = getattr(app.state, attr, None)
@@ -246,6 +247,21 @@ async def _execute_command(cmd: dict) -> tuple[bool, dict | None, str]:
                     f"{base}/printers/{printer_id}/vat-rates",
                     headers=headers,
                     json={"rates": payload.get("rates") or {}},
+                )
+            elif kind == "access_open":
+                # ВТОРИЧЕН remote-management канал (напр. ръчно отваряне
+                # от Fleet UI). Носи heartbeat латентност (~до 60s) —
+                # НЕ е решаващият път: реалното access решение Odoo го
+                # праща СИНХРОННО директно на /access/{id}/open.
+                aid = (payload.get("controller_id") or "").strip()
+                if not aid:
+                    return False, None, "controller_id required"
+                body = {}
+                if payload.get("seconds") is not None:
+                    body["seconds"] = payload["seconds"]
+                r = await c.post(
+                    f"{base}/access/{aid}/open",
+                    headers=headers, json=body,
                 )
             else:
                 return False, None, f"Unknown command kind: {kind!r}"

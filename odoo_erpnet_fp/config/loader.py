@@ -358,6 +358,40 @@ class CameraConfig:
 
 
 @dataclass
+class AccessConfig:
+    """Access-control actuator (Phase B) — barrier / relay / turnstile.
+
+    `driver`:
+      relay_tcp — generic TCP relay board (`host`,`port`,`on_cmd`,
+                  `off_cmd`)
+      onvif     — camera's own ONVIF Device IO relay (`host`,`user`,
+                  `password`,`relay_output`)
+      gpio      — Pi/SBC GPIO (`pin`,`active_high`) — lazy [gpio]
+      wiegand   — scaffold (not implemented)
+      miv       — MIV Electronics vendor slot (protocol pending)
+
+    The proxy NEVER auto-opens — it only executes an explicit,
+    Odoo-authorised command, synchronously (no Fleet-queue latency).
+    `fail_secure` is a semantic marker for Odoo/operator intent.
+    """
+
+    id: str
+    driver: str = "relay_tcp"
+    host: Optional[str] = None
+    port: int = 23
+    user: str = ""
+    password: str = ""
+    relay_output: str = ""        # onvif relay token (empty = first)
+    on_cmd: str = "on"            # relay_tcp on payload (or hex:..)
+    off_cmd: str = "off"          # relay_tcp off payload
+    pin: int = 0                  # gpio BCM pin
+    active_high: bool = True      # gpio polarity
+    pulse_seconds: float = 3.0    # momentary open duration
+    fail_secure: bool = True
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
@@ -366,6 +400,7 @@ class AppConfig:
     readers: list[ReaderConfig] = field(default_factory=list)
     displays: list[DisplayConfig] = field(default_factory=list)
     cameras: list[CameraConfig] = field(default_factory=list)
+    access: list[AccessConfig] = field(default_factory=list)
     auto_detect: bool = False
 
 
@@ -588,6 +623,27 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    access: list[AccessConfig] = []
+    for entry in data.get("access", []) or []:
+        access.append(
+            AccessConfig(
+                id=str(entry["id"]),
+                driver=entry.get("driver", "relay_tcp"),
+                host=entry.get("host"),
+                port=int(entry.get("port", 23)),
+                user=str(entry.get("user", "")),
+                password=str(entry.get("password", "")),
+                relay_output=str(entry.get("relay_output", "")),
+                on_cmd=str(entry.get("on_cmd", "on")),
+                off_cmd=str(entry.get("off_cmd", "off")),
+                pin=int(entry.get("pin", 0)),
+                active_high=bool(entry.get("active_high", True)),
+                pulse_seconds=float(entry.get("pulse_seconds", 3.0)),
+                fail_secure=bool(entry.get("fail_secure", True)),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     return AppConfig(
         server=server,
         printers=printers,
@@ -596,6 +652,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         readers=readers,
         displays=displays,
         cameras=cameras,
+        access=access,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 
