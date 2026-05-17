@@ -370,6 +370,11 @@ class AccessConfig:
       polimex   — Polimex iCON (50/110/115/130/180) via the open
                   WebSDK direct command (`host`=webstack IP,
                   `user`/`password`=SDK/key, `bus_id`,`output`)
+      hikvision — Hik DS-K2/K1T/KD via ISAPI RemoteControlDoor
+                  (`host`,`user`,`password`, `output`=doorNo; Digest)
+      dahua     — Dahua ASC/ASI/VTO via accessControl.cgi
+                  (`host`,`user`,`password`, `output`=channel,
+                  optional `user_id`; Digest)
       wiegand   — scaffold (not implemented)
       miv       — MIV Electronics vendor slot (protocol pending)
 
@@ -393,6 +398,7 @@ class AccessConfig:
     output: int = 1               # polimex: door lock / relay output number
     relay_ctrl: bool = False      # polimex: iCON-R / iCON110R (hw 30/31/32)
     mode: int = 2                 # polimex relay-type: 1/2/3
+    user_id: str = ""             # dahua: optional UserID for audit log
     pulse_seconds: float = 3.0    # momentary open duration
     fail_secure: bool = True
     extras: dict[str, Any] = field(default_factory=dict)
@@ -649,6 +655,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 output=int(entry.get("output", 1)),
                 relay_ctrl=bool(entry.get("relay_ctrl", False)),
                 mode=int(entry.get("mode", 2)),
+                user_id=str(entry.get("user_id", "")),
                 pulse_seconds=float(entry.get("pulse_seconds", 3.0)),
                 fail_secure=bool(entry.get("fail_secure", True)),
                 extras=entry.get("extras", {}),

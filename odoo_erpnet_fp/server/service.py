@@ -54,7 +54,9 @@ from ..drivers.cameras import (
 )
 from ..drivers.access import (
     AccessActuator,
+    DahuaCgiActuator,
     GpioActuator,
+    HikvisionIsapiActuator,
     MivActuator,
     OnvifRelayActuator,
     PolimexWebSdkActuator,
@@ -950,7 +952,8 @@ class AccessRegistry:
     open/deny; it never decides and never auto-opens (fail-secure).
     """
 
-    _VALID = ("relay_tcp", "onvif", "gpio", "polimex", "wiegand", "miv")
+    _VALID = ("relay_tcp", "onvif", "gpio", "polimex", "hikvision",
+              "dahua", "wiegand", "miv")
 
     def __init__(self) -> None:
         self.access: dict[str, AccessEntry] = {}
@@ -1004,13 +1007,31 @@ class AccessRegistry:
                 pulse_seconds=cfg.pulse_seconds,
                 fail_secure=cfg.fail_secure,
             )
+        # HTTP-API драйверите ползват порт 80 по подразбиране;
+        # AccessConfig.port default (23) е relay_tcp/telnet — не
+        # бива да изтича към ISAPI/CGI/WebSDK.
+        http_port = cfg.port if cfg.port not in (0, 23) else 80
         if cfg.driver == "polimex":
             return PolimexWebSdkActuator(
-                cfg.id, host=cfg.host or "", port=cfg.port or 80,
+                cfg.id, host=cfg.host or "", port=http_port,
                 user=cfg.user or "SDK", password=cfg.password or "0000",
                 bus_id=cfg.bus_id, output=cfg.output,
                 relay_ctrl=cfg.relay_ctrl, mode=cfg.mode,
                 pulse_seconds=cfg.pulse_seconds,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "hikvision":
+            return HikvisionIsapiActuator(
+                cfg.id, host=cfg.host or "", port=http_port,
+                user=cfg.user or "admin", password=cfg.password or "",
+                door_no=cfg.output,
+                fail_secure=cfg.fail_secure,
+            )
+        if cfg.driver == "dahua":
+            return DahuaCgiActuator(
+                cfg.id, host=cfg.host or "", port=http_port,
+                user=cfg.user or "admin", password=cfg.password or "",
+                channel=cfg.output, user_id=cfg.user_id,
                 fail_secure=cfg.fail_secure,
             )
         if cfg.driver == "wiegand":

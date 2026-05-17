@@ -398,8 +398,35 @@ printers:
 #     output: 1                         # door lock output number
 #     pulse_seconds: 3                  # controller auto-closes (1 round-trip)
 #
+#   - id: gate5                         # Hikvision access controller
+#     driver: hikvision                 # DS-K2600/K2700, DS-K1T, DS-KD
+#     host: 192.168.1.30
+#     port: 80
+#     user: admin
+#     password: "*****"
+#     output: 1                         # ISAPI doorNo (1-based)
+#     # ISAPI: PUT /ISAPI/AccessControl/RemoteControl/door/<output>
+#     #        <RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>
+#     # HTTP Digest; momentary relock is device-side config.
+#
+#   - id: gate6                         # Dahua access controller / VTO
+#     driver: dahua                     # ASC/ASI/VTO (CGI-capable FW)
+#     host: 192.168.1.31
+#     port: 80
+#     user: admin
+#     password: "*****"
+#     output: 1                         # accessControl.cgi channel
+#     user_id: ""                       # optional, for the audit log
+#     # GET /cgi-bin/accessControl.cgi?action=openDoor&channel=<output>
+#     # HTTP Digest; legacy SDK-only ASC (no CGI) is UNSUPPORTED.
+#
 #   # driver: miv  → MIV Electronics slot (protocol pending vendor spec)
 #   # driver: wiegand → scaffold (needs MCU bit-banger)
+#
+# Hik/Dahua: a 200/OK = command ACCEPTED, not relay proven. If the
+# device door-mode is alwaysClose/disabled or the lock is miswired,
+# the call still succeeds — that is a device-config issue, not an
+# API failure. The device must be directly reachable from the proxy.
 #
 # ONE `polimex` driver covers the whole genuine Polimex range on the
 # BG market: iCON50/110/115/130/180 + iCON180 SmartVend (door-type,

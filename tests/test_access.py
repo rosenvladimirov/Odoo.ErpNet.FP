@@ -198,6 +198,102 @@ def test_polimex_direct_command(monkeypatch):
     assert captured["body"] == {"cmd": {"id": 1, "c": "DB", "d": "010000"}}
 
 
+def test_hikvision_isapi_open_deny(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.hikvision import HikvisionIsapiActuator
+    cap = {}
+
+    class _R:
+        status_code = 200
+        def raise_for_status(self): pass
+
+    class _C:
+        def __init__(self, *a, **k): cap["auth"] = type(k.get("auth")).__name__
+        def put(self, url, content=None, headers=None):
+            cap["url"] = url
+            cap["body"] = content.decode() if content else ""
+            cap["ctype"] = (headers or {}).get("Content-Type")
+            return _R()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _C)
+    a = HikvisionIsapiActuator("g", host="10.0.0.30", user="admin",
+                               password="x", door_no=2)
+    r = a.open()
+    assert r.ok
+    assert cap["auth"] == "DigestAuth"
+    assert cap["url"] == \
+        "http://10.0.0.30/ISAPI/AccessControl/RemoteControl/door/2"
+    assert "<cmd>open</cmd>" in cap["body"] and cap["ctype"] == "application/xml"
+    a.deny()
+    assert "<cmd>close</cmd>" in cap["body"]
+
+
+def test_dahua_cgi_open(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.dahua import DahuaCgiActuator
+    cap = {}
+
+    class _R:
+        status_code = 200
+        text = "OK"
+        def raise_for_status(self): pass
+
+    class _C:
+        def __init__(self, *a, **k): pass
+        def get(self, url, params=None):
+            cap["url"] = url
+            cap["params"] = params
+            return _R()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _C)
+    a = DahuaCgiActuator("g", host="10.0.0.31", user="admin",
+                         password="x", channel=3, user_id="101")
+    r = a.open()
+    assert r.ok and r.state == "open"
+    assert cap["url"] == "http://10.0.0.31/cgi-bin/accessControl.cgi"
+    assert cap["params"] == {"action": "openDoor", "channel": 3,
+                             "Type": "Remote", "UserID": "101"}
+
+
+def test_dahua_legacy_sdk_only_404(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.dahua import DahuaCgiActuator
+
+    class _R:
+        status_code = 404
+        text = "Not Found"
+        def raise_for_status(self): pass
+
+    class _C:
+        def __init__(self, *a, **k): pass
+        def get(self, *a, **k): return _R()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _C)
+    a = DahuaCgiActuator("g", host="10.0.0.99")
+    with pytest.raises(RuntimeError, match="SDK-only"):
+        a.open()
+
+
+def test_hik_dahua_registry_and_http_port():
+    cfg = _yaml_to_app_config(yaml.safe_load("""
+access:
+  - {id: h, driver: hikvision, host: 10.0.0.30, user: admin, password: x, output: 2}
+  - {id: d, driver: dahua, host: 10.0.0.31, output: 1, user_id: "9"}
+"""))
+    from odoo_erpnet_fp.drivers.access import (
+        DahuaCgiActuator, HikvisionIsapiActuator)
+    reg = AccessRegistry.from_config(cfg)
+    h = reg._make(cfg.access[0])
+    d = reg._make(cfg.access[1])
+    assert isinstance(h, HikvisionIsapiActuator) and h.door_no == 2
+    # AccessConfig.port default 23 (telnet) must NOT leak → coerced 80
+    assert h.port == 80 and d.port == 80
+    assert isinstance(d, DahuaCgiActuator) and d.channel == 1 and d.user_id == "9"
+
+
 def test_polimex_registry_select():
     cfg = _yaml_to_app_config(yaml.safe_load("""
 access:

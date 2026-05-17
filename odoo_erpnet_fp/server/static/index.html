@@ -641,7 +641,7 @@ function emptyCard(kind) {
     readers: 'Add a <code>readers:</code> entry. Transports: <code>hid</code> · <code>serial</code> · <code>external</code>',
     pinpads: 'Add a <code>pinpads:</code> entry. Driver: <code>datecs_pay</code>',
     cameras: 'Add a <code>cameras:</code> entry. Drivers: <code>rtsp</code> · <code>onvif</code> · <code>go2rtc</code> · <code>external</code>. Bring siblings up: <code>docker compose --profile cameras up -d go2rtc alpr</code>',
-    access: 'Add an <code>access:</code> entry. Drivers: <code>relay_tcp</code> · <code>onvif</code> · <code>gpio</code> · <code>polimex</code> (Polimex iCON) · <code>miv</code>. Odoo takes the decision (fail-secure) and POSTs <code>/access/&lt;id&gt;/open</code> synchronously.',
+    access: 'Add an <code>access:</code> entry. Drivers: <code>relay_tcp</code> · <code>onvif</code> · <code>gpio</code> · <code>polimex</code> · <code>hikvision</code> · <code>dahua</code> · <code>miv</code>. Odoo takes the decision (fail-secure) and POSTs <code>/access/&lt;id&gt;/open</code> synchronously.',
   };
   return `<div class="empty">No ${kind} configured.<br>${hints[kind] || ""}</div>`;
 }
