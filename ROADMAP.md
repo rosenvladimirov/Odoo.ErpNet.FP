@@ -190,24 +190,32 @@ every deployed ErpNet.FP proxy without per-instance SSH.
   BG Cyrillic→Latin plate canon. Dashboard 📷 tab + iot.device
   (`type=camera`) + Fleet heartbeat. l10n-bulgaria Fleet camera-kind
   `2896ea7` (v19 `19.0.3.x`).
-- **Phase B — ✅ DONE** (`9be05cb`, `9140a44`, `6944047`). `drivers/access/`
-  command-style actuators; **synchronous zero-latency**
-  `POST /access/{id}/{open,deny,status}` + native IoT `/action`
-  (Fleet `access_open` = secondary slow path only). Transports:
-  `relay_tcp`, `onvif` (reuses A), `gpio` (lazy `[gpio]`), **`polimex`
-  — Polimex iCON WebSDK, ONE driver covers the whole BG range**
-  (door-type iCON50/110/115/130/180/SmartVend + relay-type
-  iCON-R/110R via `relay_ctrl`), `wiegand` scaffold, `miv` vendor
-  slot (still pending vendor spec — superseded in practice by
-  `polimex` for the BG market). Dashboard 🚪 tab + Fleet access-kind
-  (l10n-bulgaria `ffb8253` `19.0.3.2.0`). Decision stays in Odoo
-  (fail-secure). ⚠ Audit trap: shop "iCON100"=IDTECK, "iTDC"=SOYAL —
-  NOT covered (separate vendors).
+- **Phase B — ✅ DONE** (`9be05cb`, `9140a44`, `6944047`, `8dc397b`).
+  `drivers/access/` command-style actuators; **synchronous
+  zero-latency** `POST /access/{id}/{open,deny,status}` + native IoT
+  `/action` (Fleet `access_open` = secondary slow path only).
+  Transports: `relay_tcp`, `onvif` (reuses A), `gpio` (lazy
+  `[gpio]`), **`polimex`** (Polimex iCON WebSDK — ONE driver covers
+  the whole BG range: door-type iCON50/110/115/130/180/SmartVend +
+  relay-type iCON-R/110R via `relay_ctrl`), **`hikvision`** (ISAPI
+  RemoteControlDoor, Digest — DS-K2600/K2700, DS-K1T/K1A, DS-KD),
+  **`dahua`** (accessControl.cgi, Digest — ASC/ASI/VTO; legacy
+  SDK-only ASC explicitly unsupported), `wiegand` scaffold, `miv`
+  vendor slot (protocol pending — superseded by `polimex` for BG).
+  Dashboard 🚪 tab + Fleet access-kind (l10n-bulgaria `ffb8253`
+  `19.0.3.2.0`). Decision stays in Odoo (fail-secure). ⚠ Audit trap:
+  shop "iCON100"=IDTECK, "iTDC"=SOYAL — NOT covered (other vendors).
 - **Phase C — ⏳ NOT STARTED** (biometric face-auth client).
 - **Deploy — ⏳ GATED** (not on any live instance; iot.mcpworks.net
   Fleet `-u` + proxy image are a separate explicit step).
-- Research (sourced, agents): edge-ANPR/4K camera shortlist; iCON130 =
-  Polimex Holding (open WebSDK, AGPL `polimex/polimex-rfid`).
+- **Open ideas:** WebSDK event-stream ingestion (Polimex reader/card
+  events → existing reader bus); real-hardware e2e (all drivers are
+  unit-tested only); MIV driver pending vendor spec.
+- Research (sourced, 3 agents): edge-ANPR/4K camera shortlist;
+  iCON130 = Polimex Holding (open WebSDK, AGPL `polimex/polimex-rfid`);
+  securitybulgaria.com = Polimex own store (one `polimex` driver);
+  Hik/Dahua AC = synchronous single-HTTP, no SDK → fit.
+- Handoff doc: `HANDOFF_ACCESS_ADDON.md` (self-contained state).
 
 **Phase A — Camera-stream driver family** (`drivers/cameras/`): ✅ DONE
 - ABC `CameraStream(camera_id)` modelled on `drivers/readers/`
