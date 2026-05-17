@@ -228,6 +228,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.scales import router as scales_router
     from .routes.cameras import router as cameras_router
     from .routes.access import router as access_router
+    from .routes.polimex_events import router as polimex_events_router
     app.include_router(printers_router)
     app.include_router(pinpads_router)
     app.include_router(scales_router)
@@ -235,6 +236,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(displays_router)
     app.include_router(cameras_router)
     app.include_router(access_router)
+    app.include_router(polimex_events_router)
     app.include_router(admin_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)

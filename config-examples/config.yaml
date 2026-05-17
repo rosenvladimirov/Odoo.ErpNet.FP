@@ -225,6 +225,19 @@ printers:
 #   # /readers/bt1/inject. See memory/feedback_ble_hid_evdev_proxy_blocked.md
 #   - id: bt1
 #     transport: external
+#
+#   # Polimex WebSDK card events → reader bus. The iCON webstack POSTs
+#   # every reader/card event to its configured server URL; point it
+#   # at  POST /polimex/event  (legacy alias /hr/rfid/event). The
+#   # card number is published as a scan on this reader, flowing out
+#   # the normal WS/SSE/webhook/native-IoT path. `extras.polimex`
+#   # keys are all optional (omitted = wildcard match).
+#   - id: gate_card
+#     transport: external
+#     extras:
+#       polimex: { convertor: 414468, controller_id: 40, reader: 1 }
+#     webhooks:
+#       - https://odoo.example.com/hr_attendance_access_control/card
 
 # ─── Customer-facing pole displays ──────────────────────────────
 #
