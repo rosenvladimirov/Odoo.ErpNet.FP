@@ -259,6 +259,8 @@ async def _do_action(
             return await _camera_action(app_state, dev_id, data)
         if kind == "access":
             return await _access_action(app_state, dev_id, data)
+        if kind == "biometric":
+            return await _biometric_action(app_state, dev_id, data)
         if kind == "reader":
             # Readers don't support `action` — they're event-only.
             return {
@@ -407,6 +409,43 @@ async def _access_action(state, access_id: str, data: dict) -> dict:
                 return {"status": {"status": "error",
                                    "message_body":
                                    f"Unknown access action: {action!r}"}}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": {"status": "error",
+                           "message_body": str(exc)}}
+    return {"result": res.to_json(), "status": {"status": "success"}}
+
+
+async def _biometric_action(state, biometric_id: str, data: dict) -> dict:
+    """Native-IoT biometric op, synchronous (same zero-latency
+    request→response channel; NOT the Fleet command-queue). The
+    attendance/access DECISION is taken in Odoo (fail-secure); this
+    only relays to the external face-auth μsvc.
+
+      `{action: "verify", descriptor: [...128]}`         — 1:N match
+      `{action: "enroll", subjectUuid, descriptor:[...]}` — enrol
+      `{action: "erase",  subjectUuid}`                   — GDPR erase
+    """
+    reg = getattr(state, "biometric_registry", None)
+    if reg is None or not reg.has(biometric_id):
+        raise KeyError(biometric_id)
+    action = data.get("action", "verify")
+    try:
+        async with reg.with_biometric(biometric_id) as v:
+            if action == "verify":
+                res = await asyncio.to_thread(
+                    v.verify, data.get("descriptor") or [])
+            elif action == "enroll":
+                res = await asyncio.to_thread(
+                    v.enroll, data.get("subjectUuid", ""),
+                    data.get("descriptor") or [])
+            elif action == "erase":
+                res = await asyncio.to_thread(
+                    v.erase, data.get("subjectUuid", ""))
+            else:
+                return {"status": {"status": "error",
+                                   "message_body":
+                                   f"Unknown biometric action: "
+                                   f"{action!r}"}}
     except Exception as exc:  # noqa: BLE001
         return {"status": {"status": "error",
                            "message_body": str(exc)}}

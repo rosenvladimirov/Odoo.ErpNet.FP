@@ -82,6 +82,7 @@ def _device_summary(app) -> dict[str, list[str]]:
         ("display_registry", "displays"),
         ("camera_registry", "cameras"),
         ("access_registry", "access"),
+        ("biometric_registry", "biometric"),
     ):
         try:
             reg = getattr(app.state, attr, None)

@@ -410,6 +410,30 @@ class AccessConfig:
 
 
 @dataclass
+class BiometricConfig:
+    """Biometric verifier (Phase C / #6) — face identity, Channel-1.
+
+    `driver`:
+      faceauth — @vladmandic/face-api Node μsvc (author: Довид Р.
+                 Милев). `base_url` = the μsvc HTTP root (e.g.
+                 http://127.0.0.1:5173). The proxy is a THIN CLIENT —
+                 it never reimplements matching (HTTP-coupled,
+                 copyleft-clean).
+
+    The attendance/access DECISION stays in Odoo (fail-secure); Odoo
+    enforces `x_bio_consent` (GDPR/ЗЗЛД). Identity is keyed only by the
+    opaque subject UUID — proxy/face-auth never see PII.
+    """
+
+    id: str
+    driver: str = "faceauth"
+    base_url: str = ""
+    timeout: float = 8.0
+    fail_secure: bool = True
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
@@ -419,6 +443,7 @@ class AppConfig:
     displays: list[DisplayConfig] = field(default_factory=list)
     cameras: list[CameraConfig] = field(default_factory=list)
     access: list[AccessConfig] = field(default_factory=list)
+    biometric: list[BiometricConfig] = field(default_factory=list)
     auto_detect: bool = False
 
 
@@ -668,6 +693,19 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    biometric: list[BiometricConfig] = []
+    for entry in data.get("biometric", []) or []:
+        biometric.append(
+            BiometricConfig(
+                id=str(entry["id"]),
+                driver=entry.get("driver", "faceauth"),
+                base_url=str(entry.get("base_url", "")),
+                timeout=float(entry.get("timeout", 8.0)),
+                fail_secure=bool(entry.get("fail_secure", True)),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     return AppConfig(
         server=server,
         printers=printers,
@@ -677,6 +715,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         displays=displays,
         cameras=cameras,
         access=access,
+        biometric=biometric,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 

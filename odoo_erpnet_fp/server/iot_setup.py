@@ -80,6 +80,8 @@ _KIND_TO_IOT_TYPE = {
     # iot.device.type няма „access" → мапваме към генеричния „device"
     # (валиден в Selection-а); subtype "" винаги е валидно.
     "access":  ("device", ""),
+    # iot.device.type няма „biometric" → също генеричния „device".
+    "biometric": ("device", ""),
 }
 
 
@@ -119,6 +121,7 @@ def _device_inventory(app) -> dict[str, dict[str, Any]]:
         ("display_registry", "displays", "display"),
         ("camera_registry", "cameras", "camera"),
         ("access_registry", "access", "access"),
+        ("biometric_registry", "biometric", "biometric"),
     )
     for attr, _key, kind in layout:
         try:

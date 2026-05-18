@@ -37,6 +37,7 @@ from typing import Any, Optional, Union
 from ..config.loader import (
     AccessConfig,
     AppConfig,
+    BiometricConfig,
     CameraConfig,
     DisplayConfig,
     PinpadConfig,
@@ -62,6 +63,10 @@ from ..drivers.access import (
     PolimexWebSdkActuator,
     RelayTcpActuator,
     WiegandActuator,
+)
+from ..drivers.biometric import (
+    BiometricVerifier,
+    FaceAuthVerifier,
 )
 from ..drivers.customer_displays import (
     CustomerDisplay,
@@ -1079,3 +1084,98 @@ class AccessRegistry:
                 act.connect()
                 entry.actuator = act
             yield entry.actuator
+
+
+# ─── Biometric registry (Phase C / #6) — request/response, per-id lock ─
+
+
+@dataclass
+class BiometricEntry:
+    config: BiometricConfig
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    verifier: Optional[BiometricVerifier] = None
+
+
+class BiometricRegistry:
+    """Face-identity verifiers (Channel-1 transport).
+
+    Same shape as AccessRegistry — discrete synchronous ops under a
+    per-id lock. The proxy is a THIN CLIENT to the external face-auth
+    Node μsvc; it never reimplements matching and never decides
+    attendance/access (Odoo enforces `x_bio_consent`, fail-secure).
+    """
+
+    _VALID = ("faceauth",)
+
+    def __init__(self) -> None:
+        self.biometric: dict[str, BiometricEntry] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig) -> "BiometricRegistry":
+        registry = cls()
+        for cfg in config.biometric:
+            if cfg.id in registry.biometric:
+                raise ValueError(f"Duplicate biometric id: {cfg.id!r}")
+            if cfg.driver not in cls._VALID:
+                raise ValueError(
+                    f"Unknown biometric driver {cfg.driver!r} on "
+                    f"{cfg.id!r}; expected one of "
+                    f"{', '.join(cls._VALID)}"
+                )
+            registry.biometric[cfg.id] = BiometricEntry(config=cfg)
+            _logger.info(
+                "Registered biometric %r — driver=%s base_url=%s",
+                cfg.id, cfg.driver, cfg.base_url or "(unset)",
+            )
+        return registry
+
+    def get(self, biometric_id: str) -> BiometricEntry:
+        if biometric_id not in self.biometric:
+            raise KeyError(biometric_id)
+        return self.biometric[biometric_id]
+
+    def has(self, biometric_id: str) -> bool:
+        return biometric_id in self.biometric
+
+    @staticmethod
+    def _make(cfg: BiometricConfig) -> BiometricVerifier:
+        # Само `faceauth` засега (вендор-агностичен ABC за бъдещи).
+        return FaceAuthVerifier(
+            cfg.id, base_url=cfg.base_url, timeout=cfg.timeout,
+            fail_secure=cfg.fail_secure,
+        )
+
+    async def start_all(self) -> None:
+        for entry in self.biometric.values():
+            try:
+                v = self._make(entry.config)
+                v.connect()
+                entry.verifier = v
+            except Exception:
+                # Стартът не блокира — lazy on command (with_biometric).
+                _logger.warning(
+                    "Biometric %r not ready at boot — lazy on command",
+                    entry.config.id,
+                )
+
+    async def stop_all(self) -> None:
+        for entry in self.biometric.values():
+            if entry.verifier is not None:
+                try:
+                    entry.verifier.disconnect()
+                except Exception:
+                    _logger.exception(
+                        "Failed to disconnect biometric %r",
+                        entry.config.id,
+                    )
+            entry.verifier = None
+
+    @asynccontextmanager
+    async def with_biometric(self, biometric_id: str):
+        entry = self.get(biometric_id)
+        async with entry.lock:
+            if entry.verifier is None:
+                v = self._make(entry.config)
+                v.connect()
+                entry.verifier = v
+            yield entry.verifier

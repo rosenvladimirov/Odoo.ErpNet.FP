@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse
 from ..config.loader import AppConfig, load_config
 from .service import (
     AccessRegistry,
+    BiometricRegistry,
     CameraRegistry,
     DisplayRegistry,
     PinpadRegistry,
@@ -99,6 +100,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         await display_registry.start_all()
         await camera_registry.start_all()
         await access_registry.start_all()
+        await biometric_registry.start_all()
         # Fleet registry — pair once if needed, then heartbeat in
         # background. No-op when server.registry.enabled is false.
         from .registry import fleet_loop
@@ -140,6 +142,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             await display_registry.stop_all()
             await camera_registry.stop_all()
             await access_registry.stop_all()
+            await biometric_registry.stop_all()
 
     app = FastAPI(
         title="Odoo.ErpNet.FP",
@@ -160,6 +163,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     display_registry = DisplayRegistry.from_config(config)
     camera_registry = CameraRegistry.from_config(config)
     access_registry = AccessRegistry.from_config(config)
+    biometric_registry = BiometricRegistry.from_config(config)
     app.state.registry = registry
     app.state.pinpad_registry = pinpad_registry
     app.state.scale_registry = scale_registry
@@ -167,6 +171,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.display_registry = display_registry
     app.state.camera_registry = camera_registry
     app.state.access_registry = access_registry
+    app.state.biometric_registry = biometric_registry
     app.state.config = config
 
     from . import metrics
@@ -228,6 +233,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.scales import router as scales_router
     from .routes.cameras import router as cameras_router
     from .routes.access import router as access_router
+    from .routes.biometric import router as biometric_router
     from .routes.polimex_events import router as polimex_events_router
     app.include_router(printers_router)
     app.include_router(pinpads_router)
@@ -236,6 +242,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(displays_router)
     app.include_router(cameras_router)
     app.include_router(access_router)
+    app.include_router(biometric_router)
     app.include_router(polimex_events_router)
     app.include_router(admin_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
@@ -297,6 +304,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "displays": list(display_registry.displays.keys()),
             "cameras": list(camera_registry.cameras.keys()),
             "access": list(access_registry.access.keys()),
+            "biometric": list(biometric_registry.biometric.keys()),
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the
