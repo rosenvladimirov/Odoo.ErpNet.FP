@@ -80,6 +80,21 @@ async def access_info(id: str, request: Request):
                           fail_secure=e.config.fail_secure)
 
 
+def _bus_emit(request: Request, event_type: str, device: str,
+              data: dict) -> None:
+    """Best-effort live signal to Odoo via bus_inject. Never raises —
+    a Fleet outage must not break the door command."""
+    try:
+        from ...clients.bus_inject import BusInjectClient
+        client = BusInjectClient.from_app(request.app)
+        if client is not None:
+            client.emit(event_type, device=device,
+                        device_kind="access", data=data)
+            client.close()
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("access bus_emit suppressed: %s", exc)
+
+
 @router.post("/{id}/open")
 async def access_open(id: str, request: Request,
                       req: OpenReq | None = None):
@@ -91,10 +106,20 @@ async def access_open(id: str, request: Request,
         async with reg.with_access(id) as act:
             res = await asyncio.to_thread(act.open, secs)
     except Exception as exc:  # noqa: BLE001
+        # Even on failure, signal denial to Odoo so the UI knows
+        # the operator's button press actually got rejected by the
+        # device.
+        _bus_emit(request, "door.denied", id,
+                  {"reason": str(exc)[:200], "seconds": secs})
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Access {id!r} open failed: {exc}",
         ) from exc
+    _bus_emit(request, "door.opened", id, {
+        "seconds": secs,
+        "state": res.state,
+        "detail": res.detail,
+    })
     return res.to_json()
 
 
@@ -110,6 +135,11 @@ async def access_deny(id: str, request: Request):
             status.HTTP_502_BAD_GATEWAY,
             f"Access {id!r} deny failed: {exc}",
         ) from exc
+    _bus_emit(request, "door.denied", id, {
+        "state": res.state,
+        "detail": res.detail,
+        "reason": "operator deny",
+    })
     return res.to_json()
 
 
