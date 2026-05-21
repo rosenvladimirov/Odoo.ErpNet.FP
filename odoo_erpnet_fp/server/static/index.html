@@ -328,7 +328,9 @@
     <button class="tab" data-kind="readers" onclick="switchTab('readers')">🔍 Readers <span class="count" id="cnt-readers">0</span></button>
     <button class="tab" data-kind="pinpads" onclick="switchTab('pinpads')">💳 Pinpads <span class="count" id="cnt-pinpads">0</span></button>
     <button class="tab" data-kind="cameras" onclick="switchTab('cameras')">📷 Cameras <span class="count" id="cnt-cameras">0</span></button>
+    <button class="tab" data-kind="mqtt" onclick="switchTab('mqtt')">📡 MQTT <span class="count" id="cnt-mqtt">0</span></button>
     <button class="tab" data-kind="access" onclick="switchTab('access')">🚪 Access <span class="count" id="cnt-access">0</span></button>
+    <button class="tab" data-kind="biometric" onclick="switchTab('biometric')">🧬 Biometric <span class="count" id="cnt-biometric">0</span></button>
   </div>
 
   <section class="devices active" data-kind="printers">
@@ -355,8 +357,16 @@
     <div class="grid" id="grid-cameras"><div class="empty">Loading…</div></div>
   </section>
 
+  <section class="devices" data-kind="mqtt">
+    <div class="grid" id="grid-mqtt"><div class="empty">Loading…</div></div>
+  </section>
+
   <section class="devices" data-kind="access">
     <div class="grid" id="grid-access"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="biometric">
+    <div class="grid" id="grid-biometric"><div class="empty">Loading…</div></div>
   </section>
 </div>
 
@@ -372,9 +382,15 @@
 
 <script>
 const ENDPOINT = window.location.origin;
-const KINDS = ["printers", "scales", "displays", "readers", "pinpads", "cameras", "access"];
+// Fiscal kinds (POS path) — always-visible tabs. AC kinds are appended
+// below and hidden when their count is 0 so the landing stays clean on
+// fiscal-only deployments.
+const KINDS_FISCAL = ["printers", "scales", "displays", "readers", "pinpads"];
+const KINDS_AC     = ["cameras", "mqtt", "access", "biometric"];
+const KINDS        = [...KINDS_FISCAL, ...KINDS_AC];
 let state = {
-  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {}, cameras: {}, access: {},
+  printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {},
+  cameras: {}, mqtt: {}, access: {}, biometric: {},
   statuses: {}, scans: {}, readerLast: {}, plates: {}, cameraLast: {}, accessLast: {},
 };
 
@@ -415,9 +431,13 @@ async function loadVersion() {
     const r = await fetchJSON(ENDPOINT + "/healthz");
     document.getElementById("version").textContent = "v" + (r.version || "?");
     const total = (r.printers||[]).length + (r.scales||[]).length + (r.displays||[]).length + (r.readers||[]).length + (r.pinpads||[]).length;
+    // Show only non-zero kinds — keeps the header clean on fiscal-only
+    // deployments (no "0 mqtt · 0 biometric" noise).
+    const present = KINDS.filter(k => (r[k]||[]).length > 0)
+                         .map(k => `${(r[k]||[]).length} ${k}`);
     document.getElementById("summary").textContent =
-      `${total} device${total===1?"":"s"} · ` +
-      KINDS.map(k => `${(r[k]||[]).length} ${k}`).join(" · ");
+      `${total} device${total===1?"":"s"}` +
+      (present.length ? " · " + present.join(" · ") : "");
     return r.version;
   } catch (e) {
     document.getElementById("version").textContent = "offline";
@@ -598,12 +618,28 @@ async function runUpdate() {
 
 async function loadKind(kind) {
   try {
-    const data = await fetchJSON(`${ENDPOINT}/${kind}`);
-    state[kind] = data || {};
+    if (kind === "mqtt") {
+      // MQTT endpoint returns {brokers: [...]} (per-broker status),
+      // not the device-dict shape the other kinds use. Map name→entry
+      // so the rest of the dashboard code stays uniform.
+      const r = await fetchJSON(`${ENDPOINT}/mqtt/status`);
+      const brokers = (r && r.brokers) || [];
+      state.mqtt = Object.fromEntries(brokers.map(b => [b.name, b]));
+    } else {
+      const data = await fetchJSON(`${ENDPOINT}/${kind}`);
+      state[kind] = data || {};
+    }
   } catch (e) {
     state[kind] = {};
   }
-  document.getElementById("cnt-" + kind).textContent = Object.keys(state[kind]).length;
+  const count = Object.keys(state[kind]).length;
+  document.getElementById("cnt-" + kind).textContent = count;
+  // Hide AC tabs with zero devices — fiscal tabs always stay visible so
+  // operators can see the POS path is live.
+  if (KINDS_AC.includes(kind)) {
+    const tab = document.querySelector(`.tab[data-kind="${kind}"]`);
+    if (tab) tab.style.display = count > 0 ? "" : "none";
+  }
   renderKind(kind);
 }
 
@@ -640,8 +676,10 @@ function emptyCard(kind) {
     displays: 'Add a <code>displays:</code> entry. Driver: <code>datecs.dpd201</code>',
     readers: 'Add a <code>readers:</code> entry. Transports: <code>hid</code> · <code>serial</code> · <code>external</code>',
     pinpads: 'Add a <code>pinpads:</code> entry. Driver: <code>datecs_pay</code>',
-    cameras: 'Add a <code>cameras:</code> entry. Drivers: <code>rtsp</code> · <code>onvif</code> · <code>go2rtc</code> · <code>external</code>. Bring siblings up: <code>docker compose --profile cameras up -d go2rtc alpr</code>',
-    access: 'Add an <code>access:</code> entry. Drivers: <code>relay_tcp</code> · <code>onvif</code> · <code>gpio</code> · <code>polimex</code> · <code>hikvision</code> · <code>dahua</code> · <code>miv</code>. Odoo takes the decision (fail-secure) and POSTs <code>/access/&lt;id&gt;/open</code> synchronously.',
+    cameras: 'Add a <code>cameras:</code> entry in <code>config.d/cameras.yaml</code>. Drivers: <code>rtsp</code> · <code>onvif</code> · <code>go2rtc</code> · <code>external</code>. Bring siblings up: <code>docker compose --profile cameras up -d go2rtc alpr</code>',
+    mqtt: 'Add an <code>mqtt:</code> list in <code>config.d/mqtt.yaml</code> (or push from Odoo: <i>Access Control → Settings → MQTT Brokers → Sync to Proxy</i>). Multi-broker supported; each entry needs a unique <code>name</code>.',
+    access: 'Add an <code>access:</code> entry in <code>config.d/access.yaml</code>. Drivers: <code>relay_tcp</code> · <code>onvif</code> · <code>gpio</code> · <code>polimex</code> · <code>hikvision</code> · <code>dahua</code> · <code>miv</code>. Odoo takes the decision (fail-secure) and POSTs <code>/access/&lt;id&gt;/open</code> synchronously.',
+    biometric: 'Add a <code>biometric:</code> entry in <code>config.d/biometric.yaml</code>. Driver: <code>faceauth</code> (Довид face-api μsvc).',
   };
   return `<div class="empty">No ${kind} configured.<br>${hints[kind] || ""}</div>`;
 }
@@ -660,7 +698,9 @@ function renderKind(kind) {
     readers: renderReader,
     pinpads: renderPinpad,
     cameras: renderCamera,
+    mqtt: renderMqttBroker,
     access: renderAccess,
+    biometric: renderBiometric,
   }[kind];
   grid.innerHTML = Object.entries(items).map(([id, info]) => renderer(id, info)).join("");
 }
@@ -1006,6 +1046,92 @@ function renderPinpad(id, info) {
     </div>`;
 }
 
+// ─── MQTT (multi-broker subscriber cards) ─────────────────────
+//
+// `info` mirrors MqttCameraIngest.status() — keys:
+//   name, enabled, running, connected, host, port, topics,
+//   last_message_time, messages_received/published/dropped.
+// Start/Stop buttons hit /mqtt/{name}/start|stop — runtime-only
+// (config on disk is owned by Odoo via Sync to Proxy).
+
+function renderMqttBroker(name, info) {
+  const enabled = !!info.enabled;
+  const running = !!info.running;
+  const connected = !!info.connected;
+  const runBadge = !enabled
+    ? '<span class="badge muted">disabled</span>'
+    : connected
+      ? '<span class="badge ok">● connected</span>'
+      : running
+        ? '<span class="badge warn">● connecting…</span>'
+        : '<span class="badge err">○ stopped</span>';
+  const topics = (info.topics || []).join(", ") || "—";
+  const lastMs = info.last_message_time
+    ? fmtAgo(info.last_message_time * 1000)
+    : "never";
+  const nameEsc = encodeURIComponent(name);
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${name}</h3>
+        ${runBadge}
+        <span class="uri">${info.host || ""}:${info.port || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Broker</dt><dd>${info.host || "—"}:${info.port || "—"}</dd>
+          <dt>Topics</dt><dd style="font-family:monospace;font-size:0.75rem;word-break:break-all">${topics}</dd>
+          <dt>Last message</dt><dd>${lastMs}</dd>
+          <dt>Received</dt><dd>${info.messages_received ?? 0} · published ${info.messages_published ?? 0} · dropped ${info.messages_dropped ?? 0}</dd>
+        </dl>
+      </div>
+      <div class="card-actions">
+        ${running
+          ? `<button class="sm warn" onclick="mqttStop('${nameEsc}')">⏸ Stop</button>`
+          : `<button class="sm primary" onclick="mqttStart('${nameEsc}')">▶ Start</button>`}
+        <button class="sm" onclick="loadKind('mqtt')">⟳ Refresh</button>
+      </div>
+    </div>`;
+}
+
+async function mqttStart(name) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/mqtt/${name}/start`, { method: "POST" });
+    toast(`${decodeURIComponent(name)}: ${r.started ? "started" : "already running"}`,
+          r.ok ? "ok" : "err");
+    loadKind("mqtt");
+  } catch (e) { toast(`mqtt start failed: ${e.message}`, "err"); }
+}
+
+async function mqttStop(name) {
+  if (!confirm(`Stop MQTT broker ${decodeURIComponent(name)}? Runtime-only — Odoo Sync will revert.`)) return;
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/mqtt/${name}/stop`, { method: "POST" });
+    toast(`${decodeURIComponent(name)}: ${r.stopped ? "stopped" : "was not running"}`,
+          r.ok ? "ok" : "err");
+    loadKind("mqtt");
+  } catch (e) { toast(`mqtt stop failed: ${e.message}`, "err"); }
+}
+
+// ─── Biometric (Phase C placeholder card) ─────────────────────
+
+function renderBiometric(id, info) {
+  return `
+    <div class="card">
+      <div class="card-header">
+        <h3>${id}</h3>
+        <span class="uri">${info.driver || ""}</span>
+      </div>
+      <div class="card-body">
+        <dl>
+          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
+          <dt>Base URL</dt><dd style="font-family:monospace;font-size:0.75rem;word-break:break-all">${info.base_url || info.baseUrl || "—"}</dd>
+          <dt>Fail-secure</dt><dd>${info.failSecure || info.fail_secure ? "yes" : "no"}</dd>
+        </dl>
+      </div>
+    </div>`;
+}
+
 // ─── Actions per kind ──────────────────────────────────────
 
 async function printerAction(id, op, method, confirmRequired = false) {
@@ -1141,6 +1267,9 @@ setInterval(() => {
   if (_liveCams.size) return;
   loadKind("cameras").then(fetchAllCameraLast);
 }, 5000);
+// MQTT brokers — running/connected/msg counters need to stay live so
+// the operator can see traffic in real time. 5s mirrors readers.
+setInterval(() => loadKind("mqtt"), 5000);
 </script>
 </body>
 </html>

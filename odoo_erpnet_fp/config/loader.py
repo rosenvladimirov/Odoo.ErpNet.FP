@@ -434,6 +434,48 @@ class BiometricConfig:
 
 
 @dataclass
+class MqttBrokerSpec:
+    """One MQTT broker entry — a single subscriber connection.
+
+    Multi-broker by design (R5): the YAML `mqtt:` section accepts a
+    list of these, so the same proxy can fan-in from e.g. a parking-lot
+    broker AND a warehouse broker without sharing topic namespaces.
+    For backwards compat with the original single-broker layout,
+    the loader also accepts a top-level dict and wraps it in a 1-element
+    list with `name="default"`.
+
+    `name` is the registry key — must be unique across active brokers,
+    appears in /mqtt/status, and lets hot-reload selectively
+    stop/start one broker without disturbing the others.
+
+    If absent or no enabled brokers, no MQTT connection is opened —
+    the pure-fiscal/pure-POS deployment stays byte-identical
+    (paho-mqtt is not even imported).
+    """
+
+    name: str = "default"
+    enabled: bool = True
+    host: str = "mqtt-broker.local"
+    port: int = 1883
+    tls: bool = False
+    user: str = ""
+    password: str = ""
+    topics: list[str] = field(default_factory=lambda: ["lpr", "lpr/+"])
+    qos: int = 0
+    keepalive: int = 60
+    reconnect_attempts: int = 10
+    reconnect_delay: int = 5
+    debug: bool = False
+    max_log_payload: int = 500
+
+
+# Backward-compat alias — pre-R5 code referenced `MqttIngestConfig`.
+# Kept so external imports don't break; new code should use
+# `MqttBrokerSpec`. Will be removed in a future major.
+MqttIngestConfig = MqttBrokerSpec
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
@@ -444,7 +486,24 @@ class AppConfig:
     cameras: list[CameraConfig] = field(default_factory=list)
     access: list[AccessConfig] = field(default_factory=list)
     biometric: list[BiometricConfig] = field(default_factory=list)
+    # Multi-broker list (R5). `mqtt_ingest` (single) kept as a
+    # read-only property below for legacy callers that only want
+    # "the first broker".
+    mqtt_brokers: list[MqttBrokerSpec] = field(default_factory=list)
     auto_detect: bool = False
+
+    @property
+    def mqtt_ingest(self) -> MqttBrokerSpec:
+        """Legacy accessor: returns the FIRST enabled broker, or an
+        empty (disabled) MqttBrokerSpec if none are configured. New
+        code should iterate `mqtt_brokers` directly.
+        """
+        for b in self.mqtt_brokers:
+            if b.enabled:
+                return b
+        # Fall through: return a disabled placeholder so legacy code
+        # paths checking `.enabled` stay safe.
+        return MqttBrokerSpec(name="default", enabled=False)
 
 
 # ─── YAML loader (preferred) ─────────────────────────────────────────
@@ -706,6 +765,55 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    # MQTT subscribers — top-level `mqtt:` block. Two accepted shapes:
+    #   1. list of dicts (R5+) — multi-broker, each with a unique name.
+    #   2. dict (legacy single-broker) — wrapped into a 1-element list
+    #      with name="default".
+    # Absent / empty ⇒ no brokers, paho-mqtt is not imported at all.
+    mqtt_raw = data.get("mqtt")
+    mqtt_brokers: list[MqttBrokerSpec] = []
+    if isinstance(mqtt_raw, dict) and mqtt_raw:
+        # Legacy single-broker dict — promote to a 1-element list.
+        mqtt_entries = [{"name": "default", **mqtt_raw}]
+    elif isinstance(mqtt_raw, list):
+        mqtt_entries = mqtt_raw
+    else:
+        mqtt_entries = []
+    seen_names: set[str] = set()
+    for entry in mqtt_entries:
+        if not isinstance(entry, dict):
+            continue
+        topics_raw = entry.get("topics", ["lpr", "lpr/+"])
+        if isinstance(topics_raw, str):
+            topics_list = [t.strip() for t in topics_raw.split(",") if t.strip()]
+        else:
+            topics_list = [str(t).strip() for t in topics_raw if str(t).strip()]
+        # Auto-deduplicate broker names — keeps the registry dict-keyed
+        # contract sound even if the operator copy-pastes a record.
+        raw_name = str(entry.get("name") or "default").strip() or "default"
+        name = raw_name
+        suffix = 2
+        while name in seen_names:
+            name = f"{raw_name}-{suffix}"
+            suffix += 1
+        seen_names.add(name)
+        mqtt_brokers.append(MqttBrokerSpec(
+            name=name,
+            enabled=bool(entry.get("enabled", True)),
+            host=str(entry.get("host", "mqtt-broker.local")),
+            port=int(entry.get("port", 1883)),
+            tls=bool(entry.get("tls", False)),
+            user=str(entry.get("user", "")),
+            password=str(entry.get("password", "")),
+            topics=topics_list or ["lpr", "lpr/+"],
+            qos=int(entry.get("qos", 0)),
+            keepalive=int(entry.get("keepalive", 60)),
+            reconnect_attempts=int(entry.get("reconnect_attempts", 10)),
+            reconnect_delay=int(entry.get("reconnect_delay", 5)),
+            debug=bool(entry.get("debug", False)),
+            max_log_payload=int(entry.get("max_log_payload", 500)),
+        ))
+
     return AppConfig(
         server=server,
         printers=printers,
@@ -716,6 +824,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         cameras=cameras,
         access=access,
         biometric=biometric,
+        mqtt_brokers=mqtt_brokers,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 
@@ -802,13 +911,62 @@ def _erpnet_json_to_app_config(data: dict) -> AppConfig:
 
 
 def load_config(path: str | Path) -> AppConfig:
-    """Load `path` and return AppConfig. Format is detected by extension."""
+    """Load `path` and return AppConfig. Format is detected by extension.
+
+    If the base file is YAML and a sibling `config.d/` directory exists,
+    each `<base_dir>/config.d/*.yaml` fragment is merged AFTER the main
+    file (alphabetical order) — fragments OVERRIDE the matching
+    top-level section. Used for per-hardware online reload: Odoo pushes
+    `config.d/cameras.yaml` (or access/mqtt/biometric); proxy restarts
+    ONLY the affected registry without touching fiscal/POS.
+
+    Backward-compatible: deployments without `config.d/` work exactly
+    as before — single-file inline config.
+
+    Each entry in `app_config._fragment_map` records which file last
+    provided a section; the `push_config` Fleet command uses this to
+    rewrite the right fragment atomically.
+    """
     p = Path(path)
     if not p.is_file():
         raise FileNotFoundError(p)
     text = p.read_text(encoding="utf-8")
     if p.suffix.lower() in (".yaml", ".yml"):
-        return _yaml_to_app_config(yaml.safe_load(text) or {})
+        base = yaml.safe_load(text) or {}
+        # Merge any per-hardware fragments living in <base_dir>/config.d/
+        fragments_dir = p.parent / "config.d"
+        fragment_map: dict[str, str] = {}
+        if fragments_dir.is_dir():
+            # Sections we accept as fragment-overridable. Fiscal sections
+            # (printers/pinpads/scales/displays/readers) are intentionally
+            # listed too so the fragment pattern works uniformly, but the
+            # `push_config` handler only allows Odoo to rewrite the AC
+            # ones — fiscal stays under customer-IT manual control.
+            FRAGMENT_SECTIONS = (
+                "cameras", "access", "biometric", "mqtt",
+                "printers", "pinpads", "scales",
+                "displays", "readers",
+            )
+            for frag in sorted(fragments_dir.glob("*.yaml")):
+                try:
+                    frag_text = frag.read_text(encoding="utf-8")
+                    frag_data = yaml.safe_load(frag_text) or {}
+                except (OSError, yaml.YAMLError):
+                    # Skip unreadable / malformed fragments rather than
+                    # crash the whole proxy startup. Logging happens at
+                    # the caller layer.
+                    continue
+                for section in FRAGMENT_SECTIONS:
+                    if section in frag_data:
+                        base[section] = frag_data[section]
+                        fragment_map[section] = str(frag)
+        cfg = _yaml_to_app_config(base)
+        # Attach a non-dataclass attribute so callers can locate where
+        # each section came from (for round-trip atomic writes on
+        # push_config). Set via __setattr__ to dodge dataclass freeze.
+        object.__setattr__(cfg, "_fragment_map", fragment_map)
+        object.__setattr__(cfg, "_base_path", str(p))
+        return cfg
     if p.suffix.lower() == ".json":
         return _erpnet_json_to_app_config(json.loads(text))
     raise ValueError(

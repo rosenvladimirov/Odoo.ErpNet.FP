@@ -202,8 +202,13 @@ class HeartbeatResult:
     BANNED = "banned"        # 403 — proxy archived, give up
 
 
-async def _execute_command(cmd: dict) -> tuple[bool, dict | None, str]:
+async def _execute_command(cmd: dict, app=None) -> tuple[bool, dict | None, str]:
     """Run a queued command locally on this proxy.
+
+    `app` is the FastAPI app instance — needed by the `push_config`
+    handler to mutate `app.state.<registry>` for online reload
+    (per-hardware restart). Default None for backward-compat in tests;
+    push_config raises if app is missing.
 
     Returns (ok, result_dict, error_string). All commands are short
     HTTP calls against our own /admin/* or /printers/* endpoints,
@@ -264,6 +269,93 @@ async def _execute_command(cmd: dict) -> tuple[bool, dict | None, str]:
                     f"{base}/access/{aid}/open",
                     headers=headers, json=body,
                 )
+            elif kind == "push_config":
+                # Split-fragment design (2026-05-21 restructure):
+                # config.yaml = base (server/registry/iot_setup) +
+                # config.d/<section>.yaml fragments per hardware kind.
+                # `push_config` accepts ONLY AC kinds (cameras/access/
+                # biometric/mqtt) — fiscal sections stay under
+                # customer-IT manual control to keep the POS path
+                # untouchable.
+                #
+                # New payload shape:
+                #   {"kind": "cameras"|"access"|"biometric"|"mqtt",
+                #    "section": [...]/dict-of-mqtt,
+                #    "version_hint": "sha256:..."  # optional}
+                #
+                # Legacy shape (per-device validate+echo) still
+                # accepted for `kind in {camera,access}` with an `id`
+                # so older Odoo callers don't break.
+                section_kind = (payload.get("kind") or "").strip()
+                # ── Path 1: full-fragment push (split-config mode) ──
+                from .service import (
+                    PUSH_CONFIG_AC_KINDS,
+                    _write_fragment_atomic,
+                    hot_reload_ac_fragment,
+                )
+                if section_kind in PUSH_CONFIG_AC_KINDS and "section" in payload:
+                    section_payload = payload["section"]
+                    if app is None:
+                        return False, None, (
+                            "push_config split-fragment requires the "
+                            "FastAPI app instance (caller must pass app=...)")
+                    try:
+                        from pathlib import Path as _Path
+                        base_path = getattr(app.state.config, "_base_path",
+                                            "config.yaml")
+                        fragments_dir = _Path(base_path).parent / "config.d"
+                        fragment_path = fragments_dir / f"{section_kind}.yaml"
+                        version = _write_fragment_atomic(
+                            fragment_path, section_kind, section_payload)
+                        # Per-hardware online reload — fiscal stack
+                        # NOT touched.
+                        await hot_reload_ac_fragment(app, section_kind)
+                        return True, {
+                            "applied": True,
+                            "kind": section_kind,
+                            "fragment": str(fragment_path),
+                            "runtime_config_version": f"sha256:{version}",
+                        }, ""
+                    except Exception as exc:  # noqa: BLE001
+                        return False, None, (
+                            f"push_config({section_kind}) failed: "
+                            f"{type(exc).__name__}: {exc}")
+
+                # ── Path 2: legacy per-device validate+echo ──
+                dkind = section_kind
+                did = (payload.get("id") or "").strip()
+                if not dkind or not did:
+                    return False, None, (
+                        "push_config requires payload {kind, section} "
+                        "for split-fragment mode, or {kind, id} for "
+                        "legacy per-device validate")
+                probe = {
+                    "camera": f"{base}/cameras/{did}",
+                    "access": f"{base}/access/{did}/status",
+                }.get(dkind)
+                if probe is None:
+                    return True, {
+                        "acknowledged": True, "device_kind": dkind,
+                        "device_id": did, "validated": False,
+                        "applied": False, "echo": payload,
+                    }, ""
+                r = await c.get(probe, headers=headers)
+                known = r.status_code < 400
+                try:
+                    state = r.json()
+                except ValueError:
+                    state = {"raw": r.text[:2000]}
+                return known, {
+                    "acknowledged": True, "device_kind": dkind,
+                    "device_id": did, "validated": True,
+                    "known": known, "applied": False,
+                    "note": ("legacy validate-only mode; use "
+                             "{kind,section} payload for actual "
+                             "config push"),
+                    "state": state if known else None,
+                    "echo": payload,
+                }, ("" if known
+                    else f"device not known: HTTP {r.status_code}")
             else:
                 return False, None, f"Unknown command kind: {kind!r}"
             ok = r.status_code < 400
@@ -309,6 +401,27 @@ async def _post_command_result(client: httpx.AsyncClient,
         _logger.warning("Command-result POST failed: %s", exc)
 
 
+def _runtime_config_versions(app) -> dict:
+    """SHA-256 hex of each AC fragment file (cameras/access/biometric/
+    mqtt) as last loaded.  Empty dict when no fragments are present.
+
+    Sent in the heartbeat body so the Fleet control plane / Odoo can
+    detect out-of-sync push_config state without re-fetching the
+    fragment file contents.
+    """
+    import hashlib
+    from pathlib import Path
+    out: dict[str, str] = {}
+    fmap = getattr(app.state.config, "_fragment_map", {}) or {}
+    for section, path in fmap.items():
+        try:
+            data = Path(path).read_bytes()
+        except OSError:
+            continue
+        out[section] = f"sha256:{hashlib.sha256(data).hexdigest()}"
+    return out
+
+
 async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
                      app, name: str, host: str, version: str,
                      public_url: str) -> tuple[str, list[dict]]:
@@ -319,6 +432,7 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         "admin_token": _admin_token_value(),
         "public_url": public_url,
         "devices": _device_summary(app),
+        "runtime_config_versions": _runtime_config_versions(app),
     }
     raw = json.dumps(body, separators=(",", ":"),
                      sort_keys=True).encode("utf-8")
@@ -471,7 +585,9 @@ async def fleet_loop(app, config_path: Path) -> None:
                 _logger.info("Executing queued command: id=%s kind=%r",
                              cid, cmd.get("kind"))
                 try:
-                    ok, payload, err = await _execute_command(cmd)
+                    # Pass `app` so push_config can mutate app.state.*
+                    # for per-hardware online reload.
+                    ok, payload, err = await _execute_command(cmd, app=app)
                 except Exception as exc:  # noqa: BLE001
                     ok, payload, err = False, None, f"{type(exc).__name__}: {exc}"
                 if cid:

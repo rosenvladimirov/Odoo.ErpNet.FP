@@ -30,6 +30,7 @@ from .service import (
     BiometricRegistry,
     CameraRegistry,
     DisplayRegistry,
+    MqttIngestRegistry,
     PinpadRegistry,
     PrinterRegistry,
     ReaderRegistry,
@@ -101,6 +102,13 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         await camera_registry.start_all()
         await access_registry.start_all()
         await biometric_registry.start_all()
+        # MQTT subscribers — multi-broker fan-out into the per-camera
+        # CameraEventBus (R5). No-op when `mqtt:` is absent or empty in
+        # config.yaml. `bind()` must run AFTER camera_registry is
+        # constructed so each subscriber can resolve cameraId →
+        # CameraEventBus.
+        mqtt_ingest_registry.bind(camera_registry)
+        mqtt_ingest_registry.start_all()
         # Fleet registry — pair once if needed, then heartbeat in
         # background. No-op when server.registry.enabled is false.
         from .registry import fleet_loop
@@ -138,6 +146,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                         await t
                     except (asyncio.CancelledError, Exception):
                         pass
+            mqtt_ingest_registry.stop_all()
             await reader_registry.stop_all()
             await display_registry.stop_all()
             await camera_registry.stop_all()
@@ -164,6 +173,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     camera_registry = CameraRegistry.from_config(config)
     access_registry = AccessRegistry.from_config(config)
     biometric_registry = BiometricRegistry.from_config(config)
+    mqtt_ingest_registry = MqttIngestRegistry.from_config(config)
     app.state.registry = registry
     app.state.pinpad_registry = pinpad_registry
     app.state.scale_registry = scale_registry
@@ -172,6 +182,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.camera_registry = camera_registry
     app.state.access_registry = access_registry
     app.state.biometric_registry = biometric_registry
+    app.state.mqtt_ingest_registry = mqtt_ingest_registry
     app.state.config = config
 
     from . import metrics
@@ -235,6 +246,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.access import router as access_router
     from .routes.biometric import router as biometric_router
     from .routes.polimex_events import router as polimex_events_router
+    from .routes.mqtt import router as mqtt_router
     app.include_router(printers_router)
     app.include_router(pinpads_router)
     app.include_router(scales_router)
@@ -244,6 +256,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(access_router)
     app.include_router(biometric_router)
     app.include_router(polimex_events_router)
+    app.include_router(mqtt_router)
     app.include_router(admin_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
@@ -305,6 +318,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "cameras": list(camera_registry.cameras.keys()),
             "access": list(access_registry.access.keys()),
             "biometric": list(biometric_registry.biometric.keys()),
+            "mqtt": list(mqtt_ingest_registry.specs.keys()),
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the

@@ -40,6 +40,7 @@ from ..config.loader import (
     BiometricConfig,
     CameraConfig,
     DisplayConfig,
+    MqttIngestConfig,
     PinpadConfig,
     PrinterConfig,
     ReaderConfig,
@@ -1179,3 +1180,363 @@ class BiometricRegistry:
                 v.connect()
                 entry.verifier = v
             yield entry.verifier
+
+
+# ─── MQTT Ingest (multi-broker fan-out, R5) ──────────────────────────
+
+
+class MqttIngestRegistry:
+    """Multi-broker MQTT subscriber registry.
+
+    One MqttCameraIngest instance per `MqttBrokerSpec`, keyed by
+    `spec.name`. Each broker runs its OWN paho-mqtt connection +
+    subscriber thread; they don't share state, so a flaky broker can't
+    take down the others.
+
+    Lifecycle parity with CameraRegistry / AccessRegistry:
+      `from_config` / `start_all` / `stop_all` / `status`.
+
+    Multi-broker hot-reload (`reload_from_config(new_cfg)`) does a
+    granular diff: brokers removed in the new config get stopped,
+    new ones get started, and brokers whose spec changed get
+    restarted in-place. Untouched brokers keep running — this is the
+    "form button push-ва САМО този broker" semantic R5 promises.
+
+    When `mqtt_brokers` is empty (default), every method is a no-op
+    and paho-mqtt is never imported.
+    """
+
+    def __init__(self):
+        # spec.name → MqttBrokerSpec (last config we built from)
+        self.specs: dict[str, "MqttBrokerSpec"] = {}
+        # spec.name → MqttCameraIngest (lazy; only enabled brokers
+        # ever get an instance)
+        self.ingests: dict[str, object] = {}
+        self._camera_registry: Optional["CameraRegistry"] = None
+
+    @classmethod
+    def from_config(cls, config: AppConfig) -> "MqttIngestRegistry":
+        r = cls()
+        for spec in getattr(config, "mqtt_brokers", []) or []:
+            r.specs[spec.name] = spec
+        return r
+
+    # Back-compat shim for code that still expects `.config`/`.ingest`
+    # (`hot_reload_ac_fragment("cameras")` updates `mqtt_reg.ingest.
+    # camera_registry`). Returns the first enabled instance, or None.
+    @property
+    def ingest(self):
+        for name, spec in self.specs.items():
+            if spec.enabled and name in self.ingests:
+                return self.ingests[name]
+        return None
+
+    def bind(self, camera_registry: "CameraRegistry") -> None:
+        """Inject the CameraRegistry so subscribers can resolve
+        camera ids → CameraEventBus. Propagates to already-built
+        ingest instances too — used by hot_reload_ac_fragment("cameras")
+        to swap the registry without restarting brokers.
+        """
+        self._camera_registry = camera_registry
+        for ingest in self.ingests.values():
+            ingest.camera_registry = camera_registry
+
+    def start_all(self) -> None:
+        if self._camera_registry is None:
+            if any(s.enabled for s in self.specs.values()):
+                _logger.warning(
+                    "MqttIngestRegistry.start_all called without bind() — "
+                    "skipping; camera_registry is required")
+            return
+        # Lazy import — only paid if we actually have an enabled broker.
+        from ..drivers.cameras.mqtt_listener import MqttCameraIngest
+        for name, spec in self.specs.items():
+            if not spec.enabled:
+                continue
+            if name not in self.ingests:
+                self.ingests[name] = MqttCameraIngest(spec, self._camera_registry)
+            self.ingests[name].start()
+
+    def stop_all(self) -> None:
+        for ingest in list(self.ingests.values()):
+            try:
+                ingest.stop()
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("MQTT ingest[%s] stop failed: %s",
+                                getattr(ingest, "name", "?"), exc)
+        self.ingests.clear()
+
+    # ─── Runtime per-broker toggle (landing UI helpers) ─────────
+    # NB: these do NOT touch config.d/mqtt.yaml. The toggle is purely
+    # in-process — at the next sync from Odoo (or proxy restart) the
+    # broker reverts to whatever `enabled:` says in the YAML. This is
+    # intentional: Odoo stays the source of truth; the landing button
+    # is a debug convenience, not a config edit.
+
+    def start_one(self, name: str) -> bool:
+        """Start one named broker. Returns True if newly started."""
+        spec = self.specs.get(name)
+        if spec is None:
+            return False
+        if self._camera_registry is None:
+            _logger.warning(
+                "start_one(%s) before bind() — camera_registry required", name)
+            return False
+        from ..drivers.cameras.mqtt_listener import MqttCameraIngest
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            ingest = MqttCameraIngest(spec, self._camera_registry)
+            self.ingests[name] = ingest
+        return bool(ingest.start())
+
+    def stop_one(self, name: str) -> bool:
+        """Stop one named broker but keep its spec — the operator can
+        Start it again from the same UI button. Returns True if it
+        was running and is now stopped.
+        """
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            return False
+        result = bool(ingest.stop())
+        # Drop the instance so the next start_one() rebuilds it
+        # cleanly with current spec (covers the rare edge case where
+        # the spec mutated since the original construction).
+        self.ingests.pop(name, None)
+        return result
+
+    def status(self) -> dict:
+        """Multi-broker status — one entry per known broker.
+
+        Top-level shape:
+            {"brokers": [<per-broker status>, ...],
+             "enabled_count": N, "running_count": M}
+        """
+        brokers: list[dict] = []
+        running = 0
+        enabled = 0
+        for name, spec in self.specs.items():
+            if spec.enabled:
+                enabled += 1
+            ingest = self.ingests.get(name)
+            if ingest is not None:
+                s = ingest.status()
+                brokers.append(s)
+                if s.get("running"):
+                    running += 1
+            else:
+                brokers.append({
+                    "name": name,
+                    "enabled": spec.enabled,
+                    "running": False,
+                    "connected": False,
+                    "host": spec.host,
+                    "port": spec.port,
+                    "topics": list(spec.topics),
+                })
+        return {
+            "brokers": brokers,
+            "enabled_count": enabled,
+            "running_count": running,
+        }
+
+    # ─── Granular hot-reload (R5) ───────────────────────────────
+
+    def reload_from_config(self, new_config: AppConfig) -> dict:
+        """Diff old vs new brokers; restart only what changed.
+
+        Returns a dict with `added/removed/restarted/unchanged` lists
+        (broker names) — useful for the push_config response payload
+        so Odoo / the operator can see exactly what happened.
+        """
+        # Lazy import — only if we have at least one broker to start.
+        new_specs = {s.name: s for s in (getattr(new_config, "mqtt_brokers", []) or [])}
+        old_specs = dict(self.specs)
+
+        added: list[str] = []
+        removed: list[str] = []
+        restarted: list[str] = []
+        unchanged: list[str] = []
+
+        # 1. Stop & drop brokers that no longer exist OR became disabled.
+        for name, old in old_specs.items():
+            new = new_specs.get(name)
+            if new is None:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                removed.append(name)
+            elif old.enabled and not new.enabled:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                restarted.append(name)  # treat enable→disable as a restart event
+
+        # 2. For brokers present in BOTH, check whether the spec changed.
+        for name, new in new_specs.items():
+            old = old_specs.get(name)
+            if old is None or (old.enabled and not new.enabled):
+                continue  # handled below / above
+            if _broker_spec_dirty(old, new):
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if new.enabled:
+                    from ..drivers.cameras.mqtt_listener import MqttCameraIngest
+                    fresh = MqttCameraIngest(new, self._camera_registry)
+                    fresh.start()
+                    self.ingests[name] = fresh
+                restarted.append(name)
+            else:
+                unchanged.append(name)
+
+        # 3. Brand-new brokers — instantiate & start if enabled.
+        for name, new in new_specs.items():
+            if name in old_specs:
+                continue
+            if new.enabled and self._camera_registry is not None:
+                from ..drivers.cameras.mqtt_listener import MqttCameraIngest
+                fresh = MqttCameraIngest(new, self._camera_registry)
+                fresh.start()
+                self.ingests[name] = fresh
+            added.append(name)
+
+        # 4. Sync stored specs to the new config.
+        self.specs = new_specs
+
+        return {
+            "added": added,
+            "removed": removed,
+            "restarted": restarted,
+            "unchanged": unchanged,
+        }
+
+
+def _broker_spec_dirty(old: "MqttBrokerSpec", new: "MqttBrokerSpec") -> bool:
+    """True iff old/new differ on any field that demands a reconnect.
+
+    `name` is the registry key so it can never differ here. `debug`
+    and `max_log_payload` are runtime-only and don't justify a
+    reconnect, but we restart on them anyway for simplicity — the
+    rare flip is cheap and avoids surprise behaviour.
+    """
+    keys = ("enabled", "host", "port", "tls", "user", "password",
+            "qos", "keepalive", "reconnect_attempts", "reconnect_delay",
+            "debug", "max_log_payload")
+    if tuple(old.topics) != tuple(new.topics):
+        return True
+    return any(getattr(old, k) != getattr(new, k) for k in keys)
+
+
+# ─── Per-hardware online reload (push_config target) ────────────────
+
+
+# Whitelist of AC sections the Fleet push_config command is allowed to
+# rewrite. Fiscal sections (printers/pinpads/scales/displays/readers)
+# stay under customer-IT manual control — never rewritten from Odoo.
+PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt")
+
+
+def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) -> str:
+    """Atomically write a single AC section fragment.
+
+    payload format is uniformly `list[dict]` (one entry per device or
+    broker) for all four AC kinds:
+      cameras / access / biometric / mqtt → list[dict]
+
+    The loader also accepts a legacy single-broker `mqtt:` dict for
+    backwards compat, but Odoo always writes the list form.
+
+    Returns SHA-256 hex of the file bytes (used as runtime_config_version
+    so Odoo can detect in-sync / out-of-sync per record).
+    """
+    import hashlib
+    import os
+    import tempfile
+    import yaml
+
+    fragment_path.parent.mkdir(parents=True, exist_ok=True)
+    body = yaml.safe_dump({section: payload}, sort_keys=False, allow_unicode=True)
+    # Atomic write: tmp in same dir → fsync → rename
+    with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=str(fragment_path.parent),
+            prefix=f".{fragment_path.name}.",
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8") as tf:
+        tf.write(body)
+        tf.flush()
+        os.fsync(tf.fileno())
+        tmp_path = tf.name
+    os.rename(tmp_path, str(fragment_path))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+async def hot_reload_ac_fragment(app, kind: str) -> dict:
+    """Re-read config + restart ONLY the registry owning `kind`.
+
+    Fiscal/POS stack (printers/pinpads/scales/displays/readers/server/
+    registry/iot_setup) is NEVER touched — even though we re-load the
+    whole AppConfig from disk, only the AC registries get stop_all/
+    from_config/start_all'd.
+
+    Used by the `push_config` Fleet command after a fragment file has
+    been rewritten on disk.
+    """
+    from ..config.loader import load_config
+
+    if kind not in PUSH_CONFIG_AC_KINDS:
+        raise ValueError(
+            f"hot_reload_ac_fragment: unsupported kind {kind!r} "
+            f"(allowed: {PUSH_CONFIG_AC_KINDS})")
+
+    base_path = getattr(app.state.config, "_base_path", None) or "config.yaml"
+    new_cfg = load_config(base_path)
+    # Preserve _fragment_map / _base_path on the new object (load_config
+    # already sets them, so just swap into app.state).
+    app.state.config = new_cfg
+
+    detail: dict = {}
+    if kind == "cameras":
+        await app.state.camera_registry.stop_all()
+        new = CameraRegistry.from_config(new_cfg)
+        app.state.camera_registry = new
+        # MQTT ingests hold a reference to the camera registry for
+        # resolving cameraId → bus. Propagate to ALL ingests
+        # (multi-broker) before camera start_all so any incoming
+        # message lands on the new bus.
+        mqtt_reg = getattr(app.state, "mqtt_ingest_registry", None)
+        if mqtt_reg is not None:
+            mqtt_reg.bind(new)
+        import asyncio
+        await new.start_all(loop=asyncio.get_running_loop())
+
+    elif kind == "access":
+        await app.state.access_registry.stop_all()
+        new = AccessRegistry.from_config(new_cfg)
+        app.state.access_registry = new
+        await new.start_all()
+
+    elif kind == "biometric":
+        await app.state.biometric_registry.stop_all()
+        new = BiometricRegistry.from_config(new_cfg)
+        app.state.biometric_registry = new
+        await new.start_all()
+
+    elif kind == "mqtt":
+        # Granular per-broker reload — untouched brokers keep running.
+        reg = app.state.mqtt_ingest_registry
+        # Make sure camera_registry is bound (no-op if it already is).
+        reg.bind(app.state.camera_registry)
+        detail = reg.reload_from_config(new_cfg)
+
+    return {"reloaded": kind, "ok": True, **({"detail": detail} if detail else {})}
