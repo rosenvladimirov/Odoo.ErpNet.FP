@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 
 _logger = logging.getLogger(__name__)
 router = APIRouter(tags=["polimex-events"])
@@ -140,7 +140,7 @@ async def polimex_event(request: Request):
     except Exception:  # noqa: BLE001
         # Невалиден JSON — пак отговаряме 200 (без resend buря); логваме.
         _logger.warning("Polimex event: unparseable body")
-        return {"status": "ok"}
+        return Response(content=b"", media_type="application/json", status_code=200)
 
     # Unwrap JSON-RPC envelope (sent when "RPC JSON format (Odoo)" toggle
     # is enabled in Polimex Web UI).
@@ -162,7 +162,7 @@ async def polimex_event(request: Request):
             "fw": fw,
             "seq": payload.get("heartbeat"),
         }, device=src_label)
-        return {"status": "ok"}
+        return Response(content=b"", media_type="application/json", status_code=200)
 
     # ─── Response (controller's answer to an embedded command) ───
     # Phase A: log + bus_inject only. Phase B will tie this to the
@@ -178,7 +178,7 @@ async def polimex_event(request: Request):
             "err": resp.get("e"),
             "data": resp.get("d"),
         }, device=f"polimex-{convertor}-ctrl{ctrl_id}" if ctrl_id else src_label)
-        return {"status": "ok"}
+        return Response(content=b"", media_type="application/json", status_code=200)
 
     # ─── Event (the canonical hot path) ─────────────────────────
     # Two side-effects: (1) the existing per-reader bus pattern below
@@ -210,7 +210,7 @@ async def polimex_event(request: Request):
             payload.get("convertor"), ev.get("id"), ev.get("reader"),
             card,
         )
-        return {"status": "ok"}  # 200 mandatory — never trigger resend
+        return Response(content=b"", media_type="application/json", status_code=200)  # 200 mandatory — never trigger resend
 
     from ...drivers.readers.common import BarcodeScan
     scan = BarcodeScan(reader_id=rid, barcode=card)
