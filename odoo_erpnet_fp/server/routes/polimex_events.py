@@ -174,21 +174,71 @@ _EVENT_KIND_BY_N = {
 }
 
 
+def _ack(is_jsonrpc: bool, jsonrpc_id, *, result: dict | None = None) -> Response:
+    """Return the controller-side ACK reply.
+
+    Polimex 10.3 legacy mode (no `jsonrpc` key in request): empty
+    body, 200. (Same as their own `hr_rfid/controllers/main.py:687`.)
+
+    Polimex 100.1+ JSON-RPC mode (request has `"jsonrpc":"2.0"`):
+    Polimex's own receiver ALWAYS wraps the reply in
+    `{jsonrpc:2.0, id, result}` — even for notification requests
+    (where top-level `id` is missing → we echo `null`). The result
+    body MUST contain `{"status": 200}` (or a `{"cmd": …}` next
+    command) — otherwise the iCON115 controller treats the push as
+    "not ACK'd", does NOT advance the `tos` event buffer pointer,
+    and re-sends the SAME cached event forever. See
+    [[feedback_polimex_icon115_push_log_stuck]].
+
+    `result` defaults to `{"status": 200}` for the JSON-RPC path
+    (Polimex's check_for_unsent_cmd-without-command shape), and `{}`
+    is rejected — Polimex specifically dispatches on presence of
+    `cmd` vs `status` keys.
+    """
+    if not is_jsonrpc:
+        return Response(content=b"", media_type="application/json",
+                        status_code=200)
+    import json as _json
+    body = _json.dumps({
+        "jsonrpc": "2.0",
+        "id": jsonrpc_id,  # may be None — that's the notification case
+        "result": result if result is not None else {"status": 200},
+    })
+    return Response(content=body.encode("utf-8"),
+                    media_type="application/json; charset=utf-8",
+                    status_code=200)
+
+
 @router.post("/polimex/event")
 @router.post("/hr/rfid/event", include_in_schema=False)  # legacy WebSDK path
 async def polimex_event(request: Request):
     reg = getattr(request.app.state, "reader_registry", None)
+    # Diagnostic: log the raw body bytes BEFORE any parsing so we see
+    # exactly what Polimex sends (firmware 1.66 changed payload shape;
+    # the legacy "event"/"heartbeat" top-level keys may have moved).
+    # Drop back to debug once the firmware-1.66 protocol is mapped.
+    raw_body = await request.body()
+    _logger.info("Polimex POST body (%d bytes): %s",
+                 len(raw_body), raw_body[:1500].decode("utf-8", "replace"))
     try:
-        payload = await request.json()
+        import json as _json_parse
+        payload = _json_parse.loads(raw_body or b"{}")
     except Exception:  # noqa: BLE001
         # Невалиден JSON — пак отговаряме 200 (без resend buря); логваме.
         _logger.warning("Polimex event: unparseable body")
         return Response(content=b"", media_type="application/json", status_code=200)
 
-    # Unwrap JSON-RPC envelope (sent when "RPC JSON format (Odoo)" toggle
-    # is enabled in Polimex Web UI).
+    # Detect JSON-RPC envelope (firmware 1.66+ sends ALL pushes as
+    # `webstack.notification` JSON-RPC; legacy 10.3 sends raw dict).
+    # Capture both the protocol flag AND the id (may be missing for
+    # notification requests — we echo `null` to match Polimex's own
+    # _make_response which never strips the id even when None).
+    is_jsonrpc = False
+    jsonrpc_id = None
     if isinstance(payload, dict) and "jsonrpc" in payload \
             and isinstance(payload.get("params"), dict):
+        is_jsonrpc = True
+        jsonrpc_id = payload.get("id")  # may be None for notifications
         payload = payload["params"]
 
     convertor = payload.get("convertor") if isinstance(payload, dict) else None
@@ -205,7 +255,7 @@ async def polimex_event(request: Request):
             "fw": fw,
             "seq": payload.get("heartbeat"),
         }, device=src_label)
-        return Response(content=b"", media_type="application/json", status_code=200)
+        return _ack(is_jsonrpc, jsonrpc_id)
 
     # ─── Response (controller's answer to an embedded command) ───
     # Phase A: log + bus_inject only. Phase B will tie this to the
@@ -221,7 +271,7 @@ async def polimex_event(request: Request):
             "err": resp.get("e"),
             "data": resp.get("d"),
         }, device=f"polimex-{convertor}-ctrl{ctrl_id}" if ctrl_id else src_label)
-        return Response(content=b"", media_type="application/json", status_code=200)
+        return _ack(is_jsonrpc, jsonrpc_id)
 
     # ─── Event (the canonical hot path) ─────────────────────────
     # Two side-effects: (1) the existing per-reader bus pattern below
@@ -231,6 +281,15 @@ async def polimex_event(request: Request):
     if isinstance(ev, dict):
         ctrl_id = ev.get("id")
         event_n = ev.get("event_n")
+        # Diagnostic: log EVERY event payload (dup or not) so we can see
+        # whether the Polimex storm carries the same time/date forever or
+        # whether new physical swipes update the buffer. Drop this back to
+        # debug once the buffer-update behaviour is confirmed.
+        _logger.info(
+            "Polimex event RAW: ctrl=%s n=%s card=%s reader=%s "
+            "time=%s/%s dt=%s err=%s",
+            ctrl_id, event_n, ev.get("card"), ev.get("reader"),
+            ev.get("date"), ev.get("time"), ev.get("dt"), ev.get("err"))
         # Dedup the Polimex 10.3 "repeating Last Event" bug — see notes
         # at _is_duplicate_event for context. Duplicates answer 200
         # immediately, without emit or downstream processing.
@@ -239,8 +298,7 @@ async def polimex_event(request: Request):
                 "Polimex dup-event swallowed: ctrl=%s n=%s card=%s "
                 "time=%s/%s", ctrl_id, event_n, ev.get("card"),
                 ev.get("date"), ev.get("time"))
-            return Response(content=b"", media_type="application/json",
-                            status_code=200)
+            return _ack(is_jsonrpc, jsonrpc_id)
         kind = _EVENT_KIND_BY_N.get(event_n, "controller.event")
         _polimex_bus_emit(request, kind, {
             "convertor": convertor,
@@ -263,10 +321,10 @@ async def polimex_event(request: Request):
             payload.get("convertor"), ev.get("id"), ev.get("reader"),
             card,
         )
-        return Response(content=b"", media_type="application/json", status_code=200)  # 200 mandatory — never trigger resend
+        return _ack(is_jsonrpc, jsonrpc_id)  # 200 mandatory — never trigger resend
 
     from ...drivers.readers.common import BarcodeScan
     scan = BarcodeScan(reader_id=rid, barcode=card)
     reg.get(rid).bus.publish_threadsafe(scan)
     _logger.info("Polimex card %s → reader %r bus", card, rid)
-    return {"status": "ok", "reader": rid}
+    return _ack(is_jsonrpc, jsonrpc_id, result={"status": "ok", "reader": rid})
