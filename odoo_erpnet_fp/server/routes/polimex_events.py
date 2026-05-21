@@ -92,6 +92,47 @@ def resolve_reader(reader_registry, payload: dict):
 
 @router.post("/polimex/event")
 @router.post("/hr/rfid/event", include_in_schema=False)  # legacy WebSDK path
+def _polimex_bus_emit(request: Request, event_type: str, data: dict,
+                      device: str = "") -> None:
+    """Best-effort live signal toward Odoo's bus_inject. Never raises —
+    Polimex's HTTP retry window is short (≈3-5 s) and we must answer 200
+    fast even if the Fleet receiver is briefly unreachable."""
+    try:
+        from ...clients.bus_inject import BusInjectClient
+        client = BusInjectClient.from_app(request.app)
+        if client is None:
+            return
+        client.emit(event_type, device=device,
+                    device_kind="controller", data=data)
+        client.close()
+    except Exception as exc:  # noqa: BLE001
+        _logger.debug("polimex bus_emit suppressed: %s", exc)
+
+
+# Polimex event_n → our canonical bus_inject event type. Codes from
+# github.com/polimex/polimex-rfid hr_rfid_event_system.py. Codes we
+# don't map here fall through to the generic `controller.event`.
+_EVENT_KIND_BY_N = {
+    1:  "controller.event",      # DuressOK
+    2:  "controller.event",      # DuressError
+    3:  "card.read",             # R1 Card OK
+    4:  "door.denied",           # R1 Card Error
+    5:  "door.denied",           # R1 T/S Error
+    6:  "door.denied",           # R1 APB Error
+    7:  "card.read",             # R2 Card OK
+    8:  "door.denied",           # R2 Card Error
+    11: "card.read",             # R3 Card OK
+    12: "door.denied",           # R3 Card Error
+    15: "card.read",             # R4 Card OK
+    16: "door.denied",           # R4 Card Error
+    21: "button.pressed",        # Exit button
+    25: "door.sensor",           # Door overtime
+    26: "door.sensor",           # Forced door open
+    30: "controller.heartbeat",  # Power on
+    31: "door.opened",           # Open Door From PC
+}
+
+
 async def polimex_event(request: Request):
     reg = getattr(request.app.state, "reader_registry", None)
     try:
@@ -100,6 +141,65 @@ async def polimex_event(request: Request):
         # Невалиден JSON — пак отговаряме 200 (без resend buря); логваме.
         _logger.warning("Polimex event: unparseable body")
         return {"status": "ok"}
+
+    # Unwrap JSON-RPC envelope (sent when "RPC JSON format (Odoo)" toggle
+    # is enabled in Polimex Web UI).
+    if isinstance(payload, dict) and "jsonrpc" in payload \
+            and isinstance(payload.get("params"), dict):
+        payload = payload["params"]
+
+    convertor = payload.get("convertor") if isinstance(payload, dict) else None
+    src_label = f"polimex-{convertor}" if convertor else "polimex"
+
+    # ─── Heartbeat ──────────────────────────────────────────────
+    # Keep-alive ping. Polimex sends one every `HeartBeat Time` seconds
+    # (60s default). Useful to track controller liveness on the Odoo
+    # Fleet form.
+    if isinstance(payload, dict) and "heartbeat" in payload:
+        fw = payload.get("FW") or payload.get("fw") or ""
+        _polimex_bus_emit(request, "controller.heartbeat", {
+            "convertor": convertor,
+            "fw": fw,
+            "seq": payload.get("heartbeat"),
+        }, device=src_label)
+        return {"status": "ok"}
+
+    # ─── Response (controller's answer to an embedded command) ───
+    # Phase A: log + bus_inject only. Phase B will tie this to the
+    # inverted-RPC command queue (Wait → Process → here) so Odoo can
+    # parse F0 responses and auto-create controller records.
+    if isinstance(payload, dict) and "response" in payload:
+        resp = payload.get("response") or {}
+        ctrl_id = resp.get("id")
+        _polimex_bus_emit(request, "controller.response", {
+            "convertor": convertor,
+            "ctrl_id": ctrl_id,
+            "cmd": resp.get("c"),
+            "err": resp.get("e"),
+            "data": resp.get("d"),
+        }, device=f"polimex-{convertor}-ctrl{ctrl_id}" if ctrl_id else src_label)
+        return {"status": "ok"}
+
+    # ─── Event (the canonical hot path) ─────────────────────────
+    # Two side-effects: (1) the existing per-reader bus pattern below
+    # for cards mapped to external readers; (2) a bus_inject envelope
+    # so Odoo's dashboards/toasts see EVERY event, not only mapped ones.
+    ev = payload.get("event") if isinstance(payload, dict) else None
+    if isinstance(ev, dict):
+        ctrl_id = ev.get("id")
+        event_n = ev.get("event_n")
+        kind = _EVENT_KIND_BY_N.get(event_n, "controller.event")
+        _polimex_bus_emit(request, kind, {
+            "convertor": convertor,
+            "ctrl_id": ctrl_id,
+            "event_n": event_n,
+            "card": ev.get("card"),
+            "reader": ev.get("reader"),
+            "time": ev.get("time"),
+            "date": ev.get("date"),
+            "dt": ev.get("dt"),
+            "err": ev.get("err"),
+        }, device=f"polimex-{convertor}-ctrl{ctrl_id}" if ctrl_id else src_label)
 
     rid, card = resolve_reader(reg, payload)
     if rid is None:
