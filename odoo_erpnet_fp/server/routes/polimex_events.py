@@ -90,8 +90,6 @@ def resolve_reader(reader_registry, payload: dict):
     return None, card
 
 
-@router.post("/polimex/event")
-@router.post("/hr/rfid/event", include_in_schema=False)  # legacy WebSDK path
 def _polimex_bus_emit(request: Request, event_type: str, data: dict,
                       device: str = "") -> None:
     """Best-effort live signal toward Odoo's bus_inject. Never raises —
@@ -133,6 +131,8 @@ _EVENT_KIND_BY_N = {
 }
 
 
+@router.post("/polimex/event")
+@router.post("/hr/rfid/event", include_in_schema=False)  # legacy WebSDK path
 async def polimex_event(request: Request):
     reg = getattr(request.app.state, "reader_registry", None)
     try:
