@@ -34,12 +34,55 @@ unmatched event (logged, not errored).
 from __future__ import annotations
 
 import logging
+import time as _time
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request, Response
 
 _logger = logging.getLogger(__name__)
 router = APIRouter(tags=["polimex-events"])
+
+# ── Event deduplication ──────────────────────────────────────────────
+# Polimex 10.3 firmware on the iCON115 connector has been observed to
+# repeatedly POST the SAME "Last Event" every ~15 s (the controller's
+# event buffer is never cleared until a NEW card swipe overwrites it).
+# `data.time/date/event_n/card` stay byte-identical across the storm.
+#
+# We dedupe at the receiver: each (ctrl_id, event_n, card, time, date)
+# tuple is remembered for a short TTL. Repeats within the TTL emit
+# NOTHING (no bus_inject, no per-reader publish) and just answer 200.
+#
+# TTL is generous (5 minutes) so even slow human swipes (re-presenting
+# the same card after a few seconds) DO emit again — only the 15-s
+# storm gets swallowed. The cache is small and bounded by ctrl_id
+# count, so a process-local dict is enough.
+_DEDUP_TTL_SEC = 300
+_DEDUP_SEEN: dict[tuple, float] = {}
+
+
+def _is_duplicate_event(ev: dict, ctrl_id: Optional[int]) -> bool:
+    """Return True if `ev` is byte-identical to a recent event from the
+    same controller (within `_DEDUP_TTL_SEC`). Side-effect: stamps the
+    current event into the cache so subsequent duplicates are caught."""
+    if not isinstance(ev, dict):
+        return False
+    key = (
+        ctrl_id,
+        ev.get("event_n"),
+        ev.get("card"),
+        ev.get("time"),
+        ev.get("date"),
+    )
+    now = _time.monotonic()
+    prev = _DEDUP_SEEN.get(key)
+    _DEDUP_SEEN[key] = now
+    # Light-touch GC — prune any entry older than 2*TTL while we're here.
+    if len(_DEDUP_SEEN) > 64:
+        cutoff = now - 2 * _DEDUP_TTL_SEC
+        for k, t in list(_DEDUP_SEEN.items()):
+            if t < cutoff:
+                _DEDUP_SEEN.pop(k, None)
+    return prev is not None and (now - prev) < _DEDUP_TTL_SEC
 
 
 def _to_int(v: Any) -> Optional[int]:
@@ -188,6 +231,16 @@ async def polimex_event(request: Request):
     if isinstance(ev, dict):
         ctrl_id = ev.get("id")
         event_n = ev.get("event_n")
+        # Dedup the Polimex 10.3 "repeating Last Event" bug — see notes
+        # at _is_duplicate_event for context. Duplicates answer 200
+        # immediately, without emit or downstream processing.
+        if _is_duplicate_event(ev, ctrl_id):
+            _logger.debug(
+                "Polimex dup-event swallowed: ctrl=%s n=%s card=%s "
+                "time=%s/%s", ctrl_id, event_n, ev.get("card"),
+                ev.get("date"), ev.get("time"))
+            return Response(content=b"", media_type="application/json",
+                            status_code=200)
         kind = _EVENT_KIND_BY_N.get(event_n, "controller.event")
         _polimex_bus_emit(request, kind, {
             "convertor": convertor,
