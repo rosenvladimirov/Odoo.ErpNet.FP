@@ -411,6 +411,10 @@ def _runtime_config_versions(app) -> dict:
     """
     import hashlib
     from pathlib import Path
+    try:
+        import yaml as _yaml
+    except ImportError:
+        _yaml = None
     out: dict[str, str] = {}
     fmap = getattr(app.state.config, "_fragment_map", {}) or {}
     for section, path in fmap.items():
@@ -418,7 +422,24 @@ def _runtime_config_versions(app) -> dict:
             data = Path(path).read_bytes()
         except OSError:
             continue
-        out[section] = f"sha256:{hashlib.sha256(data).hexdigest()}"
+        # Hash the JSON-canonical form of the SECTION value (not the
+        # raw file bytes) — same scheme Odoo uses for last_pushed_version,
+        # so the two SHA-256s match when in sync. YAML whitespace /
+        # comment changes thus don't appear as drift.
+        canon: bytes | None = None
+        if _yaml is not None:
+            try:
+                parsed = _yaml.safe_load(data) or {}
+                if isinstance(parsed, dict) and section in parsed:
+                    canon = json.dumps(parsed[section], sort_keys=True,
+                                       separators=(",", ":")).encode("utf-8")
+            except _yaml.YAMLError:
+                canon = None
+        if canon is None:
+            # Fallback to raw bytes if PyYAML missing or file unparseable —
+            # better than nothing; Odoo will see drift but proxy stays alive.
+            canon = data
+        out[section] = f"sha256:{hashlib.sha256(canon).hexdigest()}"
     return out
 
 

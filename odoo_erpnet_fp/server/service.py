@@ -1459,6 +1459,7 @@ def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) ->
     so Odoo can detect in-sync / out-of-sync per record).
     """
     import hashlib
+    import json as _json
     import os
     import tempfile
     import yaml
@@ -1478,7 +1479,14 @@ def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) ->
         os.fsync(tf.fileno())
         tmp_path = tf.name
     os.rename(tmp_path, str(fragment_path))
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+    # Hash the JSON-canonical form of the SECTION payload — same format
+    # Odoo uses for `last_pushed_version`, so the two hashes match on a
+    # successful sync. Hashing the YAML bytes instead would give a
+    # different SHA than Odoo (yaml.safe_dump emits keys in
+    # insertion-order; Odoo dumps JSON with sort_keys=True).
+    canon = _json.dumps(payload, sort_keys=True,
+                        separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canon).hexdigest()
 
 
 async def hot_reload_ac_fragment(app, kind: str) -> dict:

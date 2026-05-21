@@ -132,19 +132,56 @@ class PolimexWebSdkActuator(AccessActuator):
             return self._relay_payload(self.output, self.mode)
         return self._door_payload(self.output, state, seconds)
 
+    # Transient error codes from the Polimex webstack — both indicate the
+    # bridge couldn't reach the controller this round (RS-485 collision,
+    # internal bookkeeping). Retry with backoff before giving up.
+    #   20 = "No Response from controller (WebSDK)"
+    #   24 = "Internal Error, Try Again (WebSDK)"
+    # Source: hr_rfid_command.py errors enum in github.com/polimex/polimex-rfid.
+    _RETRYABLE_ERRORS = (20, 24)
+
     def _send(self, state: int, seconds: int) -> dict:
+        """POST a DB frame, retrying on transient e=20/24 codes.
+
+        Raises RuntimeError with a meaningful message on any non-transient
+        error or after the retry budget is exhausted — the route handler
+        translates that into a 502 + door.denied bus_inject event.
+        """
+        import time
         self.connect()
         body = {"cmd": {"id": self.bus_id, "c": "DB",
                         "d": self._payload(state, seconds)}}
         base = f"http://{self.host}"
         if self.port and self.port != 80:
             base = f"http://{self.host}:{self.port}"
-        resp = self._cli.post(f"{base}/sdk/cmd.json", json=body)
-        resp.raise_for_status()
-        try:
-            return resp.json()
-        except Exception:  # noqa: BLE001
-            return {}
+        url = f"{base}/sdk/cmd.json"
+
+        last_err = "unknown"
+        for attempt in range(1, 4):  # 3 attempts total
+            resp = self._cli.post(url, json=body)
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except Exception:  # noqa: BLE001
+                data = {}
+            inner = (data or {}).get("response") or {}
+            err_code = inner.get("e")
+            if err_code in (0, None):
+                # Success or no error code reported — happy path.
+                return data
+            if err_code not in self._RETRYABLE_ERRORS:
+                # Non-transient — give up immediately. e=21 means we sent
+                # a malformed frame; e=14 unknown command; etc.
+                raise RuntimeError(
+                    f"Polimex error e={err_code} (non-transient) "
+                    f"on bus_id={self.bus_id}, c=DB")
+            last_err = f"e={err_code}"
+            if attempt < 3:
+                # Linear backoff: 0.4s, 1.0s.
+                time.sleep(0.4 * attempt + 0.0)
+        raise RuntimeError(
+            f"Polimex {last_err} after 3 retries on bus_id={self.bus_id}, "
+            f"c=DB — controller unreachable on the RS-485 bus")
 
     def open(self, pulse_seconds: Optional[float] = None) -> AccessResult:
         secs = self.default_pulse if pulse_seconds is None else pulse_seconds
