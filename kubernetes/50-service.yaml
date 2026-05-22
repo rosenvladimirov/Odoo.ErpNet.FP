@@ -1,0 +1,53 @@
+# Two services — same pod, two surfaces:
+#
+#   erpnet-fp      ClusterIP     — for Ingress routing (Cloudflare → Traefik)
+#                                  Port :80 → container :8001 over plain HTTP.
+#                                  TLS termination is upstream.
+#
+#   erpnet-fp-lan  LoadBalancer  — for LAN devices that talk plain HTTP
+#                                  to the proxy (Polimex iCON Web Module
+#                                  in HTTP-push mode). k3s svclb exposes
+#                                  port 80 on every node IP within the
+#                                  LAN; the Polimex points at the
+#                                  load-balancer IP, not at one specific
+#                                  pod.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: erpnet-fp
+  namespace: erpnet-fp-mec
+  labels:
+    app: erpnet-fp
+spec:
+  type: ClusterIP
+  selector:
+    app: erpnet-fp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8001
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: erpnet-fp-lan
+  namespace: erpnet-fp-mec
+  labels:
+    app: erpnet-fp
+  annotations:
+    # k3s svclb-traefik picks up LoadBalancer services automatically.
+    # Optional: pin to a specific IP from the LAN-routable pool by
+    # adding `loadBalancerIP: 192.168.3.x` here.
+    com.blconsulting.purpose: "LAN HTTP for Polimex push"
+spec:
+  type: LoadBalancer
+  selector:
+    app: erpnet-fp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8001
+      protocol: TCP
+  externalTrafficPolicy: Cluster

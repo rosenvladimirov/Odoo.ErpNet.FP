@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: erpnet-fp-mec
+  labels:
+    com.blconsulting.stack: erpnet-fp
+    com.blconsulting.tenant: mec

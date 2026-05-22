@@ -1,0 +1,24 @@
+# External hostname — Cloudflare tunnel → Traefik (web entrypoint, HTTP)
+# → ClusterIP svc → pod. TLS is handled outside the cluster, so the
+# Ingress is plain HTTP (matches the `web` entrypoint pattern used by
+# every other service on this cluster — see odoo-mcp's `mcp-mec`).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: erpnet-fp
+  namespace: erpnet-fp-mec
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: fp-mec.odoo-shell.space
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: erpnet-fp
+                port:
+                  number: 80

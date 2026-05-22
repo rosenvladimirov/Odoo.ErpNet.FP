@@ -1,0 +1,36 @@
+# config.yaml mounted at /app/config/config.yaml (read-only).
+#
+# Driver-specific entries (cameras / access / mqtt / biometric) are
+# intentionally left empty — they're populated either by a push from
+# Odoo Fleet (config.d/*.yaml fragments) or via Polimex plugin's
+# Regenerate YAML action. The base file just declares server +
+# registry + iot_setup wiring.
+#
+# Changes here require a pod restart: `kubectl -n erpnet-fp-mec rollout
+# restart deploy/erpnet-fp` (Kubernetes does NOT auto-mount ConfigMap
+# updates atomically into the running container).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: erpnet-fp-config
+  namespace: erpnet-fp-mec
+data:
+  config.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8001
+      log_level: info
+      tls:
+        enabled: false             # Cloudflare + Traefik terminate TLS upstream
+      registry:
+        enabled: true
+        url: https://access-control.odoo-shell.space
+        name: erpnet-fp-mec
+        public_url: https://fp-mec.odoo-shell.space
+        interval_seconds: 60
+      iot_setup:
+        enabled: false
+
+    # AC fragments arrive via push_config — config.d/cameras.yaml etc.
+    # are written by the proxy's own routes/registry.py handler.
+    auto_detect: false

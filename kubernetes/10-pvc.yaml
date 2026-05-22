@@ -1,0 +1,23 @@
+# Persistent data — survives pod restarts (and image updates).
+#
+#   /app/data/admin_token       — auto-generated on first boot (or pre-seeded
+#                                 via env ERPNET_ADMIN_TOKEN; see secret)
+#   /app/data/registry_secret   — written after successful auto-enrol with
+#                                 the Fleet receiver
+#   /app/data/rescue_token      — operator-supplied master rescue token
+#                                 (NOT auto-generated; pre-seeded via env)
+#
+# 1Gi is overkill but local-path SC is allocated lazily and PVCs are
+# cheap; the headroom lets us drop a `config.d/` overlay set or a few
+# pull-camera snapshots without hitting limits.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: erpnet-fp-data
+  namespace: erpnet-fp-mec
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

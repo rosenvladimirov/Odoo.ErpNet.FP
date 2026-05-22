@@ -1,0 +1,114 @@
+# Hardware proxy deployment.
+#
+# strategy.type=Recreate — the proxy holds singleton state (admin token
+# bootstrap, MQTT subscriptions, polled long-poll subscribers). A
+# RollingUpdate would briefly run two replicas pointing at the same
+# /app/data PVC, which can race on the registry_secret file. Recreate
+# means one pod at a time.
+#
+# Resource budget is modest — the proxy itself is light; the heavy
+# lifting (LPR, go2rtc, MQTT broker) lives in sibling containers
+# elsewhere. 256Mi/500m is plenty.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: erpnet-fp
+  namespace: erpnet-fp-mec
+  labels:
+    app: erpnet-fp
+    com.blconsulting.stack: erpnet-fp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: erpnet-fp
+  template:
+    metadata:
+      labels:
+        app: erpnet-fp
+        com.blconsulting.stack: erpnet-fp
+    spec:
+      # Pin to a worker node (node1 OR node2) — keeps the proxy off
+      # srv03 (control plane) and `db` (DB-dedicated). Either worker
+      # is fine; if one drains, the other picks the pod up on its own
+      # PVC mount window (Recreate strategy ensures no overlap).
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - node1
+                      - node2
+      containers:
+        - name: proxy
+          image: vladimirovrosen/odoo-erpnet-fp:0.9.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config"
+            - "/app/config/config.yaml"
+          ports:
+            - containerPort: 8001
+              name: http
+              protocol: TCP
+          env:
+            # ERPNET_REGISTRY_SECRET_FILE / ERPNET_ADMIN_TOKEN_FILE /
+            # ERPNET_FP_RESCUE_TOKEN_FILE all default under /app/data,
+            # which is the mounted PVC — no override needed.
+            - name: ERPNET_SELF_CONTAINER
+              value: "erpnet-fp"
+          envFrom:
+            - secretRef:
+                name: erpnet-fp-tokens
+                optional: true
+          volumeMounts:
+            # The base config.yaml comes from ConfigMap (RO mount).
+            # subPath isolates a single key, so the rest of /app/config
+            # stays writable.
+            - mountPath: /app/config/config.yaml
+              name: config
+              subPath: config.yaml
+              readOnly: true
+            # config.d/ holds per-section fragments WRITTEN by the proxy
+            # on every push_config command. Writable emptyDir — fragments
+            # are not authoritative state (Odoo holds the source of
+            # truth and re-pushes on demand). Survives pod lifetime, lost
+            # on restart; operator re-pushes from the template form.
+            - mountPath: /app/config/config.d
+              name: config-d
+            - mountPath: /app/data
+              name: data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: erpnet-fp-config
+        - name: config-d
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: erpnet-fp-data

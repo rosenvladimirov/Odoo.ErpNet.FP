@@ -1,0 +1,42 @@
+# LAN-only Ingress for Polimex push.
+#
+# Polimex Web Modules POST to their configured URL **on the port set in
+# the dedicated 'HTTP Port' field** (default 80) — the port in the URL
+# is ignored. Asking operators to change that field per-Polimex is
+# fragile (it's separate per module and easy to miss), so we instead
+# expose the proxy on the standard :80 that Polimex defaults to.
+#
+# Traefik (k3s built-in) already binds :80 on every node via svclb.
+# This Ingress adds a PATH-only rule with NO host match — anything
+# arriving at :80 whose path starts with /hr/rfid OR /polimex is
+# routed to the erpnet-fp ClusterIP service (which forwards to
+# pod :8001). Other paths on :80 keep their existing behaviour
+# (e.g. ACME challenges, other host-routed services).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: erpnet-fp-polimex-lan
+  namespace: erpnet-fp-mec
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    # Low priority so host-matched rules still win when both could match.
+    traefik.ingress.kubernetes.io/router.priority: "1"
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /hr/rfid
+            pathType: Prefix
+            backend:
+              service:
+                name: erpnet-fp
+                port:
+                  number: 80
+          - path: /polimex
+            pathType: Prefix
+            backend:
+              service:
+                name: erpnet-fp
+                port:
+                  number: 80
