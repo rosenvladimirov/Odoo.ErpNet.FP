@@ -136,10 +136,21 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                 autodetect_loop(app),
                 name="reader-autodetect",
             )
+        # Controller-liveness watchdog — emits red controller.offline /
+        # green controller.online alerts when a Polimex Web Module
+        # stops/resumes heartbeating. No-op when watchdog disabled.
+        from .watchdog import watchdog_loop
+        watchdog_task: asyncio.Task | None = None
+        if app.state.config.server.watchdog.enabled:
+            watchdog_task = asyncio.create_task(
+                watchdog_loop(app),
+                name="controller-watchdog",
+            )
         try:
             yield
         finally:
-            for t in (fleet_task, iot_setup_task, autodetect_task):
+            for t in (fleet_task, iot_setup_task, autodetect_task,
+                      watchdog_task):
                 if t is not None:
                     t.cancel()
                     try:

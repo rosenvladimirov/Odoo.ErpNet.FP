@@ -172,6 +172,27 @@ class IotSetupConfig:
 
 
 @dataclass
+class WatchdogConfig:
+    """Controller-liveness watchdog.
+
+    The proxy tracks the last heartbeat per Polimex convertor (Web
+    Module) — see `record_heartbeat` in `server/watchdog.py` — and a
+    background loop emits a red `controller.offline` alert on the
+    bus_inject channel when a convertor goes silent, plus a
+    `controller.online` recovery when it returns.
+
+    `heartbeat_timeout` — seconds of silence before a convertor is
+    declared offline. 0 disables the watchdog. Default 180 (≈ 3× the
+    typical 60 s Polimex HeartBeat Time).
+    `check_interval` — how often the background loop scans (seconds).
+    """
+
+    enabled: bool = True
+    heartbeat_timeout: int = 180
+    check_interval: int = 30
+
+
+@dataclass
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8001
@@ -179,6 +200,7 @@ class ServerConfig:
     tls: TlsConfig = field(default_factory=TlsConfig)
     registry: RegistryConfig = field(default_factory=RegistryConfig)
     iot_setup: IotSetupConfig = field(default_factory=IotSetupConfig)
+    watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
 
 
 @dataclass
@@ -527,6 +549,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
     tls_data = server_data.get("tls", {})
     registry_data = server_data.get("registry", {})
     iot_setup_data = server_data.get("iot_setup", {})
+    watchdog_data = server_data.get("watchdog", {})
     server = ServerConfig(
         host=server_data.get("host", "0.0.0.0"),
         port=int(server_data.get("port", 8001)),
@@ -559,6 +582,11 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             advertised_host=str(iot_setup_data.get("advertised_host") or "").strip(),
             interval_seconds=int(iot_setup_data.get("interval_seconds", 60)),
             endpoint=str(iot_setup_data.get("endpoint") or "ee").strip().lower(),
+        ),
+        watchdog=WatchdogConfig(
+            enabled=bool(watchdog_data.get("enabled", True)),
+            heartbeat_timeout=int(watchdog_data.get("heartbeat_timeout", 180)),
+            check_interval=int(watchdog_data.get("check_interval", 30)),
         ),
     )
     server.tls.validate()

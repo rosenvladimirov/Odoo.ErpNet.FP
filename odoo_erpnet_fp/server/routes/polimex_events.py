@@ -246,15 +246,16 @@ async def polimex_event(request: Request):
 
     # ─── Heartbeat ──────────────────────────────────────────────
     # Keep-alive ping. Polimex sends one every `HeartBeat Time` seconds
-    # (60s default). Useful to track controller liveness on the Odoo
-    # Fleet form.
+    # (60s default). A heartbeat means "alive" and NOTHING else — it
+    # is NOT an audit event. We record it in the watchdog tracker and
+    # do NOT emit a bus envelope (would create spurious hr.rfid.event
+    # rows + dashboard noise). Only liveness TRANSITIONS reach Odoo,
+    # via server/watchdog.py. (Rosen 2026-05-22.)
     if isinstance(payload, dict) and "heartbeat" in payload:
         fw = payload.get("FW") or payload.get("fw") or ""
-        _polimex_bus_emit(request, "controller.heartbeat", {
-            "convertor": convertor,
-            "fw": fw,
-            "seq": payload.get("heartbeat"),
-        }, device=src_label)
+        from ..watchdog import record_heartbeat
+        record_heartbeat(request.app, convertor, fw=fw,
+                         seq=payload.get("heartbeat"))
         return _ack(is_jsonrpc, jsonrpc_id)
 
     # ─── Response (controller's answer to an embedded command) ───
