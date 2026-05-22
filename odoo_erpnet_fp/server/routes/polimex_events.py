@@ -150,6 +150,49 @@ def _polimex_bus_emit(request: Request, event_type: str, data: dict,
         _logger.debug("polimex bus_emit suppressed: %s", exc)
 
 
+def _build_refresh_hints(app, ctrl_id, event_data: dict) -> list:
+    """Resolve the `refresh:` config block of the access component that
+    owns `ctrl_id` into frontend-ready directives.
+
+    Returns a list of dicts the `live_refresh` hub maps onto bus
+    events:
+      {"model": M, "mode": "list"}                        → LIVE_REFRESH_LIST
+      {"model": M, "field": F,
+       "match_field": K, "match_value": V}                → LIVE_REFRESH_FIELD
+        (frontend repaints field F only on the open record of model M
+         whose field K equals V — no Odoo res_id round-trip needed)
+
+    Never raises — refresh is cosmetic; a bad hint must not break the
+    event hot-path."""
+    try:
+        cfg = getattr(app.state, "config", None)
+        if cfg is None or ctrl_id is None:
+            return []
+        out: list = []
+        for comp in (getattr(cfg, "access", None) or []):
+            if _to_int(getattr(comp, "bus_id", None)) != _to_int(ctrl_id):
+                continue
+            for hint in (getattr(comp, "refresh", None) or []):
+                if not isinstance(hint, dict):
+                    continue
+                model = hint.get("model")
+                if not model:
+                    continue
+                if hint.get("view") == "list" or hint.get("mode") == "list":
+                    out.append({"model": model, "mode": "list"})
+                elif hint.get("field"):
+                    entry = {"model": model, "field": hint["field"]}
+                    match = hint.get("match")
+                    if match:
+                        entry["match_field"] = match
+                        entry["match_value"] = event_data.get(match)
+                    out.append(entry)
+        return out
+    except Exception:  # noqa: BLE001
+        _logger.debug("refresh-hint build failed", exc_info=True)
+        return []
+
+
 # Polimex event_n → our canonical bus_inject event type. Codes from
 # github.com/polimex/polimex-rfid hr_rfid_event_system.py. Codes we
 # don't map here fall through to the generic `controller.event`.
@@ -301,7 +344,7 @@ async def polimex_event(request: Request):
                 ev.get("date"), ev.get("time"))
             return _ack(is_jsonrpc, jsonrpc_id)
         kind = _EVENT_KIND_BY_N.get(event_n, "controller.event")
-        _polimex_bus_emit(request, kind, {
+        evt_data = {
             "convertor": convertor,
             "ctrl_id": ctrl_id,
             "event_n": event_n,
@@ -311,7 +354,18 @@ async def polimex_event(request: Request):
             "date": ev.get("date"),
             "dt": ev.get("dt"),
             "err": ev.get("err"),
-        }, device=f"polimex-{convertor}-ctrl{ctrl_id}" if ctrl_id else src_label)
+        }
+        # Per-component refresh hints — resolve the config `refresh:`
+        # block of whatever access component owns this controller into
+        # frontend-ready directives, carried inside the envelope so the
+        # live_refresh hub repaints the exact field/view. See
+        # _build_refresh_hints + AccessConfig.refresh.
+        hints = _build_refresh_hints(request.app, ctrl_id, evt_data)
+        if hints:
+            evt_data["_refresh"] = hints
+        _polimex_bus_emit(request, kind, evt_data,
+                          device=f"polimex-{convertor}-ctrl{ctrl_id}"
+                          if ctrl_id else src_label)
 
     rid, card = resolve_reader(reg, payload)
     if rid is None:

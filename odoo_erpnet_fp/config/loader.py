@@ -428,6 +428,16 @@ class AccessConfig:
     user_id: str = ""             # dahua: optional UserID for audit log
     pulse_seconds: float = 3.0    # momentary open duration
     fail_secure: bool = True
+    # Per-component live-refresh hints (Rosen 2026-05-22). Each entry
+    # tells the Odoo frontend WHICH model/field/view to refresh when
+    # this component fires an event — so a card swipe can repaint the
+    # exact field on whatever form the operator happens to have open.
+    # Shape per entry:
+    #   {model: "hr.rfid.event", view: "list"}            # reload list
+    #   {model: "access.controller", field: "last_event_ts",
+    #    match: "ctrl_id"}   # reload+flash that field on the record
+    #                        # whose `match`-named field == event's value
+    refresh: list[dict[str, Any]] = field(default_factory=list)
     extras: dict[str, Any] = field(default_factory=dict)
 
 
@@ -776,6 +786,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 user_id=str(entry.get("user_id", "")),
                 pulse_seconds=float(entry.get("pulse_seconds", 3.0)),
                 fail_secure=bool(entry.get("fail_secure", True)),
+                refresh=list(entry.get("refresh", []) or []),
                 extras=entry.get("extras", {}),
             )
         )
