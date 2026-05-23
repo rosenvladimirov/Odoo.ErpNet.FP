@@ -48,6 +48,32 @@ class ReaderInfoResp(_CamelModel):
     webhooks: int = 0
     running: bool = False
     subscriber_count: int = Field(0, alias="subscriberCount")
+    # USB descriptor info (auto-detected serial readers) — read-only.
+    vendor: Optional[str] = None
+    vid: Optional[str] = None
+    pid: Optional[str] = None
+    product: Optional[str] = None
+    manufacturer: Optional[str] = None
+    serial: Optional[str] = None
+
+
+def _reader_resp(rid: str, entry) -> "ReaderInfoResp":
+    usb = (entry.config.extras or {}).get("usb", {}) or {}
+    return ReaderInfoResp(
+        id=rid,
+        transport=entry.config.transport,
+        device_path=entry.config.device_path,
+        port=entry.config.port,
+        webhooks=len(entry.config.webhooks),
+        running=_is_running(entry),
+        subscriber_count=entry.bus.subscriber_count,
+        vendor=usb.get("vendorName"),
+        vid=usb.get("vid"),
+        pid=usb.get("pid"),
+        product=usb.get("product"),
+        manufacturer=usb.get("manufacturer"),
+        serial=usb.get("serial"),
+    )
 
 
 class ScanResp(_CamelModel):
@@ -73,18 +99,7 @@ async def list_readers(request: Request):
     reg = _reader_registry(request)
     if reg is None:
         return {}
-    return {
-        rid: ReaderInfoResp(
-            id=rid,
-            transport=entry.config.transport,
-            device_path=entry.config.device_path,
-            port=entry.config.port,
-            webhooks=len(entry.config.webhooks),
-            running=_is_running(entry),
-            subscriber_count=entry.bus.subscriber_count,
-        )
-        for rid, entry in reg.readers.items()
-    }
+    return {rid: _reader_resp(rid, entry) for rid, entry in reg.readers.items()}
 
 
 def _is_running(entry) -> bool:
@@ -99,15 +114,7 @@ def _is_running(entry) -> bool:
 async def reader_info(id: str, request: Request):
     reg = _require(request, id)
     entry = reg.get(id)
-    return ReaderInfoResp(
-        id=id,
-        transport=entry.config.transport,
-        device_path=entry.config.device_path,
-        port=entry.config.port,
-        webhooks=len(entry.config.webhooks),
-        running=_is_running(entry),
-        subscriber_count=entry.bus.subscriber_count,
-    )
+    return _reader_resp(id, entry)
 
 
 @router.get("/{id}/last", response_model=Optional[ScanResp])

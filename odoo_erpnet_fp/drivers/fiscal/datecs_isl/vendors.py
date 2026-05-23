@@ -41,14 +41,26 @@ from .protocol import (
 
 
 class DatecsIslDevice(IslDevice):
-    """Datecs ISL — same as the default `IslDevice`, present for naming
-    parity with other vendors.
+    """Datecs ISL — DP-150 family (C variant, comma-separated headers).
 
-    C variant (comma-separated headers, 4 fields, admin pw "9999").
     Verified on real Datecs DP-150 (DT737851, FW 3.00 22Jul25 1109).
+
+    Payment letters override: базовият `IslDevice` дава `CARD = "C"`, но
+    реалният DP-150 (FW 3.00) отказва `\\tC` при close с E404 "Command not
+    allowed in the current fiscal mode". Per upstream Odoo IoT box driver +
+    Eltrade variant, картовото плащане е **`L`**. Едновременно добавяме
+    разширените типове (Coupons=C, ExtCoupons=D, Packaging=I, ...) за пълно
+    NRA съответствие.
     """
 
     URI_PREFIX = "bg.dt.isl"
+
+    _PAYMENT_LETTERS = {
+        PaymentType.CASH: "P",
+        PaymentType.CHECK: "N",
+        PaymentType.CARD: "L",  # КАРТА → L (не C — реалният DP-150 отказва C с E404)
+        PaymentType.RESERVED1: "Q",
+    }
 
 
 class DatecsIslXDevice(DatecsIslDevice):

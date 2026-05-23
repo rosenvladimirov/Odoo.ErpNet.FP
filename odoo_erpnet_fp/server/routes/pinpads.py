@@ -254,3 +254,22 @@ async def pinpad_test_connection(id: str, request: Request):
     except Exception as exc:
         _logger.exception("pinpad test_connection failed for %s", id)
         return TransactionResp(ok=False, error=str(exc))
+
+
+@router.post("/{id}/cancel")
+async def pinpad_cancel(id: str, request: Request):
+    """Abort the in-flight transaction. Does NOT take the device lock
+    (purchase holds it) — signals the active facade, whose C event-loop
+    polls the cancel flag, sends TRANSACTION END and frees the device.
+    No-op if nothing is running."""
+    reg = _require(request, id)
+    entry = reg.get(id)
+    pp = getattr(entry, "active_pinpad", None)
+    if pp is None:
+        return {"ok": True, "cancelled": False, "message": "no active transaction"}
+    try:
+        await asyncio.to_thread(pp.request_cancel)
+        return {"ok": True, "cancelled": True}
+    except Exception as exc:  # noqa: BLE001
+        _logger.exception("pinpad cancel failed for %s", id)
+        return {"ok": False, "error": str(exc)}

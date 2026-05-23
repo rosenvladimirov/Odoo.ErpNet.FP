@@ -1,0 +1,28 @@
+# Odoo.ErpNet.FP — stable /dev/* symlinks за USB периферията
+#
+# Стратегия за multi-device инсталации (по 2+ устройства от един тип):
+#   Всеки match създава ДВА symlink-а:
+#     1) Генеричен (`datecs_pinpad`) — удобен за single-device инсталации
+#     2) Per-device (`datecs_pinpad_<serial>`) — винаги уникален; ползвай го
+#        в config.yaml ако има >1 устройство от същия тип.
+#
+# При 2+ устройства от един тип генеричният symlink сочи към LAST device
+# (последно enumerated, недетерминистично). Винаги ползвай specific suffix
+# в production multi-device setups.
+#
+# След промяна:  sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Datecs PinPad — BluePad-55 / ДП50 / DPM-200 / DPM-50 etc.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="fff0", ATTRS{idProduct}=="0100", \
+    SYMLINK+="datecs_pinpad datecs_pinpad_$attr{serial}", \
+    MODE="0660", GROUP="dialout"
+
+# Honeywell 1470g (Voyager) баркод четец
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0c2e", ATTRS{idProduct}=="1014", \
+    SYMLINK+="honeywell_scanner honeywell_scanner_$attr{serial}", \
+    MODE="0660", GROUP="dialout"
+
+# Datecs DP-150 fiscal printer (CDC ACM) — VID:PID placeholder
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", \
+#     SYMLINK+="datecs_dp150 datecs_dp150_$attr{serial}", \
+#     MODE="0660", GROUP="dialout"

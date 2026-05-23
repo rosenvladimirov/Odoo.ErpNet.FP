@@ -335,6 +335,9 @@ class PrinterRegistry:
 class PinpadEntry:
     config: PinpadConfig
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Активният facade по време на операция — за /cancel да достигне
+    # текущата транзакция БЕЗ да чака lock-а (който purchase държи).
+    active_pinpad: object = None
 
 
 _PINPAD_DRIVERS = {
@@ -389,9 +392,11 @@ class PinpadRegistry:
         async with entry.lock:
             pp = self.make_pinpad(pinpad_id)
             pp.open()
+            entry.active_pinpad = pp  # за /cancel
             try:
                 yield pp
             finally:
+                entry.active_pinpad = None
                 try:
                     pp.close()
                 except Exception:

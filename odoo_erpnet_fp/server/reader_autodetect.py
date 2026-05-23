@@ -77,6 +77,16 @@ _KNOWN_SCANNER_VENDORS: dict[str, dict] = {
         "vendor_name": "symbol",
         "skip": True,
     },
+    "fff0": {  # Datecs — pinpads (BluePad/BlueCash, e.g. fff0:0100
+        # "DATECS PinPad") and fiscal devices enumerate as CDC-ACM on
+        # the SAME VID as barcode scanners. They are NOT readers — the
+        # pinpad is driven by drivers/pinpad/datecs_pay and fiscal
+        # devices by explicit `printers:` config. Skip so the reader
+        # autodetect never grabs /dev/ttyACM* belonging to a Datecs
+        # pinpad/printer and mis-registers it as a barcode scanner.
+        "vendor_name": "datecs",
+        "skip": True,
+    },
 }
 
 
@@ -112,6 +122,64 @@ def _vendor_info_for(device) -> dict:
     }
 
 
+def _prefer_stable_symlink(devnode: str) -> str:
+    """Връща най-добрия наличен стабилен path към устройството.
+
+    Сканираме `/dev/` за symlink-ове сочещи към същия char device. Предпочитаме:
+      1) Кратки custom-named symlink-ове в `/dev/` (напр. `/dev/honeywell_scanner`
+         от нашите 99-erpnet-fp.rules — оцелява power-cycle/re-enumeration).
+      2) `/dev/serial/by-id/usb-<vendor>_<product>_<serial>-*` (винаги stable).
+      3) Raw devnode (`/dev/ttyACM0`) като fallback.
+
+    БЕЛЕЖКА: `pyudev.device_links` не работи вътре в Docker контейнер (udev DB
+    е на хоста, не се mount-ва). Затова правим чист OS-ниво scan с `os.readlink`,
+    което работи навсякъде.
+    """
+    basename = os.path.basename(devnode)
+    candidates_short: list[str] = []
+    candidates_by_id: list[str] = []
+
+    def _resolves_to(link: str) -> bool:
+        try:
+            # Резолва веригата от symlinks докрай и сравнява с devnode.
+            return os.path.realpath(link) == devnode
+        except OSError:
+            return False
+
+    # Кратки symlinks директно в /dev (custom rules)
+    try:
+        for entry in os.listdir("/dev"):
+            full = f"/dev/{entry}"
+            if entry == basename:
+                continue
+            if os.path.islink(full) and _resolves_to(full):
+                candidates_short.append(full)
+    except OSError:
+        pass
+
+    # /dev/serial/by-id/* (винаги генерирани от udev по vendor+product+serial)
+    try:
+        by_id_dir = "/dev/serial/by-id"
+        if os.path.isdir(by_id_dir):
+            for entry in os.listdir(by_id_dir):
+                full = f"{by_id_dir}/{entry}"
+                if os.path.islink(full) and _resolves_to(full):
+                    candidates_by_id.append(full)
+    except OSError:
+        pass
+
+    # Предпочитаме по-СПЕЦИФИЧНИЯ symlink (по-дълъг → най-вероятно съдържа
+    # serial suffix `_<serial>`), за да оцеляваме multi-device инсталации.
+    # В single-device case това дава `/dev/datecs_pinpad_<serial>` (по-дълго
+    # но винаги уникално) пред генеричния `/dev/datecs_pinpad` (който при
+    # 2+ устройства би сочил към случайно от тях).
+    if candidates_short:
+        return sorted(candidates_short, key=lambda p: (-len(p), p))[0]
+    if candidates_by_id:
+        return sorted(candidates_by_id, key=lambda p: (-len(p), p))[0]
+    return devnode
+
+
 def _build_reader_config(devnode: str, vendor_info: dict) -> Optional[ReaderConfig]:
     """Translate a tty device + USB descriptor into a ReaderConfig.
 
@@ -140,12 +208,29 @@ def _build_reader_config(devnode: str, vendor_info: dict) -> Optional[ReaderConf
     # Slugify defensively — reader ids land in URLs and Odoo identifiers.
     reader_id = re.sub(r"[^a-z0-9_-]+", "-", reader_id.lower()).strip("-")
 
+    # Предпочитаме стабилен symlink ако udev е създал такъв (напр. /dev/
+    # honeywell_scanner от 99-erpnet-fp.rules). Така UI-ът и логовете показват
+    # smysleno име, не разменчивия /dev/ttyACM*. Резолва се обратно до същия
+    # char device, така че комуникацията не се променя.
+    preferred_port = _prefer_stable_symlink(devnode)
+
     return ReaderConfig(
         id=reader_id,
         transport="serial",
-        port=devnode,
+        port=preferred_port,
         baudrate=int(spec.get("baudrate", 9600)),
         encoding=spec.get("encoding", "ascii"),
+        # USB descriptor info — surfaced read-only on /readers + dashboard
+        # so the operator can see WHAT scanner is attached without probing
+        # the device (CDC-ACM scanners don't expose a query command).
+        extras={"usb": {
+            "vid": vendor_info.get("vid") or None,
+            "pid": vendor_info.get("pid") or None,
+            "serial": vendor_info.get("serial") or None,
+            "product": vendor_info.get("product") or None,
+            "manufacturer": vendor_info.get("manufacturer") or None,
+            "vendorName": spec.get("vendor_name") or None,
+        }},
     )
 
 

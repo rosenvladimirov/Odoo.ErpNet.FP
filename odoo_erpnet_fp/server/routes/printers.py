@@ -881,6 +881,10 @@ async def print_duplicate(
 async def reset_printer(id: str, request: Request):
     """ErpNet.FP "reset" cancels a stuck open receipt. Both PM (cmd 0x3C)
     and ISL (CMD_ABORT_FISCAL_RECEIPT 0x3C) treat this as idempotent.
+
+    Връща ясна обратна връзка дали реално е имало висяща бележка (cancelled)
+    или устройството вече е било чисто (no-op). E404 "Command not allowed
+    in the current fiscal mode" в ISL = няма отворена бележка → no-op.
     """
     registry = _require_printer(request, id)
     is_pm = registry.is_pm(id)
@@ -889,11 +893,46 @@ async def reset_printer(id: str, request: Request):
             if is_pm:
                 try:
                     await asyncio.to_thread(drv.cancel_fiscal_receipt)
+                    return GenericResult(
+                        ok=True,
+                        messages=[StatusMessage(
+                            type="info", code="ABORTED",
+                            text="Висящата бележка беше прекъсната.")],
+                    )
                 except FiscalError:
-                    pass  # no receipt open is fine
-            else:  # datecs.isl
-                await asyncio.to_thread(drv.abort_receipt)
-        return GenericResult(ok=True)
+                    return GenericResult(
+                        ok=True,
+                        messages=[StatusMessage(
+                            type="info", code="NOOP",
+                            text="Няма висяща бележка за прекъсване — устройството вече е чисто.")],
+                    )
+            # datecs.isl — проверяваме реалния отговор
+            isl_status = await asyncio.to_thread(drv.abort_receipt)
+            no_open = any(
+                e.code in ("E404", "E197", "E198")  # "Command not allowed" варианти
+                for e in isl_status.errors
+            )
+            if no_open:
+                return GenericResult(
+                    ok=True,
+                    messages=[StatusMessage(
+                        type="info", code="NOOP",
+                        text="Няма висяща бележка за прекъсване — устройството вече е чисто.")],
+                )
+            if isl_status.ok:
+                return GenericResult(
+                    ok=True,
+                    messages=[StatusMessage(
+                        type="info", code="ABORTED",
+                        text="Висящата бележка беше прекъсната.")],
+                )
+            return GenericResult(
+                ok=False,
+                messages=[
+                    StatusMessage(type=m.type.value, code=m.code, text=m.text)
+                    for m in (isl_status.messages + isl_status.errors)
+                ],
+            )
     except Exception as exc:
         return GenericResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
 

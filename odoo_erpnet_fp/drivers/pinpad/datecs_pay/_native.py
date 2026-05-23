@@ -140,6 +140,19 @@ if _lib is not None:
     ]
     _lib.datecs_get_receipt_tags.restype = ctypes.c_int
 
+    _lib.datecs_run_transaction.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint8,
+        ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint16,   # params
+        ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint8,   # result_tags (логически id-та)
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),    # receipt out
+        ctypes.POINTER(ctypes.c_uint16),                   # receipt_len out
+        ctypes.c_int,                                      # total_timeout_ms
+    ]
+    _lib.datecs_run_transaction.restype = ctypes.c_int
+
+    _lib.datecs_request_cancel.argtypes = [ctypes.c_void_p]
+    _lib.datecs_request_cancel.restype = None
+
     _lib.datecs_get_rtc.argtypes = [ctypes.c_void_p, ctypes.POINTER(DatecsDateTime)]
     _lib.datecs_get_rtc.restype = ctypes.c_int
 
@@ -375,6 +388,54 @@ class DatecsPinpadDriver:
         
         return data
     
+    def run_transaction(self, trans_type: int, params: Optional[bytes],
+                        result_tags: List[int], timeout: float = 60.0) -> Tuple[int, bytes]:
+        """Run a full transaction via the C event-loop.
+
+        The whole protocol flow (START → wait for TRANSACTION COMPLETE →
+        GET RECEIPT TAGS → END) lives in the C library. This is just the
+        thin binding. Returns (ret_code, receipt_tlv); ret_code == 0 means
+        the transaction completed (parse receipt_tlv for DF05/DF06/etc.).
+        """
+        if not self._is_open:
+            raise RuntimeError("Device not open")
+
+        if params:
+            params_ptr = (ctypes.c_uint8 * len(params))(*params)
+            params_len = len(params)
+        else:
+            params_ptr = None
+            params_len = 0
+
+        # BER-TLV енкодирането на multi-byte таговете (0xDF05, 0x9F1C…)
+        # СЕГА Е В C-то (NDA — цялата протоколна логика в `libdatecs_pinpad.so`).
+        # Тук подаваме списък от ЛОГИЧЕСКИ tag id-та като uint32; C-то прави
+        # big-endian енкодирането и подава byte-stream-а към устройството.
+        tags_array = (ctypes.c_uint32 * len(result_tags))(*result_tags)
+        receipt_ptr = ctypes.POINTER(ctypes.c_uint8)()
+        receipt_len = ctypes.c_uint16()
+
+        ret = _lib.datecs_run_transaction(
+            self._device, trans_type, params_ptr, params_len,
+            tags_array, len(result_tags),  # БРОЙ tag-ове (логически)
+            ctypes.byref(receipt_ptr), ctypes.byref(receipt_len),
+            int(timeout * 1000),
+        )
+
+        data = b""
+        if receipt_ptr and receipt_len.value:
+            data = bytes(receipt_ptr[:receipt_len.value])
+            ctypes.pythonapi.free(receipt_ptr)
+
+        return ret, data
+
+    def request_cancel(self) -> None:
+        """Signal a running transaction to abort (thread-safe; sets a flag
+        the C event-loop polls). Safe to call from another thread while
+        run_transaction blocks."""
+        if self._device:
+            _lib.datecs_request_cancel(self._device)
+
     def get_datetime(self) -> datetime:
         """
         Get pinpad real-time clock

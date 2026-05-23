@@ -102,6 +102,13 @@ class DatecsPayPinpad:
         finally:
             self._drv = None
 
+    def request_cancel(self) -> None:
+        """Abort a running transaction (thread-safe). Called from the
+        /pinpads/<id>/cancel route while purchase() blocks in another
+        thread — the C event-loop sees the flag and ends the transaction."""
+        if self._drv is not None:
+            self._drv.request_cancel()
+
     def __enter__(self) -> "DatecsPayPinpad":
         self.open()
         return self
@@ -201,48 +208,53 @@ class DatecsPayPinpad:
         params: bytes,
         timeout: float,
     ) -> TransactionResult:
-        """Driver state-machine: start → poll until result → fetch tags → end."""
+        """Run the transaction via the C event-loop and parse the result.
+
+        The whole protocol flow (START → wait for TRANSACTION COMPLETE →
+        GET RECEIPT TAGS → END) lives in the C library; here we only
+        marshal params/tags and parse the returned receipt TLV.
+        """
         try:
-            self._drv.start_transaction(trans_type, params or None)
+            ret, result_tlv = self._drv.run_transaction(
+                trans_type, params or None, self._RECEIPT_TAGS, timeout=timeout
+            )
         except RuntimeError as exc:
+            _logger.error("DatecsPay run_transaction raised: %s", exc)
             return TransactionResult(ok=False, error=str(exc))
 
-        deadline = time.monotonic() + timeout
-        result_tlv = b""
-        while time.monotonic() < deadline:
-            try:
-                # Some firmware revisions surface intermediate TLV here;
-                # treat empty / not-ready as "still processing".
-                result_tlv = self._drv.get_receipt_tags(self._RECEIPT_TAGS)
-                if result_tlv:
-                    break
-            except RuntimeError:
-                # Pinpad busy — keep polling
-                pass
-            time.sleep(0.5)
+        _logger.info(
+            "DatecsPay run_transaction: ret=%s tlv_len=%s tlv_hex=%s",
+            ret, len(result_tlv or b""), (result_tlv or b"").hex(),
+        )
 
-        if not result_tlv:
-            try:
-                self._drv.end_transaction(success=False)
-            except Exception:
-                pass
-            return TransactionResult(ok=False, error="timeout")
+        if ret != 0:
+            err = {9: "timeout", 18: "cancel", 50: "no_host_connection"}.get(
+                ret, f"error_{ret}"
+            )
+            _logger.warning("DatecsPay run_transaction non-zero ret=%s → %s", ret, err)
+            return TransactionResult(ok=False, error=err, raw_tlv=result_tlv)
 
         parsed = self._parse_tlv(result_tlv)
-        ok = (parsed.get("trans_result", b"") == b"\x00") and not parsed.get(
-            "trans_error"
+        # DF05 (result) и DF06 (error) са 4-байтови big-endian; одобрено = всичко нули.
+        trans_result = parsed.get("trans_result")
+        trans_error = parsed.get("trans_error")
+        ok = (
+            trans_result is not None
+            and all(b == 0 for b in trans_result)
+            and (not trans_error or all(b == 0 for b in trans_error))
         )
-        try:
-            self._drv.end_transaction(success=ok)
-        except RuntimeError as exc:
-            _logger.warning("Pinpad end_transaction failed: %s", exc)
+        _logger.info(
+            "DatecsPay parsed: ok=%s DF05(result)=%s DF06(error)=%s rrn=%s auth=%s",
+            ok,
+            trans_result.hex() if trans_result else None,
+            trans_error.hex() if trans_error else None,
+            parsed.get("rrn"), parsed.get("auth_id"),
+        )
 
         return TransactionResult(
             ok=ok,
             error=(
-                parsed.get("trans_error", b"").hex()
-                if parsed.get("trans_error")
-                else None
+                trans_error.hex() if (trans_error and any(trans_error)) else None
             ),
             amount_cents=parsed.get("amount_cents"),
             rrn=parsed.get("rrn"),

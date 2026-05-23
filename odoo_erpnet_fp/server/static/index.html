@@ -392,6 +392,7 @@ let state = {
   printers: {}, scales: {}, displays: {}, readers: {}, pinpads: {},
   cameras: {}, mqtt: {}, access: {}, biometric: {},
   statuses: {}, scans: {}, readerLast: {}, plates: {}, cameraLast: {}, accessLast: {},
+  pinpadInfo: {},
 };
 
 function toast(msg, kind = "ok") {
@@ -649,6 +650,41 @@ async function loadAll() {
   fetchAllStatuses();
   fetchAllReaderLast();
   fetchAllCameraLast();
+  fetchAllPinpadInfo();
+}
+
+// Probe each configured pinpad for its identity (model/serial/TID/fw).
+// The list endpoint returns config-only (model:null) to stay fast and
+// not hold the serial port; the per-id endpoint opens the device.
+async function fetchPinpadInfo(id) {
+  try {
+    const r = await fetchJSON(`${ENDPOINT}/pinpads/${encodeURIComponent(id)}`);
+    state.pinpadInfo[id] = { ...r, fetchedAt: Date.now() };
+  } catch (e) {
+    state.pinpadInfo[id] = { fetchError: e.message, fetchedAt: Date.now() };
+  }
+  renderKind("pinpads");
+}
+
+async function fetchAllPinpadInfo() {
+  const ids = Object.keys(state.pinpads || {});
+  await Promise.all(ids.map(fetchPinpadInfo));
+}
+
+// Operator-initiated pinpad probes (info refresh / ping / host test).
+async function pinpadAction(id, path) {
+  try {
+    const url = `${ENDPOINT}/pinpads/${encodeURIComponent(id)}${path}`;
+    const r = path === "/test_connection"
+      ? await fetchJSON(url, { method: "POST", headers: {"Content-Type":"application/json"}, body: "{}" })
+      : await fetchJSON(url);
+    if (path === "" ) { state.pinpadInfo[id] = { ...r, fetchedAt: Date.now() }; }
+    const ok = (r.ok !== false) && !r.error;
+    toast(`${id}: ${path || "info"} → ${ok ? "OK" : (r.error || "fail")}`, ok ? "ok" : "err");
+    fetchPinpadInfo(id);
+  } catch (e) {
+    toast(`${id}: ${e.message}`, "err");
+  }
 }
 
 async function fetchStatus(id) {
@@ -733,6 +769,7 @@ function renderPrinter(id, info) {
         <button class="sm" onclick="printerAction('${id}', 'xreport', 'POST')">📄 X</button>
         <button class="sm warn" onclick="printerAction('${id}', 'zreport', 'POST', true)">🗄 Z</button>
         <button class="sm" onclick="printerAction('${id}', 'duplicate', 'POST')">📋 Duplicate</button>
+        <button class="sm warn" onclick="printerAction('${id}', 'reset', 'POST', true)" title="Принудително отказва висяща (отворена незатворена) фискална бележка — cmd 0x3C">🛑 Abort receipt</button>
         <button class="sm" onclick="printerAction('${id}', 'drawer', 'POST')">💵 Drawer</button>
       </div>
     </div>`;
@@ -802,6 +839,9 @@ function renderReader(id, info) {
           <dt>Transport</dt><dd>${info.transport || "—"}</dd>
           <dt>Source</dt><dd style="font-family:monospace;font-size:0.75rem;word-break:break-all">${path}</dd>
           <dt>Subscribers</dt><dd>${info.subscriberCount ?? 0}</dd>
+          ${(info.manufacturer || info.product) ? `<dt>Device</dt><dd>${[info.manufacturer, info.product].filter(Boolean).join(" ")}</dd>` : ""}
+          ${info.serial ? `<dt>Serial #</dt><dd style="font-family:monospace;font-size:0.75rem;word-break:break-all">${info.serial}</dd>` : ""}
+          ${(info.vid || info.pid) ? `<dt>USB ID</dt><dd style="font-family:monospace;font-size:0.75rem">${info.vid || "?"}:${info.pid || "?"}${info.vendor ? ` (${info.vendor})` : ""}</dd>` : ""}
           ${last ? `<dt>Last scan</dt><dd style="font-family:monospace">${last.barcode} <span style="color:var(--text-dim);font-size:0.7rem">(${fmtAgo(new Date(last.timestamp).getTime())})</span></dd>` : ""}
         </dl>
         <div class="reader-feed">
@@ -1031,17 +1071,38 @@ function cameraSubscribe(id) {
 }
 
 function renderPinpad(id, info) {
+  // info = config-only (driver/port). Device identity comes from the
+  // per-id probe in state.pinpadInfo[id] (model/serial/TID/firmware).
+  const probe = state.pinpadInfo[id];
+  let badge;
+  if (!probe) badge = '<span class="badge muted">probing…</span>';
+  else if (probe.fetchError) badge = '<span class="badge err">unreachable</span>';
+  else if (probe.model) badge = '<span class="badge ok">● ' + probe.model + '</span>';
+  else badge = '<span class="badge warn">no data</span>';
+  const sw = probe && probe.softwareVersion
+    ? (Array.isArray(probe.softwareVersion) ? probe.softwareVersion.join(".") : probe.softwareVersion)
+    : "—";
   return `
     <div class="card">
       <div class="card-header">
         <h3>${id}</h3>
+        ${badge}
         <span class="uri">${info.driver || ""}</span>
       </div>
       <div class="card-body">
         <dl>
-          <dt>Driver</dt><dd>${info.driver || "—"}</dd>
-          <dt>Port</dt><dd>${info.port || "—"}</dd>
+          <dt>Model</dt><dd>${(probe && probe.model) || "—"}</dd>
+          <dt>Serial #</dt><dd>${(probe && probe.serialNumber) || "—"}</dd>
+          <dt>Terminal ID</dt><dd>${(probe && probe.terminalId) || "—"}</dd>
+          <dt>Software</dt><dd>${sw}</dd>
+          <dt>Port</dt><dd style="font-family:monospace;font-size:0.75rem">${info.port || "—"}</dd>
         </dl>
+        ${probe && probe.fetchError ? `<ul class="messages"><li class="error">${probe.fetchError}</li></ul>` : ""}
+      </div>
+      <div class="card-actions">
+        <button class="sm" onclick="pinpadAction('${id}', '')">⟳ Info</button>
+        <button class="sm" onclick="pinpadAction('${id}', '/ping')">📶 Ping</button>
+        <button class="sm" onclick="pinpadAction('${id}', '/test_connection')">🏦 Test connection</button>
       </div>
     </div>`;
 }
@@ -1152,7 +1213,13 @@ async function printerAction(id, op, method, confirmRequired = false) {
       return;
     }
     if (r?.ok !== false) {
-      toast(`${op} succeeded on ${id}`, "ok");
+      // Ако rоут-ът връща информационно съобщение (NOOP/ABORTED/...), показваме го;
+      // иначе fallback на общото "succeeded".
+      const infoMsg = (r?.messages || [])
+        .filter(m => m.type === "info")
+        .map(m => m.text)
+        .join("; ");
+      toast(infoMsg || `${op} succeeded on ${id}`, "ok");
     } else {
       const errMsg = (r?.messages || []).filter(m => m.type === "error").map(m => m.text).join("; ");
       toast(`${op} on ${id}: ${errMsg || "failed"}`, "err");
