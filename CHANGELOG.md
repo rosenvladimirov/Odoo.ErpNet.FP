@@ -30,3 +30,14 @@
 - **DockerHub repo превърнат в private** — distribution става само под NDA agreement.
 - **Header `datecs_pinpad_driver.h` премахнат от distribution**: pyproject `package-data` сега bundle-ва само `lib/*.so`. Headerът беше „Rosetta stone" за протокола (всички cmd/subcmd/TLV кодове в plain text); .so-то изисква reverse engineering, което е значително по-висока бариера.
 - **`.so` strip-нат с `--strip-unneeded`**: запазва exported symbols за ctypes, но премахва debug info → -12% size + по-голяма RE трудност.
+
+## [0.13.5] — 2026-05-24
+### Added
+- Multi-device udev support за устройства БЕЗ USB serial (Datecs Serial клас, FP-700МК): USB topology suffix (`datecs_fp_port<bus_path>`) — стабилно per физически порт; при смяна на порт името се променя (което е feature за traceability).
+- Distinguish-ване между Datecs PinPad (`ATTRS{product}="PinPad"`) и Datecs Serial (`ATTRS{product}="Datecs Serial"`) за същия VID:PID (`fff0:0100`).
+- FTDI symlink (`/dev/ftdi_serial` + `_port<path>` за clones без serial).
+- `scripts/discover-devices.sh` — scan-ва /dev/* + извежда готов config.yaml snippet за откритите устройства.
+- `config.yaml` пример с `fp700mk` (driver `datecs.pm`).
+
+### Notes
+- ФП-700МК е Datecs PM (НЕ ISL) — `datecs.pm` driver връща `PM (v2.11.4)` + fiscalized status. `datecs.isl`/`datecs.islx` връщат SYN+NAK (грешен framing).

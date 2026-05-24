@@ -1,28 +1,48 @@
-# Odoo.ErpNet.FP — stable /dev/* symlinks за USB периферията
+# Odoo.ErpNet.FP — stable /dev/* symlinks за USB периферията.
 #
-# Стратегия за multi-device инсталации (по 2+ устройства от един тип):
-#   Всеки match създава ДВА symlink-а:
-#     1) Генеричен (`datecs_pinpad`) — удобен за single-device инсталации
-#     2) Per-device (`datecs_pinpad_<serial>`) — винаги уникален; ползвай го
-#        в config.yaml ако има >1 устройство от същия тип.
+# Multi-device стратегия:
+#   - Устройства С USB serial (Pinpad, Honeywell, FTDI) → per-serial suffix.
+#   - Устройства БЕЗ USB serial (Datecs FP-700МК "Datecs Serial" клас) →
+#     USB topology suffix (stable per физически порт; смяна на порт = ново име).
+#   - Generic symlink (`/dev/<name>`) — за single-device инсталации.
 #
-# При 2+ устройства от един тип генеричният symlink сочи към LAST device
-# (последно enumerated, недетерминистично). Винаги ползвай specific suffix
-# в production multi-device setups.
+# Distinguish-ва Datecs устройства с СЪЩИЯ VID:PID (fff0:0100) по ATTRS{product}:
+#   - "PinPad"        → datecs_pinpad     (BluePad-55 / ДП50)
+#   - "Datecs Serial" → datecs_fp         (фискални принтери: ФП-700МК etc.)
 #
-# След промяна:  sudo udevadm control --reload-rules && sudo udevadm trigger
+# При 2+ устройства от ЕДИН ТИП → ползвай specific suffix в config.yaml
+# (генеричният сочи към последно enumerated — недетерминистичен).
+#
+# След промяна: sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# Datecs PinPad — BluePad-55 / ДП50 / DPM-200 / DPM-50 etc.
+# ─── Datecs PinPad (BluePad-55 / ДП50) — има USB serial ──────────
 SUBSYSTEM=="tty", ATTRS{idVendor}=="fff0", ATTRS{idProduct}=="0100", \
+    ATTRS{product}=="PinPad", \
     SYMLINK+="datecs_pinpad datecs_pinpad_$attr{serial}", \
     MODE="0660", GROUP="dialout"
 
-# Honeywell 1470g (Voyager) баркод четец
+# ─── Datecs ISL fiscal printer (FP-700МК, native CDC) ────────────
+# Тоя клас НЯМА USB serial. Ползваме USB port path от ID_PATH
+# (напр. "usb-0:1.1.3.1:1.0" → "1_1_3_1") за стабилно име per порт.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="fff0", ATTRS{idProduct}=="0100", \
+    ATTRS{product}=="Datecs Serial", \
+    PROGRAM="/bin/sh -c 'echo \"$ID_PATH\" | sed -nE \"s|.*usb-0:([0-9.]+):.*|\\1|p\" | tr . _'", \
+    SYMLINK+="datecs_fp datecs_fp_port%c", \
+    MODE="0660", GROUP="dialout"
+
+# ─── Honeywell 1470g (Voyager) баркод четец — има USB serial ──────
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0c2e", ATTRS{idProduct}=="1014", \
     SYMLINK+="honeywell_scanner honeywell_scanner_$attr{serial}", \
     MODE="0660", GROUP="dialout"
 
-# Datecs DP-150 fiscal printer (CDC ACM) — VID:PID placeholder
-# SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", \
-#     SYMLINK+="datecs_dp150 datecs_dp150_$attr{serial}", \
-#     MODE="0660", GROUP="dialout"
+# ─── FTDI USB-serial adapter (DP-150 през FT232R кабел) ──────────
+# Реалните FTDI чипове имат уникален serial; cheap clones имат "00000000".
+# Падаме на port-path за clones.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", \
+    PROGRAM="/bin/sh -c 'echo \"$ID_PATH\" | sed -nE \"s|.*usb-0:([0-9.]+):.*|\\1|p\" | tr . _'", \
+    SYMLINK+="ftdi_serial ftdi_serial_$attr{serial} ftdi_serial_port%c", \
+    MODE="0660", GROUP="dialout"
+
+# ─── (Placeholder за бъдещи устройства) ──────────────────────────
+# Datecs DP-150X / FP-700X / FMP-350X — добавят се ATTRS{product} match
+# когато ги тестваме на реално устройство.
