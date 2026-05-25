@@ -140,7 +140,7 @@ async def shift_close(
 
     Replay-safe: same (serial, day, z) → cached response.
     """
-    cfg = request.app.state.cfg
+    cfg = request.app.state.config.server
     if body.device_serial != serial:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -249,7 +249,7 @@ async def shift_close_forget(
 ) -> dict:
     """Explicit dedup eviction. Used при forensic re-import; вижда се
     в `anchor_bluecash_shift_sync_contract.md` §Risk 7."""
-    cfg = request.app.state.cfg
+    cfg = request.app.state.config.server
     device_secret = _get_device_secret(cfg, serial)
     if not device_secret:
         raise HTTPException(503, "Proxy not paired")
