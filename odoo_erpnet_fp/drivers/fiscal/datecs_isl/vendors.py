@@ -57,7 +57,8 @@ class DatecsIslDevice(IslDevice):
 
     _PAYMENT_LETTERS = {
         # Empirically verified labels on real DP-150 (DT737851,
-        # FW 3.00 22Jul25 1109) — 2026-05-25.
+        # FW 3.00 22Jul25 1109) — 2026-05-25 (single-receipt tests
+        # with timestamp-matched receipts; two independent batches).
         #
         # The C-variant firmware exposes only THREE active payment
         # letters; every other letter (C/D/I/J/K/M/Q/R/etc.) falls
@@ -68,29 +69,20 @@ class DatecsIslDevice(IslDevice):
         #     P    │ В БРОЙ
         #     L    │ КУПОН
         #     N    │ КРЕДИТ
-        #     *    │ В БРОЙ (device default fallback)
+        #     *    │ В БРОЙ (device default fallback for unmapped)
+        #
+        # NOTE: upstream ErpNet.FP C# driver claims L=Card / N=Check.
+        # Wrong for DP-150 fw 3.00 — verified empirically.
         #
         # Mapping rationale:
         #   cash    → P  (only slot for cash; matches В БРОЙ)
         #   card    → N  (closest to "card" semantics; prints КРЕДИТ)
-        #   bank    → N  (bank-account payment ≈ card semantically)
+        #   bank    → N  (bank-account payment ≈ card semantically;
+        #                 handled via adapter, see below)
         #   coupons → L  (only slot for coupons; prints КУПОН)
         #   Everything else → P (no dedicated slot; device would
-        #   fall back to cash anyway, we make it explicit so admins
-        #   see one source-of-truth instead of "magic" behaviour).
-        # Empirically verified via timestamp-matched receipts on real
-        # DP-150 (DT737851, FW 3.00 22Jul25 1109) — 2026-05-25.
-        # Two independent timestamp-correlated batches confirmed:
-        #
-        #   Letter │ Label
-        #   ───────┼─────────
-        #     P    │ В БРОЙ
-        #     L    │ КРЕДИТ
-        #     N    │ КУПОН
-        #     *    │ В БРОЙ (device default fallback for unmapped)
-        #
-        # NOTE: upstream ErpNet.FP C# driver claims L=Card / N=Check.
-        # Wrong for DP-150 fw 3.00 — verified.
+        #   fall back to cash anyway — explicit so admins see one
+        #   source-of-truth instead of "magic" behaviour).
         #
         # NOTE: this PaymentType is the ISL-local one in
         # `protocol.py` with only 4 UPPERCASE members (CASH, CARD,
