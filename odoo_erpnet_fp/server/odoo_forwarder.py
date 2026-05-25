@@ -75,6 +75,10 @@ async def post_signed(
     headers = {
         "Content-Type": "application/json",
         "X-Registry-Signature": sig,
+        # Cloudflare front (browser-integrity check, error 1010)
+        # отхвърля no-UA заявки. Подаваме стабилен идентификатор.
+        "User-Agent": "Odoo.ErpNet.FP/1.0 (proxy bridge)",
+        "Accept": "application/json",
     }
     if extra_headers:
         headers.update(extra_headers)
