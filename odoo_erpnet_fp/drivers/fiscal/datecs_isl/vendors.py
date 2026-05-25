@@ -56,10 +56,55 @@ class DatecsIslDevice(IslDevice):
     URI_PREFIX = "bg.dt.isl"
 
     _PAYMENT_LETTERS = {
-        PaymentType.CASH: "P",
-        PaymentType.CHECK: "N",
-        PaymentType.CARD: "L",  # КАРТА → L (не C — реалният DP-150 отказва C с E404)
-        PaymentType.RESERVED1: "Q",
+        # Empirically verified labels on real DP-150 (DT737851,
+        # FW 3.00 22Jul25 1109) — 2026-05-25.
+        #
+        # The C-variant firmware exposes only THREE active payment
+        # letters; every other letter (C/D/I/J/K/M/Q/R/etc.) falls
+        # back to slot 0 and prints "В БРОЙ" on the receipt.
+        #
+        #   Letter │ Label
+        #   ───────┼─────────
+        #     P    │ В БРОЙ
+        #     L    │ КУПОН
+        #     N    │ КРЕДИТ
+        #     *    │ В БРОЙ (device default fallback)
+        #
+        # Mapping rationale:
+        #   cash    → P  (only slot for cash; matches В БРОЙ)
+        #   card    → N  (closest to "card" semantics; prints КРЕДИТ)
+        #   bank    → N  (bank-account payment ≈ card semantically)
+        #   coupons → L  (only slot for coupons; prints КУПОН)
+        #   Everything else → P (no dedicated slot; device would
+        #   fall back to cash anyway, we make it explicit so admins
+        #   see one source-of-truth instead of "magic" behaviour).
+        # Empirically verified via timestamp-matched receipts on real
+        # DP-150 (DT737851, FW 3.00 22Jul25 1109) — 2026-05-25.
+        # Two independent timestamp-correlated batches confirmed:
+        #
+        #   Letter │ Label
+        #   ───────┼─────────
+        #     P    │ В БРОЙ
+        #     L    │ КРЕДИТ
+        #     N    │ КУПОН
+        #     *    │ В БРОЙ (device default fallback for unmapped)
+        #
+        # NOTE: upstream ErpNet.FP C# driver claims L=Card / N=Check.
+        # Wrong for DP-150 fw 3.00 — verified.
+        #
+        # NOTE: this PaymentType is the ISL-local one in
+        # `protocol.py` with only 4 UPPERCASE members (CASH, CARD,
+        # CHECK, RESERVED1). The server-side schemas.PaymentType has
+        # 11 lowercase members; the adapter
+        # (server/adapters/payment_type.py) translates between the
+        # two before reaching this letter map.
+        PaymentType.CASH: "P",      # → В БРОЙ
+        PaymentType.CARD: "N",      # → КРЕДИТ — closest to card semantics
+        # CHECK has no dedicated ЧЕК label on DP-150 fw 3.00 —
+        # КУПОН (letter L) is the closest non-cash slot. Admin can
+        # reprogram via PROG menu if a separate ЧЕК label is wanted.
+        PaymentType.CHECK: "L",     # → КУПОН (no ЧЕК slot on this fw)
+        PaymentType.RESERVED1: "P", # → В БРОЙ (no slot)
     }
 
 
