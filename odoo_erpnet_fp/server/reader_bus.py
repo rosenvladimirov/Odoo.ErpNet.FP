@@ -43,9 +43,16 @@ class ReaderEventBus:
         webhooks: Optional[list[str]] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
         access_control: bool = False,
+        app=None,
     ) -> None:
         self.reader_id = reader_id
         self.webhooks = webhooks or []
+        # FastAPI app reference (passed by readers_hub at construction
+        # time) — used to grab the BusInjectClient config for
+        # `barcode.scanned` envelope emission. May be None when bus is
+        # constructed outside the request lifecycle (tests); in that
+        # case the bus_inject step is skipped silently.
+        self._app = app
         # Когато reader-ът е маркиран за контрол на достъп, всеки скан
         # се push-ва ДОПЪЛНИТЕЛНО на отделен native-IoT идентификатор
         # `hac.card/<id>` — отделна waiter опашка, така че консуматорът
@@ -150,6 +157,34 @@ class ReaderEventBus:
             _logger.debug(
                 "Reader %r IoT push failed (compat layer not loaded?)",
                 self.reader_id, exc_info=True,
+            )
+
+        # 5. bus_inject — emit a RAW `barcode.scanned` envelope so the
+        #    Odoo live_refresh service can fan the scan out to every
+        #    open backend tab. The proxy stays transparent: NO local
+        #    nomenclature parsing here. The browser-side handler does
+        #    the parse via `barcode.nomenclature.parse_for_target()`
+        #    RPC and resolves routing targets there. This keeps the
+        #    proxy a thin relay and lets the nomenclature live in one
+        #    authoritative place — Odoo.
+        try:
+            from ..clients.bus_inject import BusInjectClient
+            client = BusInjectClient.from_app(self._app) if self._app else None
+            if client is not None:
+                client.emit(
+                    "barcode.scanned",
+                    device=self.reader_id,
+                    device_kind="reader",
+                    data={
+                        "barcode": scan.barcode,
+                        "reader_id": self.reader_id,
+                    },
+                )
+                client.close()
+        except Exception:  # noqa: BLE001
+            _logger.debug(
+                "Reader %r bus_inject emit failed", self.reader_id,
+                exc_info=True,
             )
 
     # ─── History access ─────────────────────────────────────
