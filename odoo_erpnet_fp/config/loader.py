@@ -44,6 +44,7 @@ loader is provided for compatibility only.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -233,11 +234,21 @@ class PinpadConfig:
 
     `driver` selects the implementation:
         datecs_pay  — DatecsPay BluePad-50 / BlueCash-50 (C lib via ctypes)
+
+    Two ways to declare devices:
+      * `port: /dev/datecs_pinpad/3526900033`   — explicit single device
+      * `pattern: /dev/datecs_pinpad/*`         — auto-discovery, expanded
+                                                   at config load time into
+                                                   one PinpadConfig per match
+    When `pattern` is used, the entry's `id` becomes a base prefix:
+    each match yields `<id>_<basename>` so multiple paired pinpads
+    each get their own endpoint (e.g. `bluepad_3526900033`).
     """
 
     id: str
     driver: str = "datecs_pay"
     port: Optional[str] = None
+    pattern: Optional[str] = None
     baudrate: int = 115200
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -298,6 +309,9 @@ class ReaderConfig:
     baudrate: int = 9600                # for serial
     grab: bool = True                   # for hid: exclusive device access
     encoding: str = "ascii"             # for serial: line decode
+    # ─── TCP transport (push-only socket source) ─────────
+    tcp_host: Optional[str] = None      # remote host (e.g. BlueCash WiFi IP)
+    tcp_port: Optional[int] = None      # remote port (e.g. 9102 ScannerBridge)
     # ─── HID auto-discovery (alternative to device_path) ──
     vid: Optional[int] = None           # USB vendor id (decimal or hex literal)
     pid: Optional[int] = None           # USB product id
@@ -625,15 +639,49 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
 
     pinpads: list[PinpadConfig] = []
     for entry in data.get("pinpads", []) or []:
-        pinpads.append(
-            PinpadConfig(
-                id=str(entry["id"]),
-                driver=entry.get("driver", "datecs_pay"),
-                port=entry.get("port"),
-                baudrate=int(entry.get("baudrate", 115200)),
-                extras=entry.get("extras", {}),
+        base_id = str(entry["id"])
+        driver = entry.get("driver", "datecs_pay")
+        baudrate = int(entry.get("baudrate", 115200))
+        extras = entry.get("extras", {})
+        pattern = entry.get("pattern")
+        port = entry.get("port")
+        if pattern:
+            # Auto-discovery — expand glob at load time into one
+            # PinpadConfig per match. Each match's basename becomes
+            # part of the id so multiple paired pinpads each get a
+            # stable, unique endpoint.
+            import glob as _glob
+            matches = sorted(_glob.glob(pattern))
+            if not matches:
+                # Pattern but nothing matched yet — keep a placeholder
+                # so /pinpads stays empty-but-known, and re-scan can
+                # happen later. (Hot-plug TBD.)
+                continue
+            for match in matches:
+                sub = os.path.basename(match)
+                sub_id = "".join(
+                    c if c.isalnum() else "_" for c in sub
+                ).strip("_").lower()
+                pinpads.append(
+                    PinpadConfig(
+                        id=f"{base_id}_{sub_id}",
+                        driver=driver,
+                        port=match,
+                        pattern=pattern,
+                        baudrate=baudrate,
+                        extras=extras,
+                    )
+                )
+        else:
+            pinpads.append(
+                PinpadConfig(
+                    id=base_id,
+                    driver=driver,
+                    port=port,
+                    baudrate=baudrate,
+                    extras=extras,
+                )
             )
-        )
 
     scales: list[ScaleConfig] = []
     for entry in data.get("scales", []) or []:
@@ -661,6 +709,11 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 baudrate=int(entry.get("baudrate", 9600)),
                 grab=bool(entry.get("grab", True)),
                 encoding=entry.get("encoding", "ascii"),
+                tcp_host=entry.get("tcp_host"),
+                tcp_port=(
+                    int(entry["tcp_port"])
+                    if entry.get("tcp_port") is not None else None
+                ),
                 vid=_to_int(entry.get("vid", match.get("vid"))),
                 pid=_to_int(entry.get("pid", match.get("pid"))),
                 name_regex=entry.get("name_regex", match.get("name_regex")),

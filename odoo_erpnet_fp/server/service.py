@@ -530,10 +530,10 @@ class ReaderRegistry:
         for cfg in config.readers:
             if cfg.id in registry.readers:
                 raise ValueError(f"Duplicate reader id: {cfg.id!r}")
-            if cfg.transport not in ("hid", "serial", "external"):
+            if cfg.transport not in ("hid", "serial", "external", "tcp"):
                 raise ValueError(
                     f"Unknown reader transport {cfg.transport!r} on {cfg.id!r}; "
-                    f"expected 'hid', 'serial', or 'external'"
+                    f"expected 'hid', 'serial', 'tcp', or 'external'"
                 )
             bus = ReaderEventBus(reader_id=cfg.id, webhooks=cfg.webhooks,
                               access_control=cfg.access_control)
@@ -684,6 +684,21 @@ class ReaderRegistry:
                 strip_suffix=cfg.strip_suffix,
                 max_length=cfg.max_length,
                 caps_lock_strategy=cfg.caps_lock_strategy,
+            )
+        if cfg.transport == "tcp":
+            # BlueCash-50 ScannerBridge (channel 3, port 9102) и подобни
+            # push-only event sources: newline-delimited barcodes по TCP.
+            host = (cfg.tcp_host or cfg.device_path or "").strip()
+            port = int(cfg.tcp_port or 0)
+            if not host or not port:
+                raise ValueError(
+                    f"TCP reader {cfg.id!r} needs `tcp_host` and `tcp_port` "
+                    f"(e.g. 192.168.1.70:9102)"
+                )
+            from ..drivers.readers.tcp_reader import TcpBarcodeReader
+            return TcpBarcodeReader(
+                reader_id=cfg.id, host=host, port=port,
+                encoding=cfg.encoding,
             )
         # serial
         if not cfg.port:
