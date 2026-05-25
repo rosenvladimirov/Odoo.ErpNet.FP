@@ -1,499 +1,223 @@
-# ErpNet.FP — Roadmap to v1.0
+# Odoo.ErpNet.FP — Roadmap
 
-> Last updated: 2026-05-07 (evening) · Current version: **0.2.17**
-
-A pure-Python drop-in replacement for the C# ErpNet.FP fiscal-printer
-HTTP server, oriented at the Bulgarian POS / retail market. Adds
-native Odoo IoT Box compatibility, customer-display drivers, scale
-drivers, packaging-weight QC, and a sister daemon (`hid2serial`) that
-turns USB / BLE HID barcode scanners into virtual serial ports for
-clean integration.
+> **Last updated:** 2026-05-25 · **Current version:** `0.13.6` · **Target v1.0:** Q3 2026
+>
+> 🇧🇬 На български: **[ROADMAP.bg.md](ROADMAP.bg.md)**
 
 ---
 
-## Where we are (v0.2.5)
+## Where we are (May 2026)
 
-### Hardware drivers
-- ✅ **Datecs PM** (FP-700 MX series)
-- ✅ **Datecs ISL** (DP-25, DP-150, DP-150X, FP-700X, FP-2000, etc.)
-- ✅ **Customer displays**: Datecs DPD-201 + ESC/POS-compatible clones (ICD CD-5220, Birch DSP-V9, Bematech PDX-3000)
-- ✅ **Scales**: CAS PR-II / PD-II + Elicom EVL CASH47 + Datecs CAS-compat (~75% of BG retail), Toledo 8217 industrial, generic ASCII continuous (ACS / JCS / no-name OEM)
-- ✅ **HID barcode scanners**: USB HID + serial CDC + BLE — through `hid2serial` v0.1.6 sister daemon (production-ready Linux .deb, 23 MB Windows installer in v0.2.0-dev)
-- ✅ **Pinpad**: Datecs Pay (NDA-locked)
+After 13 versions and 12 months of compounding work, the proxy is
+**production-ready** for the core BG retail use case:
 
-### Integration
-- ✅ Native Odoo IoT Box compatibility — `/hw_drivers/{action,event}` (Odoo 18) + `/iot_drivers/{action,event}` (Odoo 19+); single instance serves both
-- ✅ `l10n_bg_erp_net_fp` v18 module → `iot.box` + `iot.device` + Phase 3 packaging weight QC; LIVE on dev-18 (18.0.10.0.4)
-- ✅ Dashboard with version badge + 5 tabbed device sections + reader running indicator + auto-refresh
-- ✅ **End-to-end POS test passed** (Teemi TMSL-55 BLE → hid2serial → ErpNet.FP → dev-18 Odoo POS, 2026-05-06)
+| Capability | Status |
+|---|:-:|
+| Datecs PM + ISL fiscal drivers (FP-700MX, BC-50MX, DP-150, DP-150X, FP-700X, FMP-350X, ...) | ✅ |
+| 6-slot payment mapping empirically verified on real hardware | ✅ |
+| PLU programming, X/Z reports, VAT programming | ✅ |
+| Customer displays, scales, barcode readers (HID/BLE), pinpads | ✅ |
+| Cameras + Polimex iCON access control + MQTT bridge | ✅ |
+| Odoo IoT Box compatibility (v18 + v19, single instance) | ✅ |
+| Fleet remote management (HMAC-signed heartbeat) | ✅ |
+| Prometheus metrics + Grafana dashboards | ✅ |
+| **BlueCash PLU Android client bridges** (shift_close + shift_signal) | ✅ NEW |
+| **Bilingual EN/BG documentation** | ✅ NEW |
 
-### Observability (added 2026-05-06 late evening — half of v0.4 done)
-- ✅ `/metrics` Prometheus endpoint — request count, per-path latency histogram, per-device error rate, scale reads, last weight gauge, reader/display counters
-- ✅ Local monitoring stack — Prometheus + Grafana in `docker-compose.yml`, scrapes proxy every 5 s, 7-day retention, ~220 MB RAM, anonymous Viewer access
-- ✅ Pre-loaded dashboard `erpnet-fp-overview` (provisioned via YAML)
-- ✅ TLS via Traefik wildcard cert (`grafana.lan.mcpworks.net`, ACME DNS-01 through Cloudflare resolver `cf`)
-- ✅ Embedded view inside Odoo — `l10n_bg_erp_net_fp` 18.0.10.1.0 + 19.0.10.1.0: new "Monitoring" menu under ErpNet.FP that opens the dashboard in a kiosk-mode iframe (URL configurable in Settings → POS → Packaging Weight QC → Embedded Grafana monitoring)
+What's left for **v1.0**:
+- Last 5–10 % of hardware coverage (pinpads, label-printing scales,
+  Tremol/Eltrade/Incotex drivers)
+- BlueCashPos backend integration (vendor POS as thin-client to Odoo)
+- Hardening: signed images, public release, Helm chart
 
-### Shipped 2026-05-07 (post-0.2.5)
+For a per-version timeline of what shipped already, scroll to
+[Shipped in the past](#shipped-in-the-past).
 
-- ✅ **OHAUS Ranger SICS scale driver** (TCP MT-SICS, Ethernet kit P/N 30037447) — 0.2.10
-- ✅ **Datecs PM `read_device_info`** (CMD 0x7B) — populates serial / FM / firmware in `/printers` — 0.2.10
-- ✅ **`/admin/self-update` endpoint + UI modal** (docker:25-cli sidecar with `compose --force-recreate`) — 0.2.11..0.2.14
-- ✅ **`/printers/{id}/vat-rates`** GET (read) + POST (program) — Datecs PM cmd 0x53; eliminates need for service tech to fix "Forbidden VAT" rejections — 0.2.15
-- ✅ **`/admin/logs` + `/admin/logs/stream` SSE** — in-memory ring buffer (5000 lines), level/contains filters, Server-Sent Events for live tail — 0.2.16
-- ✅ **Auto-bootstrap admin token** + `/admin/bootstrap-info` (RFC1918-restricted, one-time-claim → 410 Gone) — operators no longer need `ERPNET_ADMIN_TOKEN` env var preconfigured — 0.2.17
-- ✅ **l10n_bg_erp_net_fp split** — core (CE-installable) + EE bridge `l10n_bg_erp_net_fp_iot` + OCA bridge `l10n_bg_erp_net_fp_iot_oca`; **v19 deployed today** (was open in roadmap)
-- ✅ **Per-cashier operator credentials** on `res.users` — sent to Datecs as operator/password per receipt
-- ✅ **Cloudflare bot-rule UA workaround** — browser-like UA on backend HTTP calls (was 403'ing fp.stedy.bg behind CF)
+## Near-term: 2026-Q2 (June)
 
-### What's still missing for v1.0
+### Active — BlueCash PLU integration (Phase 1)
 
-- Hardware coverage gaps:
-  - **Pinpads**: myPOS + Borica direct protocol (Tier 1 — БГ retail
-    mainstream); SumUp + Stripe Terminal (Tier 2 — EU mobile);
-    Worldline / Verifone / Ingenico SDK contracts (Tier 3 — enterprise,
-    post-v1.0)
-  - **Customer displays**: Posiflex PD-2600 / PD-2800
-  - **Scales**: Datecs ETS / Elicom EPS label-printing
-- Fiscal printers: **Tremol** / **Eltrade** / **Incotex** — stubs exist, need full driver
-- ~~l10n_bg_erp_net_fp v19 deploy~~ — **DONE 2026-05-07**
-- Persistent device state, webhook delivery retry/DLQ, audit log JSONL rotation
-- Quality: minimal test coverage (173 unit tests today, no integration), no CI, no hardware-in-loop testing
-- Distribution: no signed Docker images, no Helm chart, no public release announcement
-- Windows: code-complete (`hid2serial` v0.2.0-dev) but **awaiting real-hardware test** with com0com + scanner
+**Status:** code-complete on both proxy + Odoo (`19.0.15.8.0`),
+**deployed to live dev** on `www.odoo-shell.space`, awaiting Android-
+side completion.
 
----
+Remaining work:
+- [ ] **Android `BlueCash.PluClient` repo** — `WS` subscriber listener
+      (`/devices/<serial>/events/ws`); sync runner that uploads
+      `pendingSync()` shifts via `POST /shift_close` (~150 LOC Kotlin).
+- [ ] **Public-reachable proxy URL** for cloud Odoo → proxy push
+      direction (currently `erpnet.lan.mcpworks.net` is LAN-only DNS).
+      Options: Cloudflare tunnel on the proxy, or per-tenant
+      `iot.box.erpnet_fp_url` override.
 
-## Roadmap
+### Active — BlueCashPos backend (Path A)
 
-### ~~v0.3 — Hardware completeness~~ → split
+Datecs ships a vendor POS app `BlueCashPos` on the BlueCash-50 PLU
+device. Its fiscal API points at `127.0.0.1:8086/api/v3/*`.
 
-The original v0.3 was scoped as one milestone. Today's session shipped
-**half of it** (HID scanner integration + auto-detect + hot-reload on
-disconnect). The remaining half stays as v0.3 below.
+- [ ] **Listener on `:8086`** for the 32 vendor-API endpoints.
+      Minimum-viable scope: intercept `fiscalreceipt`,
+      `fiscalreceipt-invoice`, `returndocument` → push to Odoo;
+      forward the other 29 untouched.
+- [ ] **Vendor app patch-free deployment** — `/etc/hosts` redirect
+      on the device so `BlueCashPos.apk` continues to think it's
+      talking to Datecs cloud, but actually hits our proxy.
 
-### v0.3 — Remaining hardware (~2 weeks, awaiting client hardware)
+### Active — Pinpad drivers
 
-**Goal:** cover the last 5% of the BG market.
+- [ ] **myPOS** (Free Partner Program submitted 2026-05-09;
+      sandbox access pending). BluePad-50/55 hardware = Datecs;
+      expect code reuse with the existing DatecsPay shim.
+- [ ] **Borica direct TID protocol** — one driver covers ALL
+      bank-issued terminals in BG (DSK, UBB, KBC, FiBank, Postbank,
+      Allianz). Integrator registration with Borica needed.
 
-- **Pinpad drivers**:
-  - **myPOS** — BluePad-50 / BlueCash-50 (same hardware vendor as
-    Datecs Pay — myPOS is a Datecs Holdings spin-off, terminals are
-    literally Datecs hardware with myPOS firmware → expect code reuse
-    with our existing DatecsPay driver). Free Partner Program,
-    instant-approval sandbox at partners.mypos.com — application
-    submitted 2026-05-09, awaiting access
-  - **Borica direct protocol** (`borica_tid` driver, scheduled v0.7) —
-    single integration covers ALL bank-issued terminals in BG (DSK,
-    UBB, KBC, FiBank, Postbank, Allianz — Ingenico Lane/Move/Desk,
-    Verifone V200/V240/VX series, PAX A920 hardware) since Borica is
-    the national card-scheme operator and bank-issued terminals
-    expose ONLY the Borica TID ECR protocol (vendor SDKs locked
-    by bank firmware signing). Driver layout: `drivers/pinpad/
-    borica_tid/` with `protocol.py` + `transport_{tcp,serial,usb,
-    bluetooth}.py`. Public TID protocol spec, integrator registration
-    with Borica needed
-  - **SumUp / Stripe Terminal** — EU mobile readers with public SDKs;
-    nice-to-have for the SMB segment that uses pure-mobile checkout
-- **Customer-display driver**: Posiflex PD-2600 / PD-2800 native protocol
-- **Scale drivers**: Datecs ETS / Elicom EPS label-printing (with PLU sync from Odoo product list) — required for butcher / deli clients
-- **Fiscal printer drivers**: finish Tremol / Eltrade / Incotex
-- l10n_bg_erp_net_fp 19.0.10.0.x — repair `l10n_bg_*` schema gaps on dev-19, deploy
-- Discovery wizard: browser-side fetch fallback for LAN-only setups (currently does server-side request, fails when proxy hostname is local-only)
+## Near-term: 2026-Q3 (July–September)
 
-### v0.4 — Production hardening (~2 weeks)
+### BlueCash storno Phase 2 — line-level refund
 
-**Goal:** safe to deploy at any client without babysitting.
+- [ ] Anchor [`anchor-bluecash-storno-phase2-contract`] —
+      `GET /pos.order/<id>/fiscal_receipt` on proxy for cross-device
+      storno lookup. Phase 2 contract carries per-line refund detail
+      (current Phase 1 is header-level only).
 
-- HTTPS auth: Bearer / mTLS / IP allow-list, picked per server in config.yaml
-- Per-device health monitoring — probe every 30 s, alert on webhook if a device stays down longer than 5 min
-- ~~`/metrics` Prometheus endpoint~~ — **DONE in 0.2.5** (full Counter/Gauge/Histogram, bounded label cardinality)
-- Persistent device state — JSON cache for last weight, last scan, last receipt; survives restart
-- Webhook delivery with retry queue + dead-letter queue
-- Audit log for all outgoing fiscal commands — JSONL, rotate daily, optional remote shipment
-- Windows hardware test with `hid2serial` 0.2.0 → release as 0.2.0 stable
+### Remaining fiscal drivers
 
-### v0.3 — Fleet remote management (SHIPPED 2026-05-07)
+- [ ] **Tremol** full PM driver (stub exists, needs real-hardware test)
+- [ ] **Eltrade** full PM driver (stub exists)
+- [ ] **Incotex** full PM driver (stub exists)
 
-**Goal:** one Odoo backend (`iot.mcpworks.net`, v19 CE) controls
-every deployed ErpNet.FP proxy without per-instance SSH.
+### Remaining peripherals
 
-**Delivered:**
-- Proxy: `config.yaml` `server.registry: {enabled, url, pairing_token, secret, interval_seconds}` (default `url: https://iot.mcpworks.net`); `server/registry.py` async httpx loop — pairs once via `POST /erp_net_fp/registry/pair`, persists secret back to YAML, then heartbeats every 60 s with HMAC-SHA256 signed body containing host, version, admin_token, device list
-- Odoo module **`l10n_bg_erp_net_fp_fleet`** (separate from core `l10n_bg_erp_net_fp` — minimal deps `base, mail`, deployable on dedicated CE 19 stack):
-  - Model `erpnet.fp.proxy` (state machine draft → pairing → active → archived)
-  - One-time pairing tokens (1-h TTL, single-use, swept by cron every 5 min)
-  - Long-lived `registry_secret` (32-byte URL-safe, validates HMAC on every heartbeat)
-  - `admin_token_encrypted` — Fernet AES-128-CBC ciphertext, key in `ir.config_parameter` `l10n_bg_erp_net_fp_fleet.fernet_key` (group_system only)
-  - Computed `alive` (true if `last_seen` < 180 s); decoration in list view (success/danger/warning)
-  - Form buttons: Generate Pairing Token / Self-update / View Logs / Program VAT (wizard) / Reset Secret / Archive
-  - Two security groups: `Fleet Viewer` (read-only) + `Fleet Manager` (full)
-  - Public-facing routes: `/erp_net_fp/registry/pair` + `/erp_net_fp/registry/heartbeat` (auth=public, gated by token / HMAC)
-- Bumped to **0.3.0**.
+- [ ] **SumUp / Stripe Terminal** — EU mobile readers for SMB segment
+- [ ] **Posiflex PD-2600 / PD-2800** customer displays
+- [ ] **Datecs ETS / Elicom EPS** label-printing scales — required
+      for butcher / deli clients (with PLU sync from Odoo)
 
-### v0.5 — Odoo integration depth (~2 weeks)
+### Access control — Phase C (biometric)
 
-**Goal:** zero-config experience for Odoo POS clients.
+`drivers/biometric/` — thin client to the external Node face-auth
+microservice (separate Rosen-owned project). Liveness + anti-spoof
+enforced **server-side in Odoo**, not on the kiosk. Configuration-
+gated; pure-fiscal deployments unaffected.
 
-- Auto-discovery push to Odoo — proxy POSTs to Odoo `/web/dataset/call_kw/iot.device/auto_create` so admins don't even click the discovery wizard
-- PLU sync wizards for label-printing scales — one-click "Sync products → scale memory" with the 28-prefix weight-barcode format (`28XXXXXWWWWWC`)
-- Multi-tenant ErpNet.FP — one instance, many clients with separate config namespaces and isolated audit logs
-- Browser-side discovery — wizard option to issue fetches from the user's browser (already in iot.box.connection_mode = `proxy` design — wire it to the wizard)
+## Mid-term: 2026-Q4 (October–December)
 
-### v0.6 — Quality + tooling (~1-2 weeks)
+### v1.0 release readiness
 
-**Goal:** confidence to release v1.0.
+- [ ] **Signed Docker images** (cosign), reproducible builds.
+- [ ] **Stable tags** `:1.0`, `:stable`, `:latest`.
+- [ ] **GitHub release** with changelog, signed checksums.
+- [ ] **Helm chart** for Kubernetes deployments.
+- [ ] **Authenticode-signed** Windows installer.
+- [ ] **Public announcement** — Odoo forum, LinkedIn,
+      `awesome-odoo` PR.
 
-- pytest test suite for every driver, mocking pyserial via `pyserial.tools.testing`
-- Integration tests: virtual scale + virtual fiscal printer + real Odoo POS in CI
-- Hardware-in-loop CI: GitHub Actions + Raspberry Pi runner with a real DP-150 + scale on the bench
-- BG admin docs — installation / config.yaml reference / common errors / per-vendor cheat-sheets
-- EN technical docs — developer guide + driver-extension tutorial
+### Quality + tooling
 
-### v1.0 — Stable release (~1 week)
+- [ ] pytest coverage for every driver (mock pyserial via
+      `pyserial.tools.testing`).
+- [ ] Hardware-in-loop CI — GitHub Actions + Raspberry Pi runner
+      with real DP-150 + scale on the bench.
+- [ ] Integration tests: virtual fiscal printer + virtual scale +
+      real Odoo POS in CI.
 
-- Signed Docker images (cosign), reproducible builds
-- Stable tags: `:stable` / `:1.0` / `:latest`
-- GitHub release with changelog + signed checksums
-- Helm chart for Kubernetes deployments
-- Public announcement: Odoo forum, LinkedIn, [`awesome-odoo`](https://github.com/odoo/awesome-odoo) PR
-- Final license review (currently LGPL-3.0-or-later)
-- Branded icons (placeholder green-square in v0.2.x) + Authenticode-signed Windows installer
+### Docs
 
----
+- [ ] EN technical guide + driver-extension tutorial.
+- [ ] BG admin docs — per-vendor cheat-sheets, common errors,
+      `config.yaml` reference.
 
-## Access-control add-on — camera streaming + live access control (pre-v1.0)
+## Longer-term: post-v1.0
 
-> Added 2026-05-17. This is an **add-on to the proxy, not a special
-> version / fork** — config-gated, additive driver families in the
-> same repo, riding the existing reader/registry/EventBus pattern.
-> Zero regression to fiscal / pinpad / readers / scales / displays
-> (independent `app.state.*` registries, separate `APIRouter`
-> prefixes, additive `iot_compat` kind-branches, additive
-> `registry._execute_command` kind). Driving consumer: the OPL-1
-> Odoo module `hr_attendance_access_control` (l10n-bulgaria-expert)
-> — two-channel access control (Channel 1 = standard `hr_attendance`
-> via credential/biometric transports; Channel 2 = camera/LPR →
-> Fleet). The **access decision is taken in Odoo** (Channel1⊕Channel2);
-> the proxy only streams cameras and executes open/deny commands.
-> Transport = existing native IoT long-poll + HTTP webhook + Fleet
-> command-queue (the AMQP/MQTT broker section below stays roadmap-only
-> and is **not** a prerequisite here).
+### MES / factory integration
 
-### Status — 2026-05-17 (committed + pushed, NOT deployed)
+> Real customer use case — ErpNet.FP proxy as bridge between MES
+> devices (PLCs, sensors, scales) and Odoo via an **external** broker
+> (RabbitMQ + `rabbitmq_mqtt`, Mosquitto, HiveMQ — customer's choice).
+> Proxy and Odoo are clients only.
 
-- **Phase A — ✅ DONE** (Odoo.ErpNet.FP `81ccc87`, `9be05cb..`; pyproject 0.6.0).
-  go2rtc media hub (internal vs `go2rtc_public_url` Cloudflare → video
-  flows browser↔go2rtc, zero proxy load); ALPR = fast-alpr sibling
-  (proxy-pull or zero-proxy `external`+`ALPR_WATCH`); ONVIF edge-ANPR
-  PullPoint + tolerant `POST /cameras/{id}/plate` (Hik ISAPI / Dahua);
-  BG Cyrillic→Latin plate canon. Dashboard 📷 tab + iot.device
-  (`type=camera`) + Fleet heartbeat. l10n-bulgaria Fleet camera-kind
-  `2896ea7` (v19 `19.0.3.x`).
-- **Phase B — ✅ DONE** (`9be05cb`, `9140a44`, `6944047`, `8dc397b`).
-  `drivers/access/` command-style actuators; **synchronous
-  zero-latency** `POST /access/{id}/{open,deny,status}` + native IoT
-  `/action` (Fleet `access_open` = secondary slow path only).
-  Transports: `relay_tcp`, `onvif` (reuses A), `gpio` (lazy
-  `[gpio]`), **`polimex`** (Polimex iCON WebSDK — ONE driver covers
-  the whole BG range: door-type iCON50/110/115/130/180/SmartVend +
-  relay-type iCON-R/110R via `relay_ctrl`), **`hikvision`** (ISAPI
-  RemoteControlDoor, Digest — DS-K2600/K2700, DS-K1T/K1A, DS-KD),
-  **`dahua`** (accessControl.cgi, Digest — ASC/ASI/VTO; legacy
-  SDK-only ASC explicitly unsupported), `wiegand` scaffold, `miv`
-  vendor slot (protocol pending — superseded by `polimex` for BG).
-  Dashboard 🚪 tab + Fleet access-kind (l10n-bulgaria `ffb8253`
-  `19.0.3.2.0`). Decision stays in Odoo (fail-secure). ⚠ Audit trap:
-  shop "iCON100"=IDTECK, "iTDC"=SOYAL — NOT covered (other vendors).
-- **Phase C — ⏳ NOT STARTED** (biometric face-auth client).
-- **Deploy — ⏳ GATED** (not on any live instance; iot.mcpworks.net
-  Fleet `-u` + proxy image are a separate explicit step).
-- **Open ideas:** WebSDK event-stream ingestion (Polimex reader/card
-  events → existing reader bus); real-hardware e2e (all drivers are
-  unit-tested only); MIV driver pending vendor spec.
-- Research (sourced, 3 agents): edge-ANPR/4K camera shortlist;
-  iCON130 = Polimex Holding (open WebSDK, AGPL `polimex/polimex-rfid`);
-  securitybulgaria.com = Polimex own store (one `polimex` driver);
-  Hik/Dahua AC = synchronous single-HTTP, no SDK → fit.
-- Handoff doc: `HANDOFF_ACCESS_ADDON.md` (self-contained state).
+- [ ] **MQTT client bridge** (`server/mqtt_bridge.py`, `aiomqtt`) —
+      already partly in place via the `/mqtt` route group; needs
+      production hardening.
+- [ ] **AMQP client + Odoo consumer** (`l10n_bg_erp_net_fp_amqp`).
+- [ ] **CFX wire format** — IPC-CFX (Apache-2.0, industry standard
+      for SMT/electronics manufacturing); Rosen has a dormant
+      `ipc-cfx` Python lib that can be activated as the canonical
+      envelope, giving zero-config compat with Yamaha, ASM/SIPLACE,
+      Panasonic, Mycronic, etc.
 
-**Phase A — Camera-stream driver family** (`drivers/cameras/`): ✅ DONE
-- ABC `CameraStream(camera_id)` modelled on `drivers/readers/`
-  (`BarcodeReader`/`BarcodeScan` analog); `OnvifCameraStream`,
-  `Go2RtcCameraStream`, generic RTSP
-- `server/camera_bus.py` (`CameraEventBus`, copy of `reader_bus.py`
-  pattern: history + webhook + native IoT push)
-- `routes/cameras.py` — `/cameras/{id}/{ws,events,last,snapshot}`
-  (shape mirrors `routes/readers.py`)
-- New native-IoT device prefix `camera.<id>` in `iot_compat.py`
-  (additive `elif kind == "camera"` branch + `_camera_action`)
-- LPR plate event → `CameraEventBus` → Odoo (existing webhook /
-  long-poll path; Odoo resolves plate → `fleet.vehicle` →
-  `fleet.vehicle.assignation.log` → driver/employee)
+### BlueCashPos backend (Path B — synthetic catalog)
 
-**Phase B — Live access control** (`drivers/access/`): ✅ DONE
-- ABC `AccessActuator(controller_id)` — barrier / relay / turnstile
-  (GPIO, relay-over-TCP, Wiegand, **Polimex iCON WebSDK**),
-  command-style like `drivers/customer_displays/`
-- `routes/access.py` — `POST /access/{id}/{open,deny,status}`
-- Additive `registry._execute_command` `kind == "access_open"`
-  branch (alongside `self_update` / `get_logs` / `program_vat`,
-  same `X-Admin-Token` pattern) — this is the Fleet command-queue
-  channel by which Odoo executes the access decision
-- **Target hardware: MIV Electronics access controller** — Rosen
-  to discuss a compatible controller with MIV Electronics; the
-  `AccessActuator` abstraction is designed vendor-agnostic so the
-  MIV protocol slots in as one transport (same approach as the
-  Borica/myPOS pinpad entries) without touching the others
-- Fail-secure: timeout / unreachable Odoo → deny, never open
+Far harder than Path A: hijack the vendor's `dbgen.datecs.bg`
+catalog endpoint and serve a synthetic AES-encrypted ZIP straight
+from Odoo. Requires reverse-engineering the AES key from the
+obfuscated Android class `d0/t0.java`. NDA-sensitive work, may
+need vendor blessing first.
 
-**Phase C — Biometric face-auth client driver** (`drivers/biometric/`): ⏳ NOT STARTED
-- Thin `httpx` client to the external Node face-auth μservice
-  (author Довид Росенов Милев, `odoo-face-auth/tuning`) — **NOT
-  reimplemented in Python** (heavy `@vladmandic/face-api` + tfjs +
-  ONNX + `@simplewebauthn` stack stays Node; no native deps enter
-  the fiscal Python process)
-- face-auth runs as a sibling process/service; `BiometricRegistry`
-  config points at its base URL; proxy is reverse-orchestrator,
-  not decision maker
-- New native-IoT device prefix `biometric.<id>`; **dedicated new
-  Odoo bus channel `hac.biometric/<terminal_id>`** for verify/enroll
-  results — additive, scoped per physical terminal, **must not touch
-  the InfoPay bus channel** (separately owned/active) nor the
-  LPR/kiosk channels
-- Liveness + anti-spoof are mandatory and enforced **server-side in
-  the Odoo bridge controller**, not on the kiosk
-- Biometric template storage (personal encrypted wallet) is a
-  **separate Rosen-owned workstream — out of scope for this proxy
-  add-on and for the implementing agent's plan**
-- Visitors: **no biometrics** — visitor access is handled by live
-  human security, not by this add-on
+### Optional / nice-to-have
 
-**Licensing:** the proxy stays LGPL-3.0-or-later; the access-control
-add-on driver families ride the same proxy unchanged. The Odoo-side
-consumer module is OPL-1 and HTTP-coupled (no Python import, not in
-`depends`) → no copyleft combination through the proxy. This is the
-concrete realisation of Open decision #5 ("LGPL-3 core + OPL-1
-premium add-ons").
+- **GUI config tool** (Tauri or Electron) — for non-technical
+  operators on Linux / Windows.
+- **Cluster mode** — 2+ ErpNet.FP instances behind a load balancer
+  with shared device state.
+- **Cloud-managed mode** — central registry + remote config push
+  (SaaS-style deployments).
+- **Plugin SDK** — third-party driver development without forking
+  the proxy.
 
-**Sequencing:** Phase A and B can ship independently of C. C depends
-on the external face-auth μservice and the Rosen-owned wallet
-workstream. All three are config-gated (`config.yaml`
-`features.access_control: true`) → byte-identical behaviour for
-pure-fiscal deployments when disabled.
+## Shipped in the past
 
----
+A compressed log of what landed already.
 
-## MES integration as broker client (AMQP + MQTT) — pre-v1.0
-
-Real customer use case: ErpNet.FP proxy bridges MES (Manufacturing
-Execution System) devices — PLCs, sensors, scales, machines on the
-factory floor — to the Odoo backend through an **external** broker
-(typically RabbitMQ with `rabbitmq_mqtt` plugin enabled, but any
-AMQP-0-9-1 / MQTT-3.1.1 compatible broker works). ErpNet.FP and
-Odoo are clients only — broker deployment, topology, users, ACLs,
-TLS certs are the customer's IT operation, outside of our scope.
-
-```
-MES devices  ─MQTT─►  [external broker]  ─MQTT─►  ErpNet.FP  ─HTTP─►  Odoo
-     ▲                                                ▲
-     └──MQTT◄─ [external broker] ◄─MQTT─ ErpNet.FP ◄─HTTP─┘
-```
-
-**Phase 1 — MQTT client bridge** (mid-development, before v1.0):
-- `odoo_erpnet_fp/server/mqtt_bridge.py` (`aiomqtt`) — connects to
-  the configured broker as a regular client; subscribes to topic
-  patterns from `config.yaml` `mqtt.subscriptions:[]`; per-message
-  handler dispatches to `/iot/event` POST to Odoo or to internal
-  proxy state
-- `config.yaml` adds `mqtt:` section: `url`, `username`, `password`,
-  `tls`, `subscriptions: []`, `qos`, `keepalive_seconds`
-- Topic conventions (recommended; broker admin can rename):
-  - MES events: `mes/<plant>/<line>/<machine>/<event>`
-  - Fiscal events: `fp/<tenant>/<device-kind>/<id>/<event>`
-  - Commands: `cmd/<tenant>/<target>/<command>`
-- Auto-reconnect with backoff; clean session on reconnect
-- Documentation: minimum broker requirements (RabbitMQ 3.13+ with
-  `rabbitmq_mqtt`; HiveMQ; Mosquitto with bridge to AMQP if Odoo
-  uses AMQP); zero opinion on how the customer runs it
-
-**Phase 2 — AMQP client + Odoo consumer** (right before v1.0):
-- `odoo_erpnet_fp/server/amqp.py` (`aio-pika`) — connects to the
-  broker as an AMQP client; declares (idempotently) topic exchange
-  bindings the customer's broker admin pre-created OR allows on-
-  connect declare per `config.yaml` flag
-- New Odoo module `l10n_bg_erp_net_fp_amqp` — cron-driven worker,
-  manual ack, idempotency by event id, retry with backoff before
-  redelivery (DLQ routing left to broker admin)
-- JSON envelope: `{schema_version, ts, tenant, source_kind,
-  source_id, event_type, payload}` — same format on AMQP and MQTT
-  sides for handler reuse
-- Sample `rabbitmqctl` / `rabbitmqadmin` snippets in docs to help
-  customer admin pre-create the expected exchange + binding when
-  on-connect declare is disabled
-
-**Phase 3 — production hardening** (post-v1.0):
-- TLS for both protocols (client cert paths in config)
-- Circuit-breaker fallback to HTTP webhook if broker unreachable
-  >5min — the existing webhook path stays as default; broker is
-  opt-in
-- Prometheus metrics: publish rate, retries, broker reconnects,
-  ack latency
-
-**Out of scope** (customer's IT operation, not ours):
-- Broker installation, container orchestration, Helm
-- User accounts, MQTT ACLs, AMQP virtual hosts
-- Cluster topology, HA, mirrored queues, federation
-- TLS cert issuance for the broker itself
-
-### CFX wire format — IPC-CFX schemas
-
-IPC-CFX (Connected Factory Exchange, Apache-2.0) is the industry
-standard for SMT / electronics manufacturing line messaging — major
-equipment vendors (ASM/SIPLACE, Yamaha, Panasonic, Mycronic, MIRTEC,
-Koh Young) ship it natively. Adopting it as our wire format = out-of-
-the-box compatibility with hundreds of factory machines, instead of
-inventing a custom envelope.
-
-**Existing Python library:** Rosen-authored `ipc-cfx` v0.1.0 alpha
-already exists at `/home/rosen/Проекти/amqp/proton-amqp/`
-(`github.com/rosenvladimirov/ipc_cfx`, branch
-`python-3.19-ipc-cfx-1.7`, ~1 yr dormant, 100 Python files, full
-domain coverage in `src/lib/cfx/`: production, information_system,
-maintenance, resourceperformance, structures, materials; plus
-runtime in `src/server/` with Apache Qpid Proton AMQP transport).
-Plan is **activate + integrate**, not port from scratch.
-
-**Reference:** the official C# library at `/home/rosen/Проекти/CFX/`
-serves as the audit source — diff its namespaces against the Python
-package, backfill any messages Rosen hasn't yet covered, on demand
-from the first MES customer.
-
-**Activation work** (planned for ErpNet.FP integration):
-- Refresh `ipc-cfx` against Python 3.12 (was tested on 3.9); resolve
-  one uncommitted change in `cfx_processor.py`
-- Decide repo strategy: keep `ipc-cfx` independent + `pip install`
-  into ErpNet.FP, OR monorepo / submodule
-- Optionally rebrand the folder from `proton-amqp` (transport-leaning)
-  to `ipc-cfx-py` (canonical) since CFX supports MQTT too
-- Audit completeness against the C# reference; backfill missing
-  message types per first MES client need
-- Wire into ErpNet.FP `odoo_erpnet_fp/server/` as broker client —
-  instantiate endpoint, register on startup, publish CFX-standard
-  Heartbeat / EndpointConnected, subscribe to production topics,
-  bridge events to Odoo via existing `/iot/event` HTTP path
-
-Topic conventions follow the CFX spec: `CFX.{Endpoint}`,
-`CFX.Production.Subscribers.<endpoint>`, etc. — the broker admin
-configures bindings per the spec; ErpNet.FP just publishes/subscribes
-on the standard names.
-
-`docs/cfx-compliance.md` lists which CFX message types are supported
-in each release with a link back to the C# reference for the rest.
-
----
-
-## Module independence — Grafana embed vs ErpNet.FP monitoring stack
-
-The Odoo Grafana embed and the ErpNet.FP-bundled monitoring stack are
-**fully decoupled** — either one works without the other:
-
-| Component | Lives in | Depends on |
+| Version | Date | Highlight |
 |---|---|---|
-| `l10n_bg_erp_net_fp` "Monitoring" menu (iframe + URL config) | Odoo addon | Just an iframe — works with **any** Grafana URL the user configures |
-| Bundled Prometheus + Grafana stack | `Odoo.ErpNet.FP/docker-compose.yml` | Just scrapes `odoo-erpnet-fp:8001/metrics` — works with or without an Odoo backend |
+| **0.13.6** | 2026-05-25 | BlueCash shift_close + shift_signal contracts; bilingual README |
+| 0.13.0 | 2026-05-22 | BluePad-55 BLE bridge (NDA-safe GATT↔PTY) |
+| 0.12.0 | 2026-05-18 | DP-150 ISL payment-letter mapping verified empirically |
+| 0.11.0 | 2026-05-17 | Camera + access-control add-on (Phases A+B): Polimex iCON / Hikvision / Dahua actuators |
+| 0.10.0 | 2026-05-15 | MQTT generic bridge route group |
+| 0.9.0  | 2026-05-13 | Multi-device proxy (multiple printers per config) |
+| 0.8.0  | 2026-05-10 | InfoPay payment-bridge integration |
+| 0.7.0  | 2026-05-08 | Native Odoo IoT Box compat (v18 `/hw_drivers` + v19 `/iot_drivers`) |
+| 0.6.0  | 2026-05-07 | Camera Phase A — go2rtc media hub + ALPR + ONVIF edge-ANPR |
+| 0.5.0  | 2026-05-07 | OHAUS Ranger SICS scale; `read_device_info`; `vat-rates` GET/POST; `/admin/logs` + bootstrap-token |
+| 0.4.0  | 2026-05-07 | `l10n_bg_erp_net_fp_fleet` split (CE-installable, EE/OCA bridges separate) |
+| 0.3.0  | 2026-05-07 | Fleet remote management (HMAC heartbeat + pairing + Fernet admin token) |
+| 0.2.5  | 2026-05-06 | Prometheus `/metrics` + Grafana stack + iframe embed in Odoo |
+| 0.2.0  | 2026-05-06 | HID barcode scanner via `hid2serial` sister daemon (Linux .deb + Windows installer) |
+| 0.1.0  | 2026-04-x  | Initial fork — Datecs PM/ISL drivers + customer displays + scales + Datecs Pay pinpad |
 
-Implications:
+## Schedule (revised 2026-05-25)
 
-- The Odoo embed module can point at a remote / hosted / cloud Grafana
-  (a customer's existing observability stack, Grafana Cloud, etc.).
-  Set Settings → POS → Embedded Grafana monitoring → URL to whatever
-  Grafana you already run.
-- The ErpNet.FP local stack can be browsed directly via
-  `http://localhost:3001` or `https://grafana.lan.mcpworks.net`
-  without ever installing the Odoo addon. This is useful for
-  technicians who want a quick health dashboard at the till without
-  jumping through Odoo.
-- If the URL field is blank in Odoo settings, the menu still loads
-  but shows a friendly "Configure Grafana URL first" message —
-  no traceback.
-- The dashboard JSON (`monitoring/grafana/dashboards/erpnet-fp.json`)
-  is provisioned in the bundled stack but is also a plain Grafana
-  export, importable into any other Grafana instance via the UI.
-
-So you can mix and match: bundled stack only, embed only (pointing
-elsewhere), both, or neither. The pieces don't share state, secrets,
-or wire formats beyond standard Prometheus scrape and HTTPS iframe.
-
----
-
-## hid2serial sister project
-
-| Version | Date | Highlights |
+| Milestone | ETA | Cumulative |
 |---|---|---|
-| 0.1.0 | 2026-05-06 | Linux daemon (evdev + pty), CLI |
-| 0.1.3 | 2026-05-06 | Tray (GTK3 + AyatanaAppIndicator, Wayland-OK), .deb packaging, polkit rule, generic any-external match |
-| 0.1.5 | 2026-05-06 | Reader watchdog — exits non-zero when readers die, systemd respawns to recover from BLE sleep |
-| 0.1.6 | 2026-05-06 | Pty slave-fd race fix — consumer no longer hits "device reports readiness but no data" |
-| **0.2.0-dev** | 2026-05-06 | Windows backend: RawInput + WH_KEYBOARD_LL hook + com0com bridge + pywin32 service + pystray tray; Docker-based NSIS installer (23 MB self-contained setup.exe). Code-complete, awaiting hardware test. |
+| BlueCash Phase 1 deployment + Android wiring | ~3 weeks | mid-June 2026 |
+| BlueCashPos backend Path A | ~3 weeks | early July 2026 |
+| myPOS + Borica pinpad drivers | ~4 weeks | early August 2026 |
+| Storno Phase 2 + remaining fiscal vendors | ~3 weeks | late August 2026 |
+| v1.0 stabilization + release | ~3 weeks | **mid-September 2026** |
 
----
+**Revised v1.0 target:** **mid-September 2026** (slipped from earlier
+"early July" — BlueCash split-flow took ~6 weeks of architecture +
+implementation work which wasn't in the original plan).
 
-## Optional / post-1.0
+## Open decisions
 
-- **GUI config tool** (Tauri or Electron) — for non-technical operators on Linux/Windows
-- **Cluster mode** — 2+ ErpNet.FP instances behind a load balancer with shared device state
-- **Cloud-managed mode** — central registry + remote config push (SaaS-style deployments)
-- **Plugin SDK** — third-party driver development without forking the proxy
-
----
-
-## Schedule (revised)
-
-| Milestone | Estimate | Cumulative |
-|---|---|---|
-| ~~v0.2.3~~ | shipped today | — |
-| v0.3 | 2 weeks (waits on hardware) | week 2 |
-| v0.4 | 2 weeks | week 4 |
-| v0.5 | 2 weeks | week 6 |
-| v0.6 | 1-2 weeks | week 8 |
-| ~~Access-control add-on A+B~~ | **DONE 2026-05-17** (committed, not deployed) | — |
-| Access-control add-on C (biometric) | pending; depends on external face-auth μsvc | overlaps v0.4–v0.6 |
-| v1.0 release | 1 week | **week 9** |
-
-**Revised target:** **~early July 2026**, faster than original (we picked up time today with HID scanner work and end-to-end test).
-
----
-
-## Open decisions (still relevant)
-
-1. **v0.3 hardware coverage scope** — full list above, or tight subset (Borica/myPOS + label-print scales only)?
-2. **Auth flavour for v0.4** — Bearer only (fast), mTLS (serious), or both?
-3. **Hardware-in-loop CI for v1.0** — yes (slower but trustworthy) or no (relies on manual smoke tests)?
-4. **Docs language priority** — BG first (clients in our pipeline) or EN first (community visibility)?
-5. **License review** — keep LGPL-3, or split into LGPL-3 core + OPL-1 premium add-ons (cluster, cloud-managed)?
-
----
-
-## Today's session deliverables (2026-05-06)
-
-- **9 commits** on `Odoo.ErpNet.FP` (dashboard tabs, version badge, IoT compat, displays, scale drivers, last-scan endpoints, etc.)
-- **8 tags** on `hid2serial` (v0.1.0 → v0.1.6, plus v0.2.0-dev)
-- **5 module bumps** on `l10n_bg_erp_net_fp` (18.0.9.0.0 → **18.0.10.1.0**, mirror in v19)
-- **deb package** built + tested (`hid2serial_0.1.6_all.deb`)
-- **Windows installer** built via Docker (`hid2serial-0.2.0-dev-setup.exe`)
-- **dev-18 deployment** — module installed + upgraded with all dependencies
-- **End-to-end POS test PASSED** with real Teemi BLE scanner
-
-### Late-evening additions (after the first POS test)
-
-- **`/metrics` endpoint** in proxy (0.2.4) — prometheus_client wrapper with no-op fallback when the lib is missing
-- **Local Prometheus + Grafana stack** in `docker-compose.yml` (0.2.4) — anonymous viewer, dark theme, 192 MB + 128 MB memory caps
-- **Wildcard TLS** for `*.lan.mcpworks.net` via Traefik DNS-01 ACME (Cloudflare resolver) — same cert covers `erpnet.lan.mcpworks.net` and `grafana.lan.mcpworks.net`
-- **Traefik routing precedence fix** — `priority: 100` on the grafana router so it wins over the proxy's `HostRegexp({sub:[a-z0-9-]+}.lan.mcpworks.net)` catch-all
-- **Grafana iframe-embedding allowed** (0.2.5) — `GF_SECURITY_ALLOW_EMBEDDING=true` + `SameSite=none` + `Secure` cookies → drops `X-Frame-Options: DENY`
-- **Odoo embed module** — `l10n_bg_erp_net_fp` 18.0.10.1.0 + 19.0.10.1.0: new OWL component reads `ir.config_parameter` for URL + dashboard UID, builds kiosk-mode URL with auto-refresh, renders inside Odoo backend; new menu "Monitoring" under ErpNet.FP, restricted to `point_of_sale.group_pos_manager`
-- **Documented decoupling** — see "Module independence" section above
+1. **Auth for Android → proxy in production** — keep current
+   HMAC-only, or layer per-device long-lived bearer tokens issued
+   via a separate `/auth/device/issue` endpoint?
+2. **BlueCashPos Path B** — is the AES RE work worth it, or is
+   Path A (vendor app untouched, fiscal intercept only) sufficient?
+3. **Hardware-in-loop CI for v1.0** — yes (slower but trustworthy)
+   or no (relies on manual smoke tests)?
+4. **License review** — keep LGPL-3, or split into LGPL-3 core +
+   OPL-1 premium add-ons (cluster, cloud-managed)?
+5. **`anchor-bluecash-shift-signal` topology** — current dev
+   deployment shows that cloud Odoo → LAN proxy push needs a
+   Cloudflare tunnel on the proxy. Is that the recommended pattern,
+   or should we add a poll-based fallback for the Android client
+   that doesn't require ingress on the proxy?
 
 ---
 
