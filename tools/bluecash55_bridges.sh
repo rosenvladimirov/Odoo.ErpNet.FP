@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BlueCash-50 socat bridges — wires the Android PinpadBridgeService
+# BlueCash-55 socat bridges — wires the Android PinpadBridgeService
 # (channel 2, port 9101) into a PTY that the existing datecs_pay
 # driver discovers via its `/dev/datecs_pinpad/*` pattern.
 #
@@ -25,8 +25,11 @@ set -euo pipefail
 
 BLUECASH_HOST="${BLUECASH_HOST:-192.168.1.70}"
 PINPAD_PORT="${PINPAD_PORT:-9101}"
-PTY_PATH="${PTY_PATH:-/dev/datecs_pinpad/bluecash01}"
-LOG_PATH="${LOG_PATH:-/tmp/socat_bluecash01.log}"
+# PTY basename = serial of the BlueCash-55. Endpoint id derives from
+# this basename via the `pinpad_<basename>` pattern in config.yaml
+# (so the final endpoint becomes `/pinpads/pinpad_DA054852`).
+PTY_PATH="${PTY_PATH:-/dev/datecs_pinpad/DA054852}"
+LOG_PATH="${LOG_PATH:-/tmp/socat_DA054852.log}"
 
 if [ ! -d "$(dirname "$PTY_PATH")" ]; then
     mkdir -p "$(dirname "$PTY_PATH")"
