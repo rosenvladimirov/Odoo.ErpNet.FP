@@ -12,31 +12,34 @@ The 11→8 collision is resolved by mapping less common ErpNet.FP types
 onto the same physical Datecs slots — the device's payment-type
 programming (cmd 0xFF parameter `PayName`) determines the receipt label.
 
-WHY DEVICE FAMILY MATTERS
-─────────────────────────
-Different printers in the same protocol family have DIFFERENT factory
-slot programming. FP-700MX, DP-150 and BC-50MX all speak PM, but the
-operator-visible labels at each slot differ:
+EMPIRICAL LAYOUT (Datecs PM, FW 22Jul25)
+────────────────────────────────────────
+Read via `read_parameter("PayName", i)` on FP-700MX (DA052093) AND
+confirmed identical from the handoff doc on BC-50MX (DA054852):
 
-    Slot │ FP-700 / DP-150       │ BC-50MX
-    ─────┼───────────────────────┼──────────────────
-     0   │ В БРОЙ                │ В БРОЙ
-     1   │ С КАРТА  (generic)    │ КРЕДИТ  (credit)
-     2   │ ЧЕК                   │ ДЕБ.КАРТА (debit)
-     3   │ КУПОНИ                │ ЧЕК
-     4   │ Ext. coupons          │ ВАУЧЕР
-     5   │ Опаковки              │ КУПОН
-     6   │ bank                  │ (does not exist)
-     7   │ internal-usage        │ (does not exist)
-     8-10│ damage / reserved     │ (do not exist)
+    Slot │ Label       │ Semantic
+    ─────┼─────────────┼─────────────────────
+     0   │ В БРОЙ      │ cash
+     1   │ КРЕДИТ      │ card / credit
+     2   │ ДЕБ.КАРТА   │ debit card (no alias)
+     3   │ ЧЕК         │ check
+     4   │ ВАУЧЕР      │ voucher (ext-coupons)
+     5   │ КУПОН       │ coupon
+     6-10│ —           │ ERR_FP_BAD_PARAM_2 — slot does not exist
 
-If we paid by `coupons` and printed the receipt on a BC-50MX with the
-FP-700 mapping (slot 3), the receipt would print ЧЕК — wrong label.
-The fix is a per-family lookup keyed by the model string the device
-returns via GET_INFO.
+Conclusion: the historical 11-slot Datecs-PM hard-coded mapping in
+this file was wrong (mapping `check` → slot 2 would print
+ДЕБ.КАРТА on the receipt, and `coupons` → slot 3 would print ЧЕК).
 
-Empirically verified 2026-05-25 by reading `PayName` parameter slots
-on each device via cmd 0xFF — see HANDOFF_PROXY_PAYMENT_ADAPTER.md.
+There's a single PM layout in production today. We keep the
+`detect_family()` machinery as a future-proofing hook (e.g. if a
+newer firmware revision adds more slots) but every PM device is
+currently mapped through the 6-slot table.
+
+If a particular device has reprogrammed PayName slots (admin used
+`set_parameter("PayName", i, label)`), the receipt label still
+follows the device's PayName — only the slot ID we send matters.
+Use `read_parameter("PayName", i)` at install time to verify.
 """
 
 from __future__ import annotations
@@ -69,51 +72,35 @@ def detect_family(model_name: str) -> str:
 
 # ─── per-family payment slot maps ───────────────────────────────────
 
-# FP-700 / FP-700MX / DP-150 — the layout we used to hard-code as the
-# "PM default". Slot 6+ are factory-programmed for the rare types so
-# they print sensible labels on the receipt.
-_DATECS_PM_FP_700: dict[PaymentType, int] = {
-    PaymentType.cash: 0,
-    PaymentType.card: 1,
-    PaymentType.check: 2,
-    PaymentType.coupons: 3,
-    PaymentType.ext_coupons: 4,
-    PaymentType.packaging: 5,
-    PaymentType.bank: 6,
-    PaymentType.internal_usage: 7,
-    # Last 3 collapse onto reserved slot 7 — admin should reprogram the
-    # device label if they need a distinct one.
-    PaymentType.damage: 7,
-    PaymentType.reserved1: 7,
-    PaymentType.reserved2: 7,
-}
-
-
-# BC-50MX — six active slots only. Types without a slot fall back to
-# the closest semantic equivalent.
-_DATECS_PM_BC_50: dict[PaymentType, int] = {
+# Datecs PM (FP-700MX, DP-150, BC-50MX, FW 22Jul25) — single 6-slot
+# layout confirmed empirically. Less common ErpNet.FP types fall back
+# to the closest semantic slot.
+_DATECS_PM_DEFAULT: dict[PaymentType, int] = {
     PaymentType.cash: 0,         # В БРОЙ
     PaymentType.card: 1,         # КРЕДИТ — generic card payment
-                                  # (slot 2 = ДЕБ.КАРТА; no debit alias yet)
+                                  # (slot 2 = ДЕБ.КАРТА; no debit alias)
     PaymentType.check: 3,        # ЧЕК
-    PaymentType.coupons: 5,      # КУПОН (single coupon slot here)
+    PaymentType.coupons: 5,      # КУПОН
     PaymentType.ext_coupons: 4,  # ВАУЧЕР (closest match)
-    # Slots 6-10 do not exist on BC-50MX. Fall back to the
-    # closest type so we still print SOMETHING legal. The admin can
-    # extend the device's PayName table (cmd 0xFF set) if a custom
-    # label is wanted.
-    PaymentType.packaging: 5,    # → КУПОН (no packaging slot)
-    PaymentType.bank: 1,         # → КРЕДИТ
-    PaymentType.internal_usage: 5,
-    PaymentType.damage: 5,
+    # Slots 6-10 do not exist. Map remaining types to the closest legal
+    # slot. Admin can reprogram PayName labels via
+    # `set_parameter("PayName", i, label)` if a custom UI string is
+    # needed — we still send the slot ID, the device decides the label.
+    PaymentType.packaging: 5,        # → КУПОН (no packaging slot)
+    PaymentType.bank: 1,             # → КРЕДИТ
+    PaymentType.internal_usage: 5,   # → КУПОН (no slot)
+    PaymentType.damage: 5,           # → КУПОН (no slot)
     PaymentType.reserved1: 5,
     PaymentType.reserved2: 5,
 }
 
 
+# Family table — single entry today, keyed by detect_family() output.
+# Add new families here if a future firmware ships with a different
+# layout (e.g. FP_700_v3 with 8 slots).
 _DATECS_PM_BY_FAMILY: dict[str, dict[PaymentType, int]] = {
-    "FP_700": _DATECS_PM_FP_700,
-    "BC_50": _DATECS_PM_BC_50,
+    "FP_700": _DATECS_PM_DEFAULT,
+    "BC_50": _DATECS_PM_DEFAULT,
 }
 
 
@@ -158,12 +145,12 @@ _VENDOR_OVERRIDES: dict[str, object] = {
 
 def _resolve_map(driver: str,
                  model_name: str = "") -> dict[PaymentType, int]:
-    table = _VENDOR_OVERRIDES.get(driver, _DATECS_PM_FP_700)
+    table = _VENDOR_OVERRIDES.get(driver, _DATECS_PM_DEFAULT)
     if isinstance(table, dict) and table and isinstance(
             next(iter(table.values())), dict):
         # Family-keyed (datecs.pm). Pick by model.
         family = detect_family(model_name)
-        return table.get(family) or table.get("FP_700") or _DATECS_PM_FP_700
+        return table.get(family) or table.get("FP_700") or _DATECS_PM_DEFAULT
     return table   # flat map (ISL, Eltrade)
 
 
