@@ -89,7 +89,10 @@ def _device_info(entry) -> DeviceInfo:
             comment_text_max_length=getattr(isl_cache, "comment_text_max_length", 42),
             operator_password_max_length=getattr(
                 isl_cache, "operator_password_max_length", 8),
-            supported_payment_types=pt_adapter.supported_for(cfg.driver),
+            supported_payment_types=pt_adapter.supported_for(
+                cfg.driver,
+                model_name=getattr(isl_cache, "model", "") or "",
+            ),
         )
     addr = cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}"
     transport_token = {"serial": "com", "tcp": "tcp"}.get(cfg.transport, "com")
@@ -208,6 +211,33 @@ async def printer_status(id: str, request: Request):
                         messages=msg_adapter.from_status(fs),
                     )
                 isl_status = await asyncio.to_thread(drv.get_status)
+                # DP-150 (ISL C-variant, fw 3.00) reject CMD_GET_STATUS (0x4A)
+                # with E402+E199 sticky bits even when the device is fine
+                # and listening on PC mode. Detection (CMD_GET_DEVICE_INFO
+                # = 0x5A) is the universally-accepted alive probe, so when
+                # we see ONLY those two sticky bits we fall back to it —
+                # if device info reads, the device is alive and ready.
+                if (not isl_status.ok and isl_status.errors and all(
+                        e.code in ("E402", "E199")
+                        for e in isl_status.errors) and hasattr(drv, "detect")):
+                    try:
+                        info = await asyncio.to_thread(drv.detect)
+                        if info is not None and info.model:
+                            _logger.info(
+                                "status: ignoring sticky E402+E199 on %s "
+                                "(detect responded: %s)", id, info.model)
+                            # Synthesise an OK status; the warning is kept
+                            # so the UI can surface "had sticky bits, ignored".
+                            from odoo_erpnet_fp.drivers.fiscal.datecs_isl.status \
+                                import DeviceStatus
+                            isl_status = DeviceStatus()
+                            isl_status.add_warning(
+                                "W402", "Sticky E402+E199 ignored "
+                                "(device-info probe succeeded)")
+                    except Exception as exc:
+                        _logger.debug(
+                            "status sticky-bit fallback detect failed: %s",
+                            exc)
                 # Device отговаря — opportunistic populate на info
                 # (FW, serial, FM serial, TIN) ако още не е cached.
                 # Status обикновено успява първи (cheap), а info-то
@@ -418,20 +448,41 @@ async def _print_receipt_impl(
 
                 for item in receipt.items:
                     if isinstance(item, SaleItem):
-                        await asyncio.to_thread(
-                            pm.register_sale,
-                            text=item.text[:cfg.extras.get("item_text_max_length", 36)],
-                            price=item.unit_price,
-                            quantity=item.quantity,
-                            vat_group=tg_adapter.to_letter(item.tax_group, cfg.driver),
-                            discount_percent=(
-                                item.price_modifier_value
-                                if item.price_modifier_type
-                                == PriceModifierType.discount_percent
-                                else None
-                            ),
-                            department=item.department,
-                        )
+                        # Ако item-ът има plu_number → ползваме SALE_PROGRAMMED
+                        # (cmd 0x3A) — задължително за устройства в PLU-only
+                        # режим (ФП-700МК, ERR_R_PLU_VAT_DISABLE при free-text).
+                        # PLU трябва да е предварително програмирано на ФУ-то
+                        # през /plu/sync endpoint. VAT group/name идват от
+                        # самото програмирано PLU; quantity + optional price
+                        # override-ват.
+                        if item.plu_number:
+                            await asyncio.to_thread(
+                                pm.sale_programmed,
+                                plu_number=item.plu_number,
+                                quantity=item.quantity,
+                                price=item.unit_price,  # optional override
+                                discount_percent=(
+                                    item.price_modifier_value
+                                    if item.price_modifier_type
+                                    == PriceModifierType.discount_percent
+                                    else None
+                                ),
+                            )
+                        else:
+                            await asyncio.to_thread(
+                                pm.register_sale,
+                                text=item.text[:cfg.extras.get("item_text_max_length", 36)],
+                                price=item.unit_price,
+                                quantity=item.quantity,
+                                vat_group=tg_adapter.to_letter(item.tax_group, cfg.driver),
+                                discount_percent=(
+                                    item.price_modifier_value
+                                    if item.price_modifier_type
+                                    == PriceModifierType.discount_percent
+                                    else None
+                                ),
+                                department=item.department,
+                            )
                         receipt_amount += item.quantity * item.unit_price
                     elif isinstance(item, SubtotalAmountItem):
                         # Subtotal-level amount modifier — Datecs PM doesn't
@@ -442,16 +493,34 @@ async def _print_receipt_impl(
                         )
                     # comment / footer-comment — TODO via cmd 0x36 (free text)
 
-                await asyncio.to_thread(pm.subtotal, print_subtotal=False)
+                # SUBTOTAL (cmd 0x33) е optional — някои фирмwares (напр.
+                # FP-700MX FW 3.00) изобщо не го поддържат и връщат -112001
+                # invalid syntax. payment_total + close_receipt автоматично
+                # изчисляват total-а без explicit subtotal, така че skip-ваме
+                # грешка без да fail-ваме receipt-а.
+                try:
+                    await asyncio.to_thread(pm.subtotal, print_subtotal=False)
+                except FiscalError as _exc:
+                    _logger.info(
+                        "%s: subtotal not supported by firmware (%s) — "
+                        "skipping, payment_total will compute total", id, _exc,
+                    )
 
                 if not receipt.payments:
                     await asyncio.to_thread(pm.payment_total, payment_type=0)
                 else:
+                    # Model name (e.g. "FP-700MX", "BC-50MX") drives the
+                    # per-family payment slot lookup — receipt label
+                    # printed on the device depends on it.
+                    _entry = registry.get(id)
+                    _info = getattr(_entry, "_isl_info_cache", None)
+                    _model = getattr(_info, "model", "") if _info else ""
                     for pay in receipt.payments:
                         await asyncio.to_thread(
                             pm.payment_total,
                             payment_type=pt_adapter.to_code(
-                                pay.payment_type, cfg.driver
+                                pay.payment_type, cfg.driver,
+                                model_name=_model,
                             ),
                             amount=pay.amount,
                         )
