@@ -262,6 +262,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.shift_sync import router as shift_sync_router
     from .routes.shift_signal import router as shift_signal_router
     from .routes.pos_order_storno import router as pos_order_storno_router
+    from .routes.zen_sync import router as zen_sync_router
     app.include_router(printers_router)
     app.include_router(pinpads_router)
     app.include_router(scales_router)
@@ -277,6 +278,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(shift_sync_router)
     app.include_router(shift_signal_router)
     app.include_router(pos_order_storno_router)
+    app.include_router(zen_sync_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
     # and Odoo 19+ (/iot_drivers) clients.

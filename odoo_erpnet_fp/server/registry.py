@@ -401,6 +401,26 @@ async def _post_command_result(client: httpx.AsyncClient,
         _logger.warning("Command-result POST failed: %s", exc)
 
 
+def _zen_graphs_summary() -> dict:
+    """Report locally-cached ZEN decision graphs back to Odoo. Odoo
+    compares to its current active zen.decision.table versions; on
+    mismatch the response can include pending_graphs to push.
+    Returns {builder_version, loaded: [{code, version, sha256}, ...]}.
+    Empty `loaded` ако access_decision package not importable (pure-
+    fiscal deployments)."""
+    try:
+        from .access_decision import GraphStore, BUILDER_VERSION
+    except ImportError:
+        return {"builder_version": None, "loaded": []}
+    try:
+        return {
+            "builder_version": BUILDER_VERSION,
+            "loaded": GraphStore().list_loaded(),
+        }
+    except Exception:  # noqa: BLE001
+        return {"builder_version": BUILDER_VERSION, "loaded": []}
+
+
 def _runtime_config_versions(app) -> dict:
     """SHA-256 hex of each AC fragment file (cameras/access/biometric/
     mqtt) as last loaded.  Empty dict when no fragments are present.
@@ -454,6 +474,7 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         "public_url": public_url,
         "devices": _device_summary(app),
         "runtime_config_versions": _runtime_config_versions(app),
+        "zen_graphs": _zen_graphs_summary(),
     }
     raw = json.dumps(body, separators=(",", ":"),
                      sort_keys=True).encode("utf-8")

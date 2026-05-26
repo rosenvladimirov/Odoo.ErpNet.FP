@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odoo-erpnet-fp"
-version = "0.14.0"
+version = "0.15.0"
 description = "Python drop-in replacement for ErpNet.FP HTTP fiscal-printer server, oriented for the Bulgarian POS market"
 readme = "README.md"
 license = { text = "LGPL-3.0-or-later" }
@@ -53,6 +53,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.26",
     "ruff>=0.3",
+]
+# ZEN/GoRules decision-table evaluator. Lazy-imported в proxy/access/
+# context_builder.py — pure-fiscal deployments never need it. Activates
+# offline access decisions: same JSON graph from Odoo, < 1ms eval.
+zen = [
+    "zen-engine>=0.30",
 ]
 
 [project.urls]
