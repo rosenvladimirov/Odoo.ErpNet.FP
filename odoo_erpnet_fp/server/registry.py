@@ -72,24 +72,43 @@ def _admin_token_value() -> str:
 
 
 def _device_summary(app) -> dict[str, list[str]]:
-    """Inventory the currently-loaded devices for the heartbeat body."""
+    """Inventory devices for the heartbeat body — union на:
+       (a) running registry (успешно стартирани device-и)
+       (b) configured device-и от config.yaml (`app.state.config`).
+    Така Fleet UI вижда и устройства, които proxy-то не е могло
+    да стартира (изключени, грешен transport, missing /dev/-path),
+    но са декларирани в конфига."""
     out: dict[str, list[str]] = {}
-    for attr, key in (
-        ("registry", "printers"),
-        ("pinpad_registry", "pinpads"),
-        ("scale_registry", "scales"),
-        ("reader_registry", "readers"),
-        ("display_registry", "displays"),
-        ("camera_registry", "cameras"),
-        ("access_registry", "access"),
-        ("biometric_registry", "biometric"),
+    for attr, key, cfg_attr in (
+        ("registry",            "printers",  "printers"),
+        ("pinpad_registry",     "pinpads",   "pinpads"),
+        ("scale_registry",      "scales",    "scales"),
+        ("reader_registry",     "readers",   "readers"),
+        ("display_registry",    "displays",  "displays"),
+        ("camera_registry",     "cameras",   "cameras"),
+        ("access_registry",     "access",    "access"),
+        ("biometric_registry",  "biometric", "biometric"),
     ):
+        ids: set[str] = set()
+        # (a) running devices
         try:
             reg = getattr(app.state, attr, None)
             inner = getattr(reg, key, None) if reg else None
-            out[key] = sorted(list(inner.keys())) if inner else []
+            if inner:
+                ids.update(inner.keys())
         except Exception:  # noqa: BLE001
-            out[key] = []
+            pass
+        # (b) configured-but-not-running — от парснатия AppConfig
+        try:
+            cfg = getattr(app.state, "config", None)
+            entries = getattr(cfg, cfg_attr, None) if cfg else None
+            for ent in entries or []:
+                ident = getattr(ent, "id", None)
+                if ident:
+                    ids.add(ident)
+        except Exception:  # noqa: BLE001
+            pass
+        out[key] = sorted(ids)
     return out
 
 
