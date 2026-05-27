@@ -259,8 +259,9 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.polimex_events import router as polimex_events_router
     from .routes.mqtt import router as mqtt_router
     from .routes.rescue import router as rescue_router
-    from .routes.shift_sync import router as shift_sync_router
-    from .routes.shift_signal import router as shift_signal_router
+    # `shift_sync` + `shift_signal` бяха consolidated в единен
+    # `shifts.py` router (виж feedback_shift_bridge_unification_2026_05_26).
+    from .routes.shifts import router as shifts_router
     from .routes.pos_order_storno import router as pos_order_storno_router
     from .routes.zen_sync import router as zen_sync_router
     app.include_router(printers_router)
@@ -275,8 +276,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(mqtt_router)
     app.include_router(admin_router)
     app.include_router(rescue_router)
-    app.include_router(shift_sync_router)
-    app.include_router(shift_signal_router)
+    app.include_router(shifts_router)
     app.include_router(pos_order_storno_router)
     app.include_router(zen_sync_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
