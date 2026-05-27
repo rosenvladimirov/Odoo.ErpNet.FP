@@ -522,6 +522,37 @@ MqttIngestConfig = MqttBrokerSpec
 
 
 @dataclass
+class ShiftConfig:
+    """Shift-sync bridge endpoint — long-lived TCP client to Android.
+
+    `device_serial` doubles as the URL path token: routes `/shifts/<serial>/*`
+    look up the bridge by this value. `tcp_host` / `tcp_port` point at the
+    Android `ShiftBridgeService` listener (4-ти bridge до printer/pinpad/
+    scanner — обикновено port 9103).
+
+    Wire protocol is NDJSON (line-delimited JSON) with correlation IDs.
+    The proxy keeps one persistent connection per device, with reconnect
+    + backoff on drop (mirrors pinpad bridge pattern). Async notifications
+    from Android (`shift.closed`, `shift.opened`) are received на same
+    connection.
+    """
+
+    id: str
+    device_serial: str
+    tcp_host: str
+    tcp_port: int = 9103
+    encoding: str = "utf-8"
+    # Reconnect / backoff knobs — conservative defaults that match the
+    # other long-lived bridges. Set in YAML only ако трябва tuning per
+    # deployment (slow Wi-Fi, flaky AP, etc.).
+    connect_timeout: float = 5.0
+    call_timeout: float = 10.0
+    backoff_initial: float = 1.0
+    backoff_max: float = 30.0
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
@@ -532,6 +563,7 @@ class AppConfig:
     cameras: list[CameraConfig] = field(default_factory=list)
     access: list[AccessConfig] = field(default_factory=list)
     biometric: list[BiometricConfig] = field(default_factory=list)
+    shifts: list[ShiftConfig] = field(default_factory=list)
     # Multi-broker list (R5). `mqtt_ingest` (single) kept as a
     # read-only property below for legacy callers that only want
     # "the first broker".
@@ -653,9 +685,20 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             import glob as _glob
             matches = sorted(_glob.glob(pattern))
             if not matches:
-                # Pattern but nothing matched yet — keep a placeholder
-                # so /pinpads stays empty-but-known, and re-scan can
-                # happen later. (Hot-plug TBD.)
+                # Pattern but nothing matched yet — оставяме base entry
+                # без `port` за да остане видим за Fleet heartbeat
+                # (configured-but-offline). Runtime registry няма да го
+                # стартира (port=None), но `cfg.pinpads` го пази.
+                pinpads.append(
+                    PinpadConfig(
+                        id=base_id,
+                        driver=driver,
+                        port=None,
+                        pattern=pattern,
+                        baudrate=baudrate,
+                        extras=extras,
+                    )
+                )
                 continue
             for match in matches:
                 sub = os.path.basename(match)
@@ -857,6 +900,23 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    shifts: list[ShiftConfig] = []
+    for entry in data.get("shifts", []) or []:
+        shifts.append(
+            ShiftConfig(
+                id=str(entry["id"]),
+                device_serial=str(entry["device_serial"]),
+                tcp_host=str(entry["tcp_host"]),
+                tcp_port=int(entry.get("tcp_port", 9103)),
+                encoding=str(entry.get("encoding", "utf-8")),
+                connect_timeout=float(entry.get("connect_timeout", 5.0)),
+                call_timeout=float(entry.get("call_timeout", 10.0)),
+                backoff_initial=float(entry.get("backoff_initial", 1.0)),
+                backoff_max=float(entry.get("backoff_max", 30.0)),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     # MQTT subscribers — top-level `mqtt:` block. Two accepted shapes:
     #   1. list of dicts (R5+) — multi-broker, each with a unique name.
     #   2. dict (legacy single-broker) — wrapped into a 1-element list
@@ -916,6 +976,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         cameras=cameras,
         access=access,
         biometric=biometric,
+        shifts=shifts,
         mqtt_brokers=mqtt_brokers,
         auto_detect=bool(data.get("auto_detect", False)),
     )
@@ -1037,7 +1098,7 @@ def load_config(path: str | Path) -> AppConfig:
             FRAGMENT_SECTIONS = (
                 "cameras", "access", "biometric", "mqtt",
                 "printers", "pinpads", "scales",
-                "displays", "readers",
+                "displays", "readers", "shifts",
             )
             for frag in sorted(fragments_dir.glob("*.yaml")):
                 try:
