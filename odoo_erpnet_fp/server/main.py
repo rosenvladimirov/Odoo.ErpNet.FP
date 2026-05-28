@@ -163,6 +163,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             await camera_registry.stop_all()
             await access_registry.stop_all()
             await biometric_registry.stop_all()
+            await shift_registry.close_all()
 
     app = FastAPI(
         title="Odoo.ErpNet.FP",
@@ -185,6 +186,12 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     access_registry = AccessRegistry.from_config(config)
     biometric_registry = BiometricRegistry.from_config(config)
     mqtt_ingest_registry = MqttIngestRegistry.from_config(config)
+    # Shift bridges — long-lived TCP clients към Android ShiftBridgeService
+    # (one per paired BlueCash device). Lazy-connect: socket се отваря на
+    # първото HTTP /shifts/<serial>/* извикване.
+    from .drivers.shifts import ShiftBridgeRegistry, set_shift_registry
+    shift_registry = ShiftBridgeRegistry.from_config(config)
+    set_shift_registry(shift_registry)
     app.state.registry = registry
     app.state.pinpad_registry = pinpad_registry
     app.state.scale_registry = scale_registry
@@ -194,6 +201,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.access_registry = access_registry
     app.state.biometric_registry = biometric_registry
     app.state.mqtt_ingest_registry = mqtt_ingest_registry
+    app.state.shift_registry = shift_registry
     app.state.config = config
 
     from . import metrics
@@ -340,6 +348,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "access": list(access_registry.access.keys()),
             "biometric": list(biometric_registry.biometric.keys()),
             "mqtt": list(mqtt_ingest_registry.specs.keys()),
+            "shifts": shift_registry.all_serials(),
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the
