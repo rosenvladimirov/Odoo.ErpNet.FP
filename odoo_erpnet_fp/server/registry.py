@@ -312,6 +312,22 @@ async def _execute_command(cmd: dict, app=None) -> tuple[bool, dict | None, str]
                         "pin_code": payload.get("pin_code") or "0000",
                     },
                 )
+            elif kind == "polimex.ts.sync":
+                # Write a Time-Schedule slot (D3) into the controller so
+                # local cards enforce their window offline. Payload:
+                #   {access_id, ts_number, week: [[[begin,end],...]×day]×8}
+                access_id = (payload.get("access_id") or "").strip()
+                if not access_id:
+                    return False, None, (
+                        "polimex.ts.sync: access_id required")
+                r = await c.post(
+                    f"{base}/access/{access_id}/time_schedule",
+                    headers=headers,
+                    json={
+                        "ts_number": int(payload.get("ts_number", 1)),
+                        "week": payload.get("week") or [],
+                    },
+                )
             elif kind == "access_open":
                 # ВТОРИЧЕН remote-management канал (напр. ръчно отваряне
                 # от Fleet UI). Носи heartbeat латентност (~до 60s) —

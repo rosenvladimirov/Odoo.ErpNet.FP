@@ -249,6 +249,52 @@ def test_polimex_card_add_remove_frames(monkeypatch):
         rel.add_card("0003201160")
 
 
+def test_polimex_ts_data_encoding():
+    # D3 ts_data: '%02X'%number + 8 days × 4 intervals × 8 chars = 258.
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    enc = PolimexWebSdkActuator._encode_ts_data
+    # Mon-Fri 09:00-18:00, weekend+holiday empty
+    week = [[(9.0, 18.0)]] * 5 + [[], [], []]
+    d = enc(1, week)
+    assert len(d) == 258
+    assert d[:2] == "01"                       # TS number 1
+    assert d[2:10] == "09001800"               # Mon interval 1
+    assert d[2 + 32:2 + 32 + 8] == "09001800"  # Tue interval 1
+    # weekend (day 5) all-zero
+    assert d[2 + 5 * 32:2 + 6 * 32] == "00000000" * 4
+    # half-hour boundary 09:30
+    d2 = enc(2, [[(9.5, 17.5)]])
+    assert d2[:2] == "02" and d2[2:10] == "09301730"
+
+
+def test_polimex_write_ts_frame(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    cap = {}
+
+    class _R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"response": {"e": 0}}
+
+    class _C:
+        def __init__(self, *a, **k): pass
+        def post(self, url, json=None, **k):
+            cap["body"] = json
+            return _R()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _C)
+    a = PolimexWebSdkActuator("g", host="192.168.3.151", user="admin",
+                              password="", bus_id=38)
+    a.write_time_schedule(1, [[(9.0, 18.0)]] * 5 + [[], [], []])
+    assert cap["body"]["cmd"]["c"] == "D3"
+    assert cap["body"]["cmd"]["id"] == 38
+    assert len(cap["body"]["cmd"]["d"]) == 258
+    a.read_time_schedule(1)
+    assert cap["body"]["cmd"] == {"id": 38, "c": "F3", "d": "01"}
+
+
 def test_hikvision_isapi_open_deny(monkeypatch):
     import httpx
     from odoo_erpnet_fp.drivers.access.hikvision import HikvisionIsapiActuator

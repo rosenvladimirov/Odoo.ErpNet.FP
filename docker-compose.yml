@@ -49,7 +49,7 @@ services:
   # ─── Our Python proxy (replaces ErpNet.FP C# container) ─────────
   odoo-erpnet-fp:
     # Access-control host (laptop primary) → zen variant за offline ZEN.
-    image: vladimirovrosen/odoo-erpnet-fp:0.17.0-zen
+    image: vladimirovrosen/odoo-erpnet-fp:0.18.0-zen
     build:
       context: .
       dockerfile: docker/Dockerfile

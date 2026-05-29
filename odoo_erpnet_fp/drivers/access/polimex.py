@@ -232,6 +232,48 @@ class PolimexWebSdkActuator(AccessActuator):
                                   rights_data, rights_mask)
         return self._send_frame("D1", d)
 
+    # ── Time schedules (D3 Write Time Schedules) ─────────────────────
+    @staticmethod
+    def _encode_ts_data(ts_number: int, week) -> str:
+        """Build the D3 ts_data blob, ported 1:1 from the AGPL reference
+        (hr_rfid_ctrl_time_schedule save_ts + get_set_str):
+
+            ts_data = '%02X' % ts_number + 8 days × 4 intervals × 8 chars
+
+        `week`: list of 8 days (0=Mon … 6=Sun, 7=Holiday); each day a list
+        of up to 4 (begin, end) float-hour pairs. Missing intervals are
+        padded with 00:00–00:00. begin/end encode as '%02d%02d' (HH, MM):
+        9.5 → "0930". Total length = 2 + 8*4*8 = 258 chars.
+        """
+        def _hhmm(f):
+            f = max(0.0, float(f or 0.0))
+            return "%02d%02d" % (int(f), int(round((f - int(f)) * 60)))
+
+        out = ["%02X" % (int(ts_number) & 0xFF)]
+        week = list(week or [])
+        for day in range(8):
+            intervals = list(week[day]) if day < len(week) and week[day] \
+                else []
+            for n in range(4):
+                if n < len(intervals):
+                    begin, end = intervals[n]
+                    out.append(_hhmm(begin) + _hhmm(end))
+                else:
+                    out.append("00000000")
+        return "".join(out)
+
+    def write_time_schedule(self, ts_number: int, week) -> dict:
+        """Write a Time-Schedule slot into the controller (D3). `week` is
+        the semantic 8-day interval spec (see _encode_ts_data); the driver
+        builds the wire blob. The card then references `ts_number` in its
+        ts_code so it enforces the window standalone/offline."""
+        d = self._encode_ts_data(ts_number, week)
+        return self._send_frame("D3", d)
+
+    def read_time_schedule(self, ts_number: int) -> dict:
+        """Read a Time-Schedule slot (F3) — for verification/diffing."""
+        return self._send_frame("F3", "%02X" % (int(ts_number) & 0xFF))
+
     def remove_card(self, card_number: str, rights_mask: int = 1,
                     pin_code: str = "0000") -> dict:
         """Delete a card from the controller's local memory. A D1 with

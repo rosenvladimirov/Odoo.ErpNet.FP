@@ -4,8 +4,8 @@
 extended into a one-stop POS-side device hub for the Bulgarian retail
 and SMB market.**
 
-> Version `0.17.0` · Production · Docker: `vladimirovrosen/odoo-erpnet-fp:0.17.0` (also `:latest`)
-> Access-control image (offline ZEN): build with `--build-arg EXTRAS=zen`, tag `:0.17.0-zen`.
+> Version `0.18.0` · Production · Docker: `vladimirovrosen/odoo-erpnet-fp:0.18.0` (also `:latest`)
+> Access-control image (offline ZEN): build with `--build-arg EXTRAS=zen`, tag `:0.18.0-zen`.
 
 ## Quick links
 

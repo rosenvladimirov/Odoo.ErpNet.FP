@@ -60,6 +60,14 @@ class CardReq(BaseModel):
     pin_code: str = "0000"
 
 
+class TimeScheduleReq(BaseModel):
+    """Write a Time-Schedule slot into the controller (D3) so LOCAL cards
+    enforce the window standalone/offline. `week` = 8 days (0=Mon … 6=Sun,
+    7=Holiday), each a list of [begin, end] float-hour pairs (max 4)."""
+    ts_number: int
+    week: list[list[list[float]]] = []
+
+
 def _registry(request: Request):
     return getattr(request.app.state, "access_registry", None)
 
@@ -196,6 +204,32 @@ async def access_card(id: str, request: Request, req: CardReq):
     })
     return {"ok": True, "id": id, "op": op,
             "card_number": req.card_number, "raw": raw}
+
+
+@router.post("/{id}/time_schedule")
+async def access_time_schedule(id: str, request: Request,
+                               req: TimeScheduleReq):
+    """Write a Polimex Time-Schedule slot (D3) into the controller. Used
+    by `polimex.ts.sync` before a local card.sync so the burned card
+    enforces its window offline. 501 for drivers without TS support."""
+    reg = _require(request, id)
+    try:
+        async with reg.with_access(id) as act:
+            fn = getattr(act, "write_time_schedule", None)
+            if fn is None:
+                raise HTTPException(
+                    status.HTTP_501_NOT_IMPLEMENTED,
+                    f"Access {id!r} driver does not support time "
+                    f"schedules")
+            raw = await asyncio.to_thread(fn, req.ts_number, req.week)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Access {id!r} time-schedule write failed: {exc}",
+        ) from exc
+    return {"ok": True, "id": id, "ts_number": req.ts_number, "raw": raw}
 
 
 @router.get("/{id}/status")
