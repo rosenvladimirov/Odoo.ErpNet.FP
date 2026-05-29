@@ -198,6 +198,57 @@ def test_polimex_direct_command(monkeypatch):
     assert captured["body"] == {"cmd": {"id": 1, "c": "DB", "d": "010000"}}
 
 
+def test_polimex_d1_card_encoding():
+    # D1 d-body ported 1:1 from the AGPL reference send_command (door
+    # branch): card_num + pin + ts + rights_data + rights_mask, each
+    # card/pin char prefixed with '0'; rights as 2 hex.
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    enc = PolimexWebSdkActuator._encode_d1_body
+    # reader 1, TS slot 1, pin 0000 → 20+8+8+2+2 = 40 chars
+    d = enc("0003201160", "0000", "01000000", 1, 1)
+    assert d == "0000000302000101060000000000010000000101"
+    assert len(d) == 40
+    # remove (rights_data 0, mask set)
+    assert enc("0003201160", "0000", "00000000", 0, 1) == \
+        "0000000302000101060000000000000000000001"
+
+
+def test_polimex_card_add_remove_frames(monkeypatch):
+    import httpx
+    from odoo_erpnet_fp.drivers.access.polimex import PolimexWebSdkActuator
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"response": {"e": 0}}
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        def post(self, url, json=None, **k):
+            captured["url"] = url
+            captured["body"] = json
+            return _Resp()
+        def close(self): pass
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    a = PolimexWebSdkActuator("gate", host="192.168.3.151", user="admin",
+                              password="", bus_id=38, output=1)
+    a.add_card("0003201160", rights_data=1, rights_mask=1,
+               ts_code="01000000", pin_code="0000")
+    assert captured["url"] == "http://192.168.3.151/sdk/cmd.json"
+    assert captured["body"] == {"cmd": {
+        "id": 38, "c": "D1",
+        "d": "0000000302000101060000000000010000000101"}}
+    a.remove_card("0003201160", rights_mask=1)
+    assert captured["body"]["cmd"]["c"] == "D1"
+    assert captured["body"]["cmd"]["d"].endswith("000001")
+    # relay-type controllers reject card programming (different D1 body)
+    rel = PolimexWebSdkActuator("g", host="h", bus_id=1, relay_ctrl=True)
+    with pytest.raises(RuntimeError, match="relay-type"):
+        rel.add_card("0003201160")
+
+
 def test_hikvision_isapi_open_deny(monkeypatch):
     import httpx
     from odoo_erpnet_fp.drivers.access.hikvision import HikvisionIsapiActuator

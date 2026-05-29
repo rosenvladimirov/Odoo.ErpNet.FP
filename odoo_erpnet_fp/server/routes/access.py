@@ -47,6 +47,19 @@ class OpenReq(BaseModel):
     seconds: Optional[float] = None
 
 
+class CardReq(BaseModel):
+    """Card-management request — write/remove a card into the
+    controller's LOCAL memory (offline / standalone validation).
+    Odoo computes the semantic rights + TS slot; the driver owns the
+    wire frame. `op`: 'add' (default) or 'remove'."""
+    card_number: str
+    op: str = "add"
+    rights_data: int = 1   # per-reader bitmask (reader N → 1<<(N-1))
+    rights_mask: int = 1   # which bits we set/clear
+    ts_code: str = "01000000"  # 4-byte hex: TS slot per reader
+    pin_code: str = "0000"
+
+
 def _registry(request: Request):
     return getattr(request.app.state, "access_registry", None)
 
@@ -141,6 +154,48 @@ async def access_deny(id: str, request: Request):
         "reason": "operator deny",
     })
     return res.to_json()
+
+
+@router.post("/{id}/card")
+async def access_card(id: str, request: Request, req: CardReq):
+    """Program (or remove) a card in the controller's LOCAL memory.
+
+    Used by the Odoo `polimex.card.sync` Fleet command for `local`/`both`
+    credentials — the card then validates standalone on the controller,
+    no server round-trip. Drivers without card management (relay/gpio/
+    onvif) return 501. Synchronous — returns the driver's raw result.
+    """
+    reg = _require(request, id)
+    op = (req.op or "add").strip().lower()
+    try:
+        async with reg.with_access(id) as act:
+            fn = getattr(act, "add_card" if op == "add" else "remove_card",
+                         None)
+            if fn is None:
+                raise HTTPException(
+                    status.HTTP_501_NOT_IMPLEMENTED,
+                    f"Access {id!r} driver does not support card "
+                    f"management")
+            if op == "add":
+                raw = await asyncio.to_thread(
+                    fn, req.card_number, req.rights_data, req.rights_mask,
+                    req.ts_code, req.pin_code)
+            else:
+                raw = await asyncio.to_thread(
+                    fn, req.card_number, req.rights_mask, req.pin_code)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Access {id!r} card {op} failed: {exc}",
+        ) from exc
+    _bus_emit(request, "access.card_synced", id, {
+        "card_number": req.card_number, "op": op,
+        "rights_data": req.rights_data, "ts_code": req.ts_code,
+    })
+    return {"ok": True, "id": id, "op": op,
+            "card_number": req.card_number, "raw": raw}
 
 
 @router.get("/{id}/status")

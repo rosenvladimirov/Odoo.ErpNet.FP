@@ -140,17 +140,17 @@ class PolimexWebSdkActuator(AccessActuator):
     # Source: hr_rfid_command.py errors enum in github.com/polimex/polimex-rfid.
     _RETRYABLE_ERRORS = (20, 24)
 
-    def _send(self, state: int, seconds: int) -> dict:
-        """POST a DB frame, retrying on transient e=20/24 codes.
+    def _send_frame(self, c: str, d: str) -> dict:
+        """POST a raw SDK frame `{"cmd":{"id":bus_id,"c":c,"d":d}}`,
+        retrying on transient e=20/24 codes.
 
         Raises RuntimeError with a meaningful message on any non-transient
-        error or after the retry budget is exhausted — the route handler
-        translates that into a 502 + door.denied bus_inject event.
+        error or after the retry budget is exhausted — the caller (door
+        route or card-sync handler) translates that into a failure.
         """
         import time
         self.connect()
-        body = {"cmd": {"id": self.bus_id, "c": "DB",
-                        "d": self._payload(state, seconds)}}
+        body = {"cmd": {"id": self.bus_id, "c": c, "d": d}}
         base = f"http://{self.host}"
         if self.port and self.port != 80:
             base = f"http://{self.host}:{self.port}"
@@ -174,14 +174,77 @@ class PolimexWebSdkActuator(AccessActuator):
                 # a malformed frame; e=14 unknown command; etc.
                 raise RuntimeError(
                     f"Polimex error e={err_code} (non-transient) "
-                    f"on bus_id={self.bus_id}, c=DB")
+                    f"on bus_id={self.bus_id}, c={c}")
             last_err = f"e={err_code}"
             if attempt < 3:
                 # Linear backoff: 0.4s, 1.0s.
                 time.sleep(0.4 * attempt + 0.0)
         raise RuntimeError(
             f"Polimex {last_err} after 3 retries on bus_id={self.bus_id}, "
-            f"c=DB — controller unreachable on the RS-485 bus")
+            f"c={c} — controller unreachable on the RS-485 bus")
+
+    def _send(self, state: int, seconds: int) -> dict:
+        """Open Output (DB) — momentary/latched door pulse."""
+        return self._send_frame("DB", self._payload(state, seconds))
+
+    # ── Card management (D1 Add/Delete Card) ─────────────────────────
+    @staticmethod
+    def _encode_d1_body(card_number: str, pin_code: str, ts_code: str,
+                        rights_data: int, rights_mask: int) -> str:
+        """Build the D1 d-body for a standard door controller (non-relay,
+        non-temperature, non-alarm). Ported 1:1 from the AGPL reference
+        hr_rfid `send_command` (github.com/polimex/polimex-rfid):
+
+            d = card_num + pin_code + ts_code + rights_data + rights_mask
+
+        - card_num / pin_code: each character prefixed with '0'
+          (10-digit card → 20 chars; pin "0000" → "00000000")
+        - ts_code: 8 hex chars = 4 bytes, one Time-Schedule slot number
+          per reader (reader N → ts_code[(N-1)*2:][:2])
+        - rights_data / rights_mask: 2 hex chars each — per-reader bitmask
+          (reader N bit = 1 << (N-1)); mask marks which bits we set.
+        """
+        card_enc = "".join("0" + ch for ch in str(card_number))
+        pin_enc = "".join("0" + ch for ch in str(pin_code or "0000"))
+        ts = str(ts_code or "00000000")
+        return card_enc + pin_enc + ts \
+            + "{:02X}".format(int(rights_data) & 0xFF) \
+            + "{:02X}".format(int(rights_mask) & 0xFF)
+
+    def add_card(self, card_number: str, rights_data: int = 1,
+                 rights_mask: int = 1, ts_code: str = "01000000",
+                 pin_code: str = "0000") -> dict:
+        """Write (or update) a card into the controller's local memory.
+
+        Semantic inputs from Odoo; this driver owns the wire format.
+        Defaults grant reader 1 (`rights_data=rights_mask=1`) on TS slot 1
+        (`ts_code="01000000"` = always, reader 1) — Odoo overrides with the
+        real per-reader rights + resource.calendar-mapped TS slot.
+
+        relay-type controllers use a different D1 body — not yet ported;
+        guard so we don't send a malformed frame.
+        """
+        if self.relay_ctrl:
+            raise RuntimeError(
+                f"Polimex {self.controller_id!r}: card programming on "
+                f"relay-type controllers not yet supported")
+        d = self._encode_d1_body(card_number, pin_code, ts_code,
+                                  rights_data, rights_mask)
+        return self._send_frame("D1", d)
+
+    def remove_card(self, card_number: str, rights_mask: int = 1,
+                    pin_code: str = "0000") -> dict:
+        """Delete a card from the controller's local memory. A D1 with
+        rights_data=0 + rights_mask set clears the card's rights (the
+        reference toggles bits off via the mask; mask with data 0 revokes).
+        """
+        if self.relay_ctrl:
+            raise RuntimeError(
+                f"Polimex {self.controller_id!r}: card programming on "
+                f"relay-type controllers not yet supported")
+        d = self._encode_d1_body(card_number, pin_code, "00000000",
+                                  rights_data=0, rights_mask=rights_mask)
+        return self._send_frame("D1", d)
 
     def open(self, pulse_seconds: Optional[float] = None) -> AccessResult:
         secs = self.default_pulse if pulse_seconds is None else pulse_seconds

@@ -275,32 +275,43 @@ async def _execute_command(cmd: dict, app=None) -> tuple[bool, dict | None, str]
                 )
             elif kind == "polimex.card.sync":
                 # Card management push from Odoo (access.credential
-                # action_push_to_hardware). Payload:
-                #   {card_number, controller_bus_id, active, valid_from,
-                #    valid_to, perimeter_ids, schedule_id, credential_id,
-                #    card_id}
+                # action_push_to_hardware). For `local`/`both` storage the
+                # card is written into the controller's LOCAL memory via the
+                # /access/{id}/card endpoint (driver builds the D1 frame).
+                # For `cloud` storage Odoo sets hw_op='skip' — the card is
+                # server-validated only (External DB + proxy ZEN), no D1.
                 #
-                # STUB v0.16: acknowledge + log only. Real hardware
-                # programming via Polimex Web SDK (POST /api/cards +
-                # POST /api/access-rules) is TODO — depends on per-site
-                # SDK credentials and timezone-table mapping which need
-                # operator setup.
-                _logger.info(
-                    "polimex.card.sync received: card=%s bus_id=%s "
-                    "active=%s valid_to=%s perims=%s",
-                    payload.get("card_number"),
-                    payload.get("controller_bus_id"),
-                    payload.get("active"),
-                    payload.get("valid_to"),
-                    payload.get("perimeter_ids"))
-                return True, {
-                    "acknowledged": True,
-                    "card_number": payload.get("card_number"),
-                    "controller_bus_id": payload.get("controller_bus_id"),
-                    "applied": False,
-                    "note": ("Stub handler — Polimex SDK card programming "
-                             "not yet wired. Command logged."),
-                }, ""
+                # Payload:
+                #   {access_id, card_number, hw_op: add|remove|skip,
+                #    rights_data, rights_mask, ts_code, pin_code,
+                #    controller_bus_id, active, credential_id, card_id, ...}
+                hw_op = (payload.get("hw_op") or "add").strip().lower()
+                access_id = (payload.get("access_id") or "").strip()
+                card_number = payload.get("card_number")
+                if hw_op == "skip":
+                    _logger.info(
+                        "polimex.card.sync card=%s access_id=%s → cloud "
+                        "(skip local write)", card_number, access_id)
+                    return True, {"card_number": card_number,
+                                  "access_id": access_id, "applied": False,
+                                  "mode": "cloud",
+                                  "note": "cloud credential — no local D1"}, ""
+                if not access_id:
+                    return False, None, (
+                        "polimex.card.sync: access_id required for local "
+                        "card write (controller proxy_access_id)")
+                r = await c.post(
+                    f"{base}/access/{access_id}/card",
+                    headers=headers,
+                    json={
+                        "card_number": card_number,
+                        "op": "remove" if hw_op == "remove" else "add",
+                        "rights_data": int(payload.get("rights_data", 1)),
+                        "rights_mask": int(payload.get("rights_mask", 1)),
+                        "ts_code": payload.get("ts_code") or "01000000",
+                        "pin_code": payload.get("pin_code") or "0000",
+                    },
+                )
             elif kind == "access_open":
                 # ВТОРИЧЕН remote-management канал (напр. ръчно отваряне
                 # от Fleet UI). Носи heartbeat латентност (~до 60s) —
