@@ -20,7 +20,12 @@ WORKDIR /app
 COPY pyproject.toml /app/
 COPY README.md /app/
 COPY odoo_erpnet_fp /app/odoo_erpnet_fp
-RUN pip install --no-cache-dir .
+# Optional pip extras. Empty by default → slim, pure-fiscal image.
+# Build access-control images with `--build-arg EXTRAS=zen` to pull
+# zen-engine (offline ZEN access decisions). Multiple comma-separated
+# extras allowed, e.g. EXTRAS=zen,onvif.
+ARG EXTRAS=""
+RUN pip install --no-cache-dir ".$( [ -n "$EXTRAS" ] && printf '[%s]' "$EXTRAS" )"
 
 # Default config dir — bind-mount /etc/odoo-erpnet-fp:/app/config:ro to override
 RUN mkdir -p /app/config /app/certs
