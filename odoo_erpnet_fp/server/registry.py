@@ -273,6 +273,34 @@ async def _execute_command(cmd: dict, app=None) -> tuple[bool, dict | None, str]
                     headers=headers,
                     json={"rates": payload.get("rates") or {}},
                 )
+            elif kind == "polimex.card.sync":
+                # Card management push from Odoo (access.credential
+                # action_push_to_hardware). Payload:
+                #   {card_number, controller_bus_id, active, valid_from,
+                #    valid_to, perimeter_ids, schedule_id, credential_id,
+                #    card_id}
+                #
+                # STUB v0.16: acknowledge + log only. Real hardware
+                # programming via Polimex Web SDK (POST /api/cards +
+                # POST /api/access-rules) is TODO — depends on per-site
+                # SDK credentials and timezone-table mapping which need
+                # operator setup.
+                _logger.info(
+                    "polimex.card.sync received: card=%s bus_id=%s "
+                    "active=%s valid_to=%s perims=%s",
+                    payload.get("card_number"),
+                    payload.get("controller_bus_id"),
+                    payload.get("active"),
+                    payload.get("valid_to"),
+                    payload.get("perimeter_ids"))
+                return True, {
+                    "acknowledged": True,
+                    "card_number": payload.get("card_number"),
+                    "controller_bus_id": payload.get("controller_bus_id"),
+                    "applied": False,
+                    "note": ("Stub handler — Polimex SDK card programming "
+                             "not yet wired. Command logged."),
+                }, ""
             elif kind == "access_open":
                 # ВТОРИЧЕН remote-management канал (напр. ръчно отваряне
                 # от Fleet UI). Носи heartbeat латентност (~до 60s) —
