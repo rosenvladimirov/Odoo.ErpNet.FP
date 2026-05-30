@@ -1,6 +1,6 @@
 # Odoo.ErpNet.FP — Roadmap
 
-> **Last updated:** 2026-05-25 · **Current version:** `0.13.6` · **Target v1.0:** Q3 2026
+> **Last updated:** 2026-05-30 · **Current version:** `0.18.0` · **Target v1.0:** Q3 2026
 >
 > 🇧🇬 На български: **[ROADMAP.bg.md](ROADMAP.bg.md)**
 
@@ -8,7 +8,7 @@
 
 ## Where we are (May 2026)
 
-After 13 versions and 12 months of compounding work, the proxy is
+After 18 versions and 12 months of compounding work, the proxy is
 **production-ready** for the core BG retail use case:
 
 | Capability | Status |
@@ -17,12 +17,14 @@ After 13 versions and 12 months of compounding work, the proxy is
 | 6-slot payment mapping empirically verified on real hardware | ✅ |
 | PLU programming, X/Z reports, VAT programming | ✅ |
 | Customer displays, scales, barcode readers (HID/BLE), pinpads | ✅ |
-| Cameras + Polimex iCON access control + MQTT bridge | ✅ |
+| Cameras + Polimex iCON access control (door open) + MQTT bridge | ✅ |
+| **Polimex card management** — D1 card write + D3 time-schedule write | ✅ NEW |
+| **Offline ZEN access decisions** (cached graph, fail-secure, local eval) | ✅ NEW |
 | Odoo IoT Box compatibility (v18 + v19, single instance) | ✅ |
 | Fleet remote management (HMAC-signed heartbeat) | ✅ |
 | Prometheus metrics + Grafana dashboards | ✅ |
-| **BlueCash PLU Android client bridges** (shift_close + shift_signal) | ✅ NEW |
-| **Bilingual EN/BG documentation** | ✅ NEW |
+| **BlueCash PLU Android client bridges** (shift_close + shift_signal) | ✅ |
+| **Bilingual EN/BG documentation** | ✅ |
 
 What's left for **v1.0**:
 - Last 5–10 % of hardware coverage (pinpads, label-printing scales,
@@ -93,6 +95,30 @@ device. Its fiscal API points at `127.0.0.1:8086/api/v3/*`.
 - [ ] **Posiflex PD-2600 / PD-2800** customer displays
 - [ ] **Datecs ETS / Elicom EPS** label-printing scales — required
       for butcher / deli clients (with PLU sync from Odoo)
+
+### Access control — shipped (Phases A → B → ZEN/card)
+
+> ✅ **Done** (0.15–0.18, deployed to MEC k3s + laptop). The proxy is now
+> a full Polimex access node, not just a door-opener:
+>
+> - **Offline ZEN decisions** (`0.15.0`) — `access_decision` package:
+>   `ZenLocalRunner` + `GraphStore` + byte-identical `derive_direction`;
+>   `POST /access/evaluate` decides locally from the cached ZEN graph when
+>   Odoo is unreachable (fail-secure deny). Graph + version synced over
+>   heartbeat (`routes/zen_sync.py`). zen-engine baked into the
+>   `:*-zen` image via `--build-arg EXTRAS=zen` (`0.16.1`).
+> - **Card management** (`0.17.0`) — `POST /access/{id}/card` →
+>   Polimex **D1** write/remove in controller memory; `polimex.card.sync`
+>   Fleet command drives it (cloud = server-validated / local = burned in /
+>   both). Pairs with the Odoo `access.credential.controller` ledger.
+> - **Time schedules** (`0.18.0`) — `POST /access/{id}/time_schedule` →
+>   Polimex **D3** onboard TS slot, so a local card enforces its working-
+>   hours window **standalone / offline**. Written before the card by the
+>   `polimex.ts.sync` command.
+>
+> Remaining for access control: **E2E on a physical iCON115** (needs
+> office/VPN), and real-hardware verification of multi-reader rights /
+> holiday (D4) tables.
 
 ### Access control — Phase C (biometric)
 
@@ -172,6 +198,11 @@ A compressed log of what landed already.
 
 | Version | Date | Highlight |
 |---|---|---|
+| **0.18.0** | 2026-05-30 | Polimex D3 time-schedule write — offline time-window enforcement for local cards |
+| **0.17.0** | 2026-05-29 | Polimex D1 card sync — write/remove card in controller memory (cloud / local / both) |
+| **0.16.1** | 2026-05-29 | Dockerfile `EXTRAS` build-arg — `zen-engine` baked into access-control image (offline ZEN was dormant) |
+| **0.16.0** | 2026-05-26 | Unified shift bridge (TCP :9103); heartbeat device-summary union |
+| **0.15.0** | 2026-05-26 | Proxy-side offline ZEN access decisions (Phase 3) — `access_decision` package, GraphStore, `/access/evaluate`, graph sync |
 | **0.13.6** | 2026-05-25 | BlueCash shift_close + shift_signal contracts; bilingual README |
 | 0.13.0 | 2026-05-22 | BluePad-55 BLE bridge (NDA-safe GATT↔PTY) |
 | 0.12.0 | 2026-05-18 | DP-150 ISL payment-letter mapping verified empirically |

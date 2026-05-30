@@ -1,4 +1,71 @@
 
+## [0.18.0] — 2026-05-30
+
+### Added — Polimex offline time-window enforcement (D3 time schedules)
+
+- **`write_time_schedule(ts_number, week)` + `read_time_schedule` (F3)** on
+  the Polimex driver — builds the 258-char D3 `ts_data` blob (2-hex slot
+  number + 8 days × 4 intervals × HH:MM begin/end; day 7 = holiday), ported
+  1:1 from the AGPL `hr_rfid` reference. A local card references the slot via
+  its `ts_code`, so the controller enforces the schedule **standalone /
+  offline**.
+- **`POST /access/{id}/card`** is preceded by **`POST /access/{id}/time_
+  schedule`**: the Odoo `polimex.ts.sync` Fleet command writes the onboard
+  TS slot (D3) before the card.sync (D1) that references it.
+- Tests: D3 `ts_data` encoding (length, day layout, HH:MM) + D3/F3 frames.
+
+## [0.17.0] — 2026-05-29
+
+### Added — Polimex card sync (D1) — local-memory card programming
+
+- **`add_card` / `remove_card` (D1 Add/Delete Card)** on the Polimex driver
+  build the D1 d-body (`card + pin + ts_code + rights_data + rights_mask`),
+  ported 1:1 from the AGPL `hr_rfid` reference; `_send` generalised to
+  `_send_frame(c, d)`. Relay-type controllers guarded (different D1 body).
+- **`POST /access/{id}/card`** (add|remove) — 501 for drivers without card
+  management, 502 on controller error.
+- **`polimex.card.sync` handler** is no longer a stub: `hw_op=skip` for
+  **cloud** credentials (server-validated, External DB + proxy ZEN), or
+  add/remove for **local/both** credentials (D1 write); needs `access_id`
+  (the controller's `proxy_access_id`).
+- Tests: D1 encoding vs reference + add/remove frames + relay guard.
+
+## [0.16.1] — 2026-05-29
+
+### Fixed — zen-engine missing from the image (offline ZEN was dormant)
+
+- The Docker image installed only the base package (`pip install .`), never
+  the `[zen]` extra, so deployed proxies had **no `zen-engine`** → every
+  proxy-side offline access decision silently fell to fail-secure deny.
+- **`ARG EXTRAS`** + conditional `pip install ".[${EXTRAS}]"`: fiscal-only
+  images stay slim; access-control images build with
+  `--build-arg EXTRAS=zen` → tag `:0.16.1-zen` (now `:0.18.0-zen`). Verified
+  live: `zen-engine 0.53.0` + `import zen` OK in the deployed pods.
+
+## [0.16.0] — 2026-05-26
+
+### Added
+
+- **Unified shift bridge (TCP :9103)** — `drivers/shifts/` + `/shifts`
+  routes; proxy connects as a persistent NDJSON client (pull + mark + status
+  + signal on one channel). Heartbeat `_device_summary` now unions running +
+  configured devices.
+
+## [0.15.0] — 2026-05-26
+
+### Added — proxy-side offline ZEN access decisions (Phase 3)
+
+- **`server/access_decision/` package** — `ZenLocalRunner` (lazy
+  `import zen`, **fail-secure deny** on any failure), `GraphStore` (persists
+  ZEN graphs to `/app/data/zen_graphs/<code>.json` with version + sha256),
+  and `derive_direction()` (sequence/timing preprocessing kept byte-identical
+  with the Odoo-side `access.context.builder._derive_direction`).
+- **`POST /access/evaluate`** — evaluate an access decision **offline** when
+  Odoo is unreachable: build the 3-dimension context, run the cached ZEN
+  graph locally, return `{ok, result, version, fail_secure}`.
+- **Heartbeat graph sync** (`routes/zen_sync.py`) — proxy reports loaded
+  graph versions; Odoo pushes `pending_graphs` on mismatch.
+
 ## [0.14.0] — 2026-05-26
 
 ### Added — BlueCash PLU client integration (4 anchor contracts shipped)

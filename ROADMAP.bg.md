@@ -1,6 +1,6 @@
 # Odoo.ErpNet.FP — План за развитие
 
-> **Последна актуализация:** 2026-05-25 · **Текуща версия:** `0.13.6` · **Цел v1.0:** Q3 2026
+> **Последна актуализация:** 2026-05-30 · **Текуща версия:** `0.18.0` · **Цел v1.0:** Q3 2026
 >
 > 🇬🇧 In English: **[ROADMAP.md](ROADMAP.md)**
 
@@ -17,7 +17,9 @@
 | 6-slot payment mapping емпирично проверен на реален хардуер | ✅ |
 | PLU програмиране, X/Z отчети, ДДС програмиране | ✅ |
 | Клиентски дисплеи, везни, баркод четци (HID/BLE), pinpad-и | ✅ |
-| Камери + Polimex iCON контрол на достъп + MQTT мост | ✅ |
+| Камери + Polimex iCON контрол на достъп (отваряне) + MQTT мост | ✅ |
+| **Polimex управление на карти** — D1 запис на карта + D3 запис на график | ✅ НОВО |
+| **Offline ZEN решения за достъп** (кеширан граф, fail-secure, локална оценка) | ✅ НОВО |
 | Odoo IoT Box съвместимост (v18 + v19, единствена инстанция) | ✅ |
 | Fleet remote management (HMAC-signed heartbeat) | ✅ |
 | Prometheus метрики + Grafana dashboards | ✅ |
@@ -93,6 +95,29 @@ Datecs ships vendor POS app `BlueCashPos` на BlueCash-50 PLU
 - [ ] **Posiflex PD-2600 / PD-2800** клиентски дисплеи
 - [ ] **Datecs ETS / Elicom EPS** label-printing везни — нужно за
       месарници / деликатеси (с PLU sync от Odoo)
+
+### Контрол на достъп — готово (Фази A → B → ZEN/карти)
+
+> ✅ **Готово** (0.15–0.18, deployed на MEC k3s + лаптоп). Проксито вече е
+> пълноценен Polimex access node, не само отварачка на врата:
+>
+> - **Offline ZEN решения** (`0.15.0`) — `access_decision` пакет:
+>   `ZenLocalRunner` + `GraphStore` + байт-идентичен `derive_direction`;
+>   `POST /access/evaluate` решава локално от кеширания ZEN граф когато
+>   Odoo е недостъпен (fail-secure deny). Граф + версия синхронизирани през
+>   heartbeat (`routes/zen_sync.py`). zen-engine в `:*-zen` image-а през
+>   `--build-arg EXTRAS=zen` (`0.16.1`).
+> - **Управление на карти** (`0.17.0`) — `POST /access/{id}/card` →
+>   Polimex **D1** запис/изтриване в паметта на контролера; командата
+>   `polimex.card.sync` го кара (cloud = server-validated / local = бурната /
+>   both). Сдвоено с Odoo ledger-а `access.credential.controller`.
+> - **Времеви графици** (`0.18.0`) — `POST /access/{id}/time_schedule` →
+>   Polimex **D3** onboard TS слот, така че local картата налага работното
+>   си време **самостоятелно / offline**. Записан преди картата от командата
+>   `polimex.ts.sync`.
+>
+> Остава за контрола на достъп: **E2E на физически iCON115** (иска
+> office/VPN) + реална проверка на multi-reader rights / holiday (D4) таблици.
 
 ### Контрол на достъп — Фаза C (биометрия)
 
@@ -172,6 +197,11 @@ AES key от obfuscated Android class `d0/t0.java`. NDA-sensitive
 
 | Версия | Дата | Highlight |
 |---|---|---|
+| **0.18.0** | 2026-05-30 | Polimex D3 запис на график — offline налагане на времеви прозорец за local карти |
+| **0.17.0** | 2026-05-29 | Polimex D1 синхронизация на карта — запис/изтриване в паметта на контролера (cloud / local / both) |
+| **0.16.1** | 2026-05-29 | Dockerfile `EXTRAS` build-arg — `zen-engine` в access-control image-а (offline ZEN беше dormant) |
+| **0.16.0** | 2026-05-26 | Унифициран shift bridge (TCP :9103); heartbeat device-summary union |
+| **0.15.0** | 2026-05-26 | Offline ZEN решения за достъп на ниво прокси (Фаза 3) — `access_decision` пакет, GraphStore, `/access/evaluate`, graph sync |
 | **0.13.6** | 2026-05-25 | BlueCash shift_close + shift_signal contracts; bilingual README |
 | 0.13.0 | 2026-05-22 | BluePad-55 BLE bridge (NDA-safe GATT↔PTY) |
 | 0.12.0 | 2026-05-18 | DP-150 ISL payment-letter mapping verified emпирично |
