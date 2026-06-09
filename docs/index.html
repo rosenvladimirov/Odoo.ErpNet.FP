@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Odoo.ErpNet.FP</title>
+<meta name="description" content="[README.en.md](README.en.md)"/>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 3'><rect width='5' height='3' fill='%23ffffff'/><rect width='5' height='1' y='1' fill='%2300966E'/><rect width='5' height='1' y='2' fill='%23D62612'/></svg>"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;0,700;1,400&family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<style>
+:root{--bg:#fff;--bg2:#F5F8FD;--card:#fff;--ink:#2B3A55;--soft:#5C6E8E;--faint:#90A0BD;
+ --blue:#5E86CE;--blue-deep:#3F62A8;--blue-soft:#DCE7F8;--blue-wash:#EEF4FC;--rule:#D6E2F1;--rule2:#E6EEF9;
+ --sh:0 20px 56px rgba(108,148,214,.20);--sh-s:0 10px 30px rgba(108,148,214,.14);
+ --disp:'Spectral',Georgia,serif;--ui:'Golos Text',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);font-size:15.5px;line-height:1.65;
+ background-image:radial-gradient(1000px 440px at 84% -12%,rgba(108,148,214,.06),transparent 62%),
+  linear-gradient(rgba(94,134,206,.016) 1px,transparent 1px),linear-gradient(90deg,rgba(94,134,206,.016) 1px,transparent 1px);
+ background-size:auto,56px 56px,56px 56px}
+a{color:var(--blue-deep);text-decoration:none}.mono{font-family:var(--mono)}
+header{position:sticky;top:0;z-index:9;background:rgba(238,244,252,.86);backdrop-filter:blur(12px);border-bottom:1px solid var(--rule)}
+.bar{display:flex;align-items:center;gap:18px;max-width:1180px;margin:0 auto;padding:14px 26px}
+.brand{font-family:var(--mono);font-weight:700}.brand b{color:var(--blue-deep)}
+.bar .sp{margin-left:auto}
+.gh{font-family:var(--mono);font-size:12px;border:1px solid var(--rule);background:var(--card);padding:8px 14px;border-radius:10px}
+.gh:hover{border-color:var(--blue)}
+.hero{max-width:1180px;margin:0 auto;padding:40px 26px 18px}
+.kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--blue-deep);display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.kick::before{content:"";width:32px;height:2px;background:var(--blue)}
+.hero h1{font-family:var(--disp);font-weight:700;font-size:clamp(1.8rem,3.4vw,2.7rem);line-height:1.08;letter-spacing:-.012em}
+.hero .tag{color:var(--soft);font-size:clamp(1rem,1.2vw,1.12rem);max-width:70ch;margin-top:12px}
+.chips{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.cs{background:var(--card);border:1px solid var(--rule);padding:10px 16px;box-shadow:var(--sh-s);border-radius:2px}
+.cs b{font-family:var(--disp);font-weight:700;font-size:1.25rem;color:var(--blue-deep);display:block;line-height:1.05}
+.cs span{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.wrap{max-width:1180px;margin:34px auto 0;padding:0 26px 80px}
+.sec-lbl{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:38px 0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.mc{background:var(--card);border:1px solid var(--rule);border-radius:2px;padding:16px 18px;box-shadow:var(--sh-s);transition:.16s}
+.mc:hover{border-color:var(--blue);box-shadow:var(--sh)}
+.mc-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.mc-slug{font-size:12px;color:var(--blue-deep);font-weight:700}
+.mc-v{margin-left:auto;font-size:10.5px;color:var(--faint)}
+.mc strong{display:block;font-size:14.5px;margin-bottom:4px}
+.mc p{color:var(--soft);font-size:13px;line-height:1.5}
+.reader{background:var(--card);border:1px solid var(--rule);border-radius:14px;box-shadow:var(--sh);margin-top:18px;padding:34px 44px 56px}
+.doc{font-size:15.5px;line-height:1.72}
+.doc h1,.doc h2,.doc h3,.doc h4{font-family:var(--disp);font-weight:700;line-height:1.2;margin:1.6em 0 .55em;letter-spacing:-.01em}
+.doc h1{font-size:1.9rem;margin-top:.1em}
+.doc h2{font-size:1.45rem;padding-bottom:.26em;border-bottom:1px solid var(--rule2)}
+.doc h3{font-size:1.18rem;color:var(--blue-deep)}
+.doc p{margin:.8em 0}.doc ul,.doc ol{margin:.7em 0 .9em 1.4em}.doc li{margin:.3em 0}
+.doc a{border-bottom:1px solid var(--blue-soft)}
+.doc code{font-family:var(--mono);font-size:.86em;background:var(--blue-wash);padding:.14em .42em;border-radius:6px;color:var(--blue-deep)}
+.doc pre{background:#F4F8FD;border:1px solid var(--rule);border-radius:12px;padding:18px 20px;overflow:auto}
+.doc pre code{background:none;padding:0;color:var(--ink)}
+.doc table{border-collapse:collapse;margin:1em 0;font-size:14px;width:100%}
+.doc th,.doc td{border:1px solid var(--rule);padding:8px 12px;text-align:left}
+.doc th{background:var(--blue-wash);color:var(--blue-deep)}
+.doc img{max-width:100%;border-radius:8px}
+footer{max-width:1180px;margin:0 auto;padding:30px 26px 60px;color:var(--faint);font-family:var(--mono);font-size:12px}
+@media(max-width:640px){.reader{padding:24px 22px}}
+</style>
+</head>
+<body>
+<header><div class="bar">
+ <span class="brand"><b>Odoo.ErpNet.FP</b></span>
+ <span class="sp"></span>
+ <a class="gh" href="https://github.com/rosenvladimirov/Odoo.ErpNet.FP">GitHub ↗</a>
+</div></header>
+
+<section class="hero">
+ <div class="kick">LGPL-3</div>
+ <h1>Odoo.ErpNet.FP</h1>
+ <p class="tag">[README.en.md](README.en.md)</p>
+ <div class="chips"><div class="cs"><b>0</b><span>modules</span></div><div class="cs"><b>LGPL-3</b><span>license</span></div></div>
+</section>
+
+<div class="wrap">
+ <div class="sec-lbl">0 modules</div>
+ <div class="grid"><p style="color:var(--soft)">Single-module / meta repo.</p></div>
+ <div class="sec-lbl">Documentation</div>
+ <div class="reader"><div class="doc"><p><strong>Python drop-in replacement for the C# ErpNet.FP fiscal-printer server,
+extended into a one-stop POS-side device hub for the Bulgarian retail
+and SMB market.</strong></p>
+<blockquote>
+<p>Version <code>0.18.0</code> · Production · Docker: <code>vladimirovrosen/odoo-erpnet-fp:0.18.0</code> (also <code>:latest</code>)
+Access-control image (offline ZEN): build with <code>--build-arg EXTRAS=zen</code>, tag <code>:0.18.0-zen</code>.</p>
+</blockquote>
+<h2 id="quick-links">Quick links</h2>
+<ul>
+<li>🇬🇧 <strong><a href="README.en.md">README.en.md</a></strong> — full English documentation</li>
+<li>🇧🇬 <strong><a href="README.bg.md">README.bg.md</a></strong> — пълна документация на български</li>
+<li>📖 <a href="CHANGELOG.md">CHANGELOG.md</a> — release notes</li>
+<li>🗺️ <a href="ROADMAP.md">ROADMAP.md</a> — what's next</li>
+<li>🚀 <a href="INSTALL_PINPAD.md">INSTALL_PINPAD.md</a> — Datecs pinpad setup guide</li>
+</ul>
+<h2 id="tldr">TL;DR</h2>
+<pre><code class="language-bash">docker run -d --name odoo-erpnet-fp \
+  -p 8001:8001 \
+  -v ./config:/app/config \
+  -v odoo-erpnet-fp-data:/app/data \
+  --device /dev/ttyACM0:/dev/ttyACM0 \
+  vladimirovrosen/odoo-erpnet-fp:latest
+
+curl http://localhost:8001/printers/dp150/status
+</code></pre>
+<p>Same HTTP protocol as the original C# ErpNet.FP — existing Odoo
+<code>l10n_bg_erp_net_fp</code> clients work unchanged.</p>
+<h2 id="hardware-coverage">Hardware coverage</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Production drivers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Fiscal printers</strong></td>
+<td>Datecs PM (FP-700MX, BC-50MX), Datecs ISL (DP-25 / DP-150 / DP-150X / FP-700X / FP-2000 / FP-800 / FMP-350X / FMP-55X)</td>
+</tr>
+<tr>
+<td><strong>Customer displays</strong></td>
+<td>Datecs DPD-201; ESC/POS-compatible (ICD CD-5220, Birch DSP-V9, Bematech PDX-3000)</td>
+</tr>
+<tr>
+<td><strong>Scales</strong></td>
+<td>CAS PR-II/PD-II, Elicom EVL CASH47, Datecs CAS-compat (≈75 % of BG retail), Toledo 8217, generic ASCII, OHAUS Ranger SICS over TCP</td>
+</tr>
+<tr>
+<td><strong>Barcode readers</strong></td>
+<td>USB HID + serial CDC + BLE — via <a href="https://github.com/rosenvladimirov/hid2serial"><code>hid2serial</code></a> sister daemon</td>
+</tr>
+<tr>
+<td><strong>Pinpads</strong></td>
+<td>Datecs Pay (BluePad-50, BluePad-55, BlueCash-50; NDA-locked)</td>
+</tr>
+<tr>
+<td><strong>Cameras</strong></td>
+<td>RTSP / ONVIF — multi-camera ingest + snapshot API</td>
+</tr>
+<tr>
+<td><strong>Access control</strong></td>
+<td>Polimex iCON115 push events + door control</td>
+</tr>
+<tr>
+<td><strong>MQTT</strong></td>
+<td>Bidirectional ingest + publish for sensor / actuator integration</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-this-thing-actually-does">What this thing actually does</h2>
+<ol>
+<li><strong>Replaces</strong> the C# ErpNet.FP server — 1:1 HTTP protocol, no client changes</li>
+<li><strong>Adds</strong> Datecs PM v2.11.4 driver (FP-700MX series) — not covered by either upstream</li>
+<li><strong>Bridges</strong> Odoo POS to a real BG fiscal device, with full PLU programming, multi-operator support, X/Z reports, programmable VAT rates</li>
+<li><strong>Hosts</strong> non-fiscal POS peripherals (displays, scales, pinpads, barcode readers) on the same proxy</li>
+<li><strong>Bridges</strong> the new <strong>BlueCash PLU Android client</strong> (Phase 1 contracts: <code>/devices/&lt;serial&gt;/shift_close</code> + <code>/devices/&lt;serial&gt;/events/*</code>) to Odoo <code>pos.session</code> lifecycle</li>
+</ol>
+<p>Detailed feature list, endpoint reference, architecture diagrams and
+configuration guide live in the bilingual READMEs above.</p>
+<h2 id="license">License</h2>
+<p>LGPL-3.0-or-later · Author: Rosen Vladimirov (<a href="https://github.com/rosenvladimirov">@rosenvladimirov</a>)</p>
+<p>⚠️ <strong>NDA caveat:</strong> Datecs pinpad (DatecsPay) and Datecs BluePad-55 BLE drivers
+contain protocol logic protected by NDA. The <code>.so</code> libraries are not
+redistributed; the Python wrappers are thin shims around them. Source code
+for the protocol layer is <strong>not</strong> part of this repository.</p></div></div>
+</div>
+<footer>Generated from README + manifests · <a href="https://github.com/rosenvladimirov/Odoo.ErpNet.FP">Odoo.ErpNet.FP</a></footer>
+</body>
+</html>
