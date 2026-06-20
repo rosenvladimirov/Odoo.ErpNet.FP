@@ -553,8 +553,26 @@ class ShiftConfig:
 
 
 @dataclass
+class KepConfig:
+    """КЕП (qualified e-signature) токен — за НОИ mutual-TLS + PKCS7 подпис.
+
+    `token` = PKCS#11 token label (напр. 'b-trust'); `cert_id` = obj id,
+    URI-encoded (напр. '%00%01'); `pin` = PIN на authentication slot-а;
+    `engine` = OpenSSL engine име ('pkcs11'). `pkcs11_module` е опционален
+    (engine-ът сам резолва драйвера през p11-kit).
+    """
+    enabled: bool = False
+    token: Optional[str] = None
+    cert_id: str = "%00%01"
+    pin: Optional[str] = None
+    engine: str = "pkcs11"
+    pkcs11_module: Optional[str] = None
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
+    kep: KepConfig = field(default_factory=KepConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
     pinpads: list[PinpadConfig] = field(default_factory=list)
     scales: list[ScaleConfig] = field(default_factory=list)
@@ -966,8 +984,19 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             max_log_payload=int(entry.get("max_log_payload", 500)),
         ))
 
+    kep_data = data.get("kep", {}) or {}
+    kep = KepConfig(
+        enabled=bool(kep_data.get("enabled", False)),
+        token=kep_data.get("token"),
+        cert_id=kep_data.get("cert_id", "%00%01"),
+        pin=(str(kep_data["pin"]) if kep_data.get("pin") is not None else None),
+        engine=kep_data.get("engine", "pkcs11"),
+        pkcs11_module=kep_data.get("pkcs11_module"),
+    )
+
     return AppConfig(
         server=server,
+        kep=kep,
         printers=printers,
         pinpads=pinpads,
         scales=scales,

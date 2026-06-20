@@ -476,3 +476,15 @@ printers:
 # SOYAL-based "iTDC" (AR-721) is also NOT covered. SBR-01CR/02CR
 # standalone units are covered only if networked via a Polimex LAN
 # converter (then they're normal WebSDK bus devices).
+
+# ─── KEP (qualified e-signature token) ──────────────────────────────
+# Хардуерният КЕП токен като устройство — за НОИ ЕРБЛ mutual-TLS
+# (дърпане/качване болнични) + PKCS7 detached подпис (заменя StampIT).
+# Изисква OpenSSL pkcs11 engine + PKCS#11 драйвер за токена (opensc и др.).
+kep:
+  enabled: false
+  token: b-trust            # PKCS#11 token label (pkcs11-tool -T)
+  cert_id: "%00%01"         # обект id, URI-encoded (p11tool --list-all)
+  pin: "0000"               # PIN на authentication slot-а (НЕ signature slot!)
+  engine: pkcs11
+  # pkcs11_module: /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so   # опц.
