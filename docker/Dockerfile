@@ -12,7 +12,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libudev-dev \
         python3-dev \
         socat \
+        curl \
+        openssl \
+        opensc \
+        libengine-pkcs11-openssl \
+        pkcs11-provider \
+        libpcsclite1 \
+        pcscd \
     && rm -rf /var/lib/apt/lists/*
+# libengine-pkcs11-openssl → за `openssl cms` подпис (/kep/sign, работи).
+# pkcs11-provider → за curl mutual-TLS (/nssi): curl 8 + OpenSSL 3 махнаха
+# ENGINE API, така че mutual-TLS иска pkcs11 PROVIDER (openssl.cnf), не engine.
 
 WORKDIR /app
 

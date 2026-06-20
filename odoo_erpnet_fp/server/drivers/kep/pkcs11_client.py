@@ -48,7 +48,15 @@ class KepClient:
         return uri
 
     def _curl_mtls(self, url, headers=None, data=None):
-        """mutual-TLS заявка с КЕП. Връща тялото на отговора (str)."""
+        """mutual-TLS заявка с КЕП. Връща тялото на отговора (str).
+
+        ⚠️ curl 8 + OpenSSL 3 махнаха ENGINE API → `--engine pkcs11` дава
+        „SSL crypto engine not found". На OpenSSL 3 трябва pkcs11 PROVIDER
+        (pkcs11-provider) + openssl.cnf с provider секция, и curl
+        `--cert/--key pkcs11:...`. TODO: финализиране на provider конфига —
+        `openssl cms` подписът (sign_cms) работи с engine, но curl mutual-TLS
+        иска provider. (`openssl cms` CLI още поддържа engine; curl 8 — не.)
+        """
         cmd = [
             "curl", "-sS", "--fail-with-body",
             "--engine", self.engine, "--cert-type", "ENG", "--key-type", "ENG",
