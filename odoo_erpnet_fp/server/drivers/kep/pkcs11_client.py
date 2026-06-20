@@ -125,21 +125,54 @@ class KepClient:
         return self._extract_result(resp, "%sResult" % method)
 
     # ------------------------------------------------------------------ sign
+    def _export_signer_cert(self):
+        """Извлича КЕП серта (PUBLIC, без PIN) от токена като PEM bytes.
+
+        openssl cms `-signer` иска серта като ФАЙЛ (engine дава само ключа).
+        cert_id е URI-encoded (%00%01) → за pkcs11-tool --id става hex (0001).
+        """
+        module = (self.pkcs11_module
+                  or "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so")
+        hex_id = self.cert_id.replace("%", "")
+        r = subprocess.run(
+            ["pkcs11-tool", "--module", module, "-r", "--type", "cert",
+             "--id", hex_id],
+            capture_output=True, timeout=30)
+        if r.returncode != 0:
+            raise KepError("cannot read certificate from token")
+        r2 = subprocess.run(
+            ["openssl", "x509", "-inform", "DER", "-outform", "PEM"],
+            input=r.stdout, capture_output=True, timeout=15)
+        if r2.returncode != 0:
+            raise KepError("cannot convert certificate DER->PEM")
+        return r2.stdout
+
     def sign_cms(self, content_bytes):
-        """Detached PKCS7/CMS подпис (.p7s) през токена — заменя StampIT."""
-        with tempfile.NamedTemporaryFile(delete=False) as fin:
-            fin.write(content_bytes)
-            in_path = fin.name
-        out_path = in_path + ".p7s"
+        """Detached PKCS7/CMS подпис (.p7s) през токена — заменя StampIT.
+
+        Серта (public) се чете от токена във временен PEM; частният ключ
+        остава на токена (engine). НАП иска detached DER PKCS7.
+        """
+        cert_pem = self._export_signer_cert()
+        paths = []
         try:
+            with tempfile.NamedTemporaryFile(delete=False) as fin:
+                fin.write(content_bytes)
+                in_path = fin.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as fc:
+                fc.write(cert_pem)
+                cert_path = fc.name
+            out_path = in_path + ".p7s"
+            paths = [in_path, cert_path, out_path]
+            # cms -sign БЕЗ -nodetach → DETACHED (контентът е external, .txt +
+            # отделен .txt.p7s); -binary спира MIME каноникализация; DER outform.
             cmd = [
                 "openssl", "cms", "-sign", "-binary", "-outform", "DER",
                 "-engine", self.engine, "-keyform", "ENG",
-                "-signer", self._uri("cert"),
+                "-signer", cert_path,
                 "-inkey", self._uri("private", with_pin=True),
-                "-in", in_path, "-out", out_path, "-nodetach" if False else "-binary",
+                "-in", in_path, "-out", out_path,
             ]
-            # detached: без -nodetach → detached по подразбиране при cms -sign
             r = subprocess.run(cmd, capture_output=True, timeout=self.timeout)
             if r.returncode != 0:
                 _logger.error("CMS sign rc=%s: %s", r.returncode,
@@ -148,7 +181,7 @@ class KepClient:
             with open(out_path, "rb") as f:
                 return f.read()
         finally:
-            for p in (in_path, out_path):
+            for p in paths:
                 try:
                     os.unlink(p)
                 except OSError:
