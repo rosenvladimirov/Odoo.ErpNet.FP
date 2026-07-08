@@ -34,7 +34,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from ..drivers.gps.common import PositionEvent
+from ...drivers.gps.common import PositionEvent
 
 _logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/gps", tags=["gps"])

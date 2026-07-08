@@ -15,11 +15,20 @@ services:
     container_name: odoo-erpnet-fp-iot
     restart: unless-stopped
     command: ["--config", "/app/config/config.iot.yaml"]
+    # Пакетът е pip-installed в site-packages (стар image код). PYTHONPATH=/app
+    # дава приоритет на mount-натия /app/odoo_erpnet_fp (CORS+GPS промените)
+    # пред site-packages. Махни щом се публикува нов image.
+    environment:
+      PYTHONPATH: /app
     networks:
       - erpnet-iot
     volumes:
       - ./config:/app/config:ro
       - ./data:/app/data:rw
+      # Override на пакета с локалния код — публикуваният image 0.18.0-zen
+      # още няма CORS/PNA + GPS tracker промените. Махни щом се публикува
+      # нов image с тях.
+      - ./odoo_erpnet_fp:/app/odoo_erpnet_fp:ro
     expose:
       - "8001"
     healthcheck:
