@@ -399,6 +399,35 @@ class CameraConfig:
 
 
 @dataclass
+class TrackerConfig:
+    """GPS / vehicle-tracker entry — polls a tracking platform and relays
+    position fixes to Odoo via bus_inject (live map/fleet/waybill).
+
+    `source`:
+      wialon   — poll Wialon Remote API (`base_url` ajax endpoint,
+                 `token`, `poll_interval`, `flags`, `verify_ssl`).
+                 The proxy logs in with the token and polls all units.
+      external — bus only; fixes arrive via POST /gps/{id}/inject
+                 (a host-side source or a tracker webhook).
+
+    The proxy is a thin relay: it forwards the raw fix (plate hint from
+    the Wialon unit name, unit id, lat/lon/speed/heading, driver code,
+    CAN mileage). Odoo matches `fleet.vehicle` and does all routing.
+    """
+
+    id: str
+    source: str = "wialon"
+    base_url: Optional[str] = None      # Wialon ajax.html endpoint
+    token: str = ""                     # Wialon API token (read scope)
+    poll_interval: float = 15.0         # seconds between polls
+    flags: int = 5251073                # search_items mask (base+pos+lmsg)
+    verify_ssl: bool = True             # CAST self-signed → False
+    min_move_m: float = 15.0            # anti-noise gate (meters)
+    plate_from_name: bool = True        # Wialon unit name → plate hint
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AccessConfig:
     """Access-control actuator (Phase B) — barrier / relay / turnstile.
 
@@ -579,6 +608,7 @@ class AppConfig:
     readers: list[ReaderConfig] = field(default_factory=list)
     displays: list[DisplayConfig] = field(default_factory=list)
     cameras: list[CameraConfig] = field(default_factory=list)
+    trackers: list[TrackerConfig] = field(default_factory=list)
     access: list[AccessConfig] = field(default_factory=list)
     biometric: list[BiometricConfig] = field(default_factory=list)
     shifts: list[ShiftConfig] = field(default_factory=list)
@@ -878,6 +908,24 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             )
         )
 
+    trackers: list[TrackerConfig] = []
+    for entry in data.get("trackers", []) or []:
+        trackers.append(
+            TrackerConfig(
+                id=str(entry["id"]),
+                source=str(entry.get("source", "wialon")),
+                base_url=(str(entry["base_url"]).rstrip("/")
+                          if entry.get("base_url") else None),
+                token=str(entry.get("token", "")),
+                poll_interval=float(entry.get("poll_interval", 15.0)),
+                flags=int(entry.get("flags", 5251073)),
+                verify_ssl=bool(entry.get("verify_ssl", True)),
+                min_move_m=float(entry.get("min_move_m", 15.0)),
+                plate_from_name=bool(entry.get("plate_from_name", True)),
+                extras=entry.get("extras", {}),
+            )
+        )
+
     access: list[AccessConfig] = []
     for entry in data.get("access", []) or []:
         access.append(
@@ -1003,6 +1051,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         readers=readers,
         displays=displays,
         cameras=cameras,
+        trackers=trackers,
         access=access,
         biometric=biometric,
         shifts=shifts,
@@ -1127,7 +1176,7 @@ def load_config(path: str | Path) -> AppConfig:
             FRAGMENT_SECTIONS = (
                 "cameras", "access", "biometric", "mqtt",
                 "printers", "pinpads", "scales",
-                "displays", "readers", "shifts",
+                "displays", "readers", "shifts", "trackers",
             )
             for frag in sorted(fragments_dir.glob("*.yaml")):
                 try:

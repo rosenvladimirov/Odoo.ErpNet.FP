@@ -35,6 +35,7 @@ from .service import (
     PrinterRegistry,
     ReaderRegistry,
     ScaleRegistry,
+    TrackerRegistry,
 )
 
 _logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         await reader_registry.start_all()
         await display_registry.start_all()
         await camera_registry.start_all()
+        await tracker_registry.start_all()
         await access_registry.start_all()
         await biometric_registry.start_all()
         # MQTT subscribers — multi-broker fan-out into the per-camera
@@ -161,6 +163,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             await reader_registry.stop_all()
             await display_registry.stop_all()
             await camera_registry.stop_all()
+            await tracker_registry.stop_all()
             await access_registry.stop_all()
             await biometric_registry.stop_all()
             await shift_registry.close_all()
@@ -183,6 +186,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     reader_registry = ReaderRegistry.from_config(config)
     display_registry = DisplayRegistry.from_config(config)
     camera_registry = CameraRegistry.from_config(config)
+    tracker_registry = TrackerRegistry.from_config(config, app=app)
     access_registry = AccessRegistry.from_config(config)
     biometric_registry = BiometricRegistry.from_config(config)
     mqtt_ingest_registry = MqttIngestRegistry.from_config(config)
@@ -198,6 +202,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.reader_registry = reader_registry
     app.state.display_registry = display_registry
     app.state.camera_registry = camera_registry
+    app.state.tracker_registry = tracker_registry
     app.state.access_registry = access_registry
     app.state.biometric_registry = biometric_registry
     app.state.mqtt_ingest_registry = mqtt_ingest_registry
@@ -262,6 +267,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.readers import router as readers_router
     from .routes.scales import router as scales_router
     from .routes.cameras import router as cameras_router
+    from .routes.gps import router as gps_router
     from .routes.access import router as access_router
     from .routes.biometric import router as biometric_router
     from .routes.polimex_events import router as polimex_events_router
@@ -280,6 +286,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(readers_router)
     app.include_router(displays_router)
     app.include_router(cameras_router)
+    app.include_router(gps_router)
     app.include_router(access_router)
     app.include_router(biometric_router)
     app.include_router(polimex_events_router)
@@ -349,6 +356,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "readers": list(reader_registry.readers.keys()),
             "displays": list(display_registry.displays.keys()),
             "cameras": list(camera_registry.cameras.keys()),
+            "trackers": list(tracker_registry.trackers.keys()),
             "access": list(access_registry.access.keys()),
             "biometric": list(biometric_registry.biometric.keys()),
             "mqtt": list(mqtt_ingest_registry.specs.keys()),

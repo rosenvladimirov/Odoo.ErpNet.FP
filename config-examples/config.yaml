@@ -488,3 +488,25 @@ kep:
   pin: "0000"               # PIN на authentication slot-а (НЕ signature slot!)
   engine: pkcs11
   # pkcs11_module: /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so   # опц.
+
+# ─── GPS / vehicle trackers ─────────────────────────────────────────
+# Прокси-то poll-ва платформа за проследяване (Wialon/CAST) и релейва
+# всяка позиция към Odoo през bus_inject (канал erpnet_fp_proxy_events).
+# Odoo (l10n_bg_live_refresh) обновява живо картата + fleet.vehicle +
+# пътния лист. Прокси-то е тънък relay — Odoo матчва fleet.vehicle по
+# рег. номер (Wialon unit name) / unit_id. Изисква активна `registry:`
+# (bus_inject преизползва registry URL + secret — без отделен токен).
+#
+# trackers:
+#   - id: fleet                         # Wialon (CAST) poll → live push
+#     source: wialon
+#     base_url: https://your-cast-host/wialon/ajax.html
+#     token: "WIALON_API_TOKEN"         # read scope стига
+#     poll_interval: 15                 # секунди между poll-ове
+#     verify_ssl: false                 # CAST self-signed → false
+#     min_move_m: 15                    # анти-шум: пропусни fix < N метра
+#     plate_from_name: true             # Wialon unit name → рег. номер
+#     # flags: 5251073                  # search_items маска (base+pos+lmsg)
+#
+#   - id: external                      # push от външен tracker/webhook
+#     source: external                  # само шина; POST /gps/external/inject

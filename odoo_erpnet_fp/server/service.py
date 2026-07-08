@@ -45,6 +45,7 @@ from ..config.loader import (
     PrinterConfig,
     ReaderConfig,
     ScaleConfig,
+    TrackerConfig,
 )
 from ..drivers.cameras import (
     CameraStream,
@@ -93,6 +94,9 @@ _DISPLAY_DRIVERS: dict[str, type[CustomerDisplay]] = {
 }
 from .reader_bus import ReaderEventBus
 from .camera_bus import CameraEventBus
+from .gps_bus import GpsEventBus
+from ..drivers.gps.common import GpsTracker
+from ..drivers.gps.wialon import WialonTracker
 from ..drivers.fiscal.datecs_isl import (
     DaisyIslDevice,
     DatecsIslDevice,
@@ -1454,6 +1458,115 @@ def _broker_spec_dirty(old: "MqttBrokerSpec", new: "MqttBrokerSpec") -> bool:
     if tuple(old.topics) != tuple(new.topics):
         return True
     return any(getattr(old, k) != getattr(new, k) for k in keys)
+
+
+# ─── GPS / vehicle-tracker registry ─────────────────────────────────
+
+
+@dataclass
+class TrackerEntry:
+    config: TrackerConfig
+    bus: GpsEventBus
+    driver: Optional[GpsTracker] = None  # populated by start_all()
+
+
+class TrackerRegistry:
+    """Long-lived GPS-tracker registry.
+
+    Like readers/cameras, trackers keep a background thread for the
+    lifetime of the server. Each fix is `publish_threadsafe()`-ed into a
+    `GpsEventBus` that fans out to WS/SSE subscribers + bus_inject
+    (Odoo live map/fleet/waybill).
+    """
+
+    def __init__(self) -> None:
+        self.trackers: dict[str, TrackerEntry] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig, app=None) -> "TrackerRegistry":
+        registry = cls()
+        for cfg in config.trackers:
+            if cfg.id in registry.trackers:
+                raise ValueError(f"Duplicate tracker id: {cfg.id!r}")
+            if cfg.source not in ("wialon", "external"):
+                raise ValueError(
+                    f"Unknown tracker source {cfg.source!r} on {cfg.id!r}; "
+                    f"expected 'wialon' or 'external'"
+                )
+            bus = GpsEventBus(tracker_id=cfg.id, app=app)
+            registry.trackers[cfg.id] = TrackerEntry(config=cfg, bus=bus)
+            _logger.info(
+                "Registered tracker %r — source=%s base=%s interval=%ss",
+                cfg.id, cfg.source, cfg.base_url or "?", cfg.poll_interval,
+            )
+        return registry
+
+    # ─── Public access ────────────────────────────────────────
+
+    def get(self, tracker_id: str) -> TrackerEntry:
+        if tracker_id not in self.trackers:
+            raise KeyError(tracker_id)
+        return self.trackers[tracker_id]
+
+    def has(self, tracker_id: str) -> bool:
+        return tracker_id in self.trackers
+
+    # ─── Lifecycle ────────────────────────────────────────────
+
+    async def start_all(
+        self, loop: Optional[asyncio.AbstractEventLoop] = None
+    ) -> None:
+        loop = loop or asyncio.get_running_loop()
+        for entry in self.trackers.values():
+            entry.bus._loop = loop  # bind bus to running loop
+            # external source — bus only; fixes arrive via
+            # POST /gps/{id}/inject from a host-side source.
+            if entry.config.source == "external":
+                _logger.info(
+                    "Tracker %r is external — listening on /gps/%s/inject",
+                    entry.config.id, entry.config.id,
+                )
+                continue
+            try:
+                driver = self._make_driver(entry.config)
+                driver.set_listener(entry.bus.publish_threadsafe)
+                driver.start()
+                entry.driver = driver
+            except Exception:
+                _logger.exception(
+                    "Failed to start tracker %r", entry.config.id
+                )
+
+    async def stop_all(self) -> None:
+        for entry in self.trackers.values():
+            if entry.driver is not None:
+                try:
+                    entry.driver.stop()
+                except Exception:
+                    _logger.exception(
+                        "Failed to stop tracker %r", entry.config.id
+                    )
+            try:
+                await entry.bus.close()
+            except Exception:
+                _logger.exception(
+                    "Failed to close bus for tracker %r", entry.config.id
+                )
+
+    @staticmethod
+    def _make_driver(cfg: TrackerConfig) -> GpsTracker:
+        if cfg.source == "wialon":
+            return WialonTracker(
+                tracker_id=cfg.id,
+                base_url=cfg.base_url,
+                token=cfg.token,
+                poll_interval=cfg.poll_interval,
+                flags=cfg.flags,
+                verify_ssl=cfg.verify_ssl,
+                min_move_m=cfg.min_move_m,
+                plate_from_name=cfg.plate_from_name,
+            )
+        raise ValueError(f"No in-proc driver for tracker source {cfg.source!r}")
 
 
 # ─── Per-hardware online reload (push_config target) ────────────────
