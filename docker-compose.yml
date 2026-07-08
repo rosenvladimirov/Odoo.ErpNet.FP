@@ -117,6 +117,16 @@ services:
       - "traefik.http.routers.erpnet-lan.tls.domains[0].main=*.lan.mcpworks.net"
       - "traefik.http.routers.erpnet-lan.tls.domains[0].sans=lan.mcpworks.net"
       - "traefik.http.routers.erpnet-lan.middlewares=cors-pna@file"
+      # IoT мрежа през отделен Cloudflare Tunnel: *.iot.teolinobusiness.com
+      # (напр. erpnet.iot.teolinobusiness.com). cloudflared терминира
+      # публичния TLS на CF edge и подава към traefik:443 (noTLSVerify) —
+      # тук ползваме default cert, TLS-ът към света е на Cloudflare.
+      # Пази cors-pna middleware за POS браузър клиентите.
+      - "traefik.http.routers.erpnet-iot.rule=HostRegexp(`{sub:[a-z0-9-]+}.iot.teolinobusiness.com`)"
+      - "traefik.http.routers.erpnet-iot.entrypoints=websecure"
+      - "traefik.http.routers.erpnet-iot.tls=true"
+      - "traefik.http.routers.erpnet-iot.service=erpnet"
+      - "traefik.http.routers.erpnet-iot.middlewares=cors-pna@file"
       - "traefik.http.services.erpnet.loadbalancer.server.port=8001"
 
     healthcheck:
@@ -301,6 +311,26 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+  # ─── Cloudflare Tunnel — IoT мрежа (iot.teolinobusiness.com) ──────
+  # Отделен, token-managed тунел (config = remote, CF Zero Trust
+  # dashboard) за IoT прокситата. Публичен hostname wildcard
+  # *.iot.teolinobusiness.com → http(s)://traefik:443 (noTLSVerify),
+  # където router-ът erpnet-iot разпределя по поддомейн (erpnet.iot…).
+  # Cloudflare прави публичния TLS на edge (Universal SSL за конкретен
+  # hostname; *.iot 2-level wildcard иска Advanced Certificate Manager).
+  # НЕ пипа съществуващия traefik `cf` DNS-01 resolver за mcpworks.net.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: erpnet-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN_IOT}
+    depends_on:
+      - traefik
+    networks:
+      - erpnet
 
 volumes:
   prometheus-data:

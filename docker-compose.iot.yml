@@ -1,0 +1,56 @@
+# Минимален browser-facing deploy за ra01 (GPS relay зад Cloudflare Tunnel).
+# БЕЗ traefik/prometheus/grafana/go2rtc — портове 80/443 на ra01 са заети
+# от съществуващия Odoo traefik. БЕЗ privileged/USB — ra01 е cloud хост
+# без фискален хардуер; проксито тук е само GPS relay (Wialon → bus_inject)
+# + browser-facing API. Проксито само се бори с CORS/PNA (config.server
+# .cors_*), тъй като няма traefik пред него.
+#
+# Публичен достъп: erpnet.iot.teolinobusiness.com → cloudflared (tunnel
+# teolino-iot) → http://odoo-erpnet-fp:8001. CF edge прави TLS.
+#
+# Deploy:  docker compose -f docker-compose.iot.yml up -d
+services:
+  odoo-erpnet-fp:
+    image: vladimirovrosen/odoo-erpnet-fp:0.18.0-zen
+    container_name: odoo-erpnet-fp-iot
+    restart: unless-stopped
+    command: ["--config", "/app/config/config.iot.yaml"]
+    networks:
+      - erpnet-iot
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data:rw
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8001/healthz'); "]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: erpnet-cloudflared-iot
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN_IOT}
+    depends_on:
+      - odoo-erpnet-fp
+    networks:
+      - erpnet-iot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+networks:
+  erpnet-iot:
+    name: erpnet-iot

@@ -202,6 +202,13 @@ class ServerConfig:
     registry: RegistryConfig = field(default_factory=RegistryConfig)
     iot_setup: IotSetupConfig = field(default_factory=IotSetupConfig)
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
+    # CORS — за browser-facing deploy БЕЗ Traefik пред проксито (напр.
+    # GPS relay зад Cloudflare Tunnel). Когато Traefik прави CORS/PNA,
+    # оставете празни. `cors_origins` = точни origin-и (allow_credentials
+    # изисква конкретни, не wildcard); `cors_origin_regex` = алтернатива
+    # (напр. r"https://.*\.teolinobusiness\.com").
+    cors_origins: list[str] = field(default_factory=list)
+    cors_origin_regex: Optional[str] = None
 
 
 @dataclass
@@ -658,6 +665,8 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         host=server_data.get("host", "0.0.0.0"),
         port=int(server_data.get("port", 8001)),
         log_level=server_data.get("log_level", "info"),
+        cors_origins=list(server_data.get("cors_origins", []) or []),
+        cors_origin_regex=server_data.get("cors_origin_regex") or None,
         tls=TlsConfig(
             enabled=bool(tls_data.get("enabled", False)),
             certfile=tls_data.get("certfile"),

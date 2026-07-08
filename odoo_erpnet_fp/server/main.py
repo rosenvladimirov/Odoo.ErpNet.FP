@@ -255,6 +255,32 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             pass
         return response
 
+    # CORS + PNA — проксито се бори с корп САМО, когато е browser-facing
+    # без Traefik пред него (напр. GPS relay зад Cloudflare Tunnel). Активно
+    # само ако config.server.cors_origins/regex е зададено; иначе (Traefik
+    # прави CORS/PNA през cors-pna middleware) остава изключено — нула
+    # промяна за класическия фискален deploy.
+    _srv = config.server
+    if _srv.cors_origins or _srv.cors_origin_regex:
+        from starlette.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_srv.cors_origins,
+            allow_origin_regex=_srv.cors_origin_regex,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            max_age=1728000,
+        )
+
+        @app.middleware("http")
+        async def _pna_header(request: Request, call_next):
+            # Private Network Access (Chrome) — CORSMiddleware не го добавя.
+            response = await call_next(request)
+            if request.method == "OPTIONS":
+                response.headers["Access-Control-Allow-Private-Network"] = "true"
+            return response
+
     from .routes.admin import router as admin_router
     from .routes.displays import router as displays_router
     from .routes.iot_compat import (
