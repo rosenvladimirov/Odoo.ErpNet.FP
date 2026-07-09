@@ -558,6 +558,66 @@ MqttIngestConfig = MqttBrokerSpec
 
 
 @dataclass
+class CfxEndpointSpec:
+    """One CFX-IPC transport endpoint inside a station.
+
+    A station (`CfxBrokerSpec`) may hold several of these so the embedded
+    ipc-cfx `CFXPlugin` consumes RabbitMQ-broker AND AMQP1.0-P2P sources
+    in parallel (PLAN §4 dual-transport requirement).
+
+    `transport`:
+      * `broker` (default) — RabbitMQ/AMQP broker; uses
+        `amqp_uri` + `queue` + `exchange` + `routing_key`.
+      * `p2p` — AMQP 1.0 peer-to-peer (raw qpid-proton listener); uses
+        `amqp_uri` + `source` + `mode` (`connect`|`listen`).
+
+    `ssl_config` is passed opaquely to the SDK broker transport for TLS;
+    `tls` is a convenience flag when no full ssl_config is needed.
+    """
+
+    transport: str = "broker"
+    amqp_uri: str = ""
+    queue: str = ""
+    exchange: str = ""
+    routing_key: str = ""
+    source: str = ""
+    mode: str = "connect"
+    tls: bool = False
+    ssl_config: Optional[dict] = None
+
+
+@dataclass
+class CfxBrokerSpec:
+    """One CFX-IPC station — a single embedded `CFXPlugin` instance.
+
+    Multi-station by design (mirrors `MqttBrokerSpec`): the YAML `cfx:`
+    section accepts a list, so one proxy can host e.g. a Europlacer
+    placement station and a PARMI SPI station side by side. Legacy
+    single-station dict is wrapped into a 1-element list (`name="default"`).
+
+    CFX is ONE standard for ALL machines; `machine_kind`
+    (`europlacer`|`parmi`|`oven`|`laser`|…) only routes the Odoo-side
+    AUDIT stat handler — the live WS path is identical for every machine.
+
+    `sdk_path` points at the (non-pip-installed) ipc-cfx SDK source
+    (`proton-amqp/src`) added to `sys.path` when the station starts; empty
+    ⇒ the driver's built-in default. `topics` is advisory metadata (the
+    actual AMQP binding is per-endpoint `routing_key`/`source`).
+
+    Absent / no enabled stations ⇒ no CFXPlugin, ipc-cfx never imported —
+    the pure-fiscal deployment stays byte-identical.
+    """
+
+    name: str = "default"
+    enabled: bool = True
+    machine_kind: str = "generic"
+    cfx_handle: str = ""
+    topics: list[str] = field(default_factory=list)
+    sdk_path: str = ""
+    endpoints: list[CfxEndpointSpec] = field(default_factory=list)
+
+
+@dataclass
 class ShiftConfig:
     """Shift-sync bridge endpoint — long-lived TCP client to Android.
 
@@ -623,6 +683,9 @@ class AppConfig:
     # read-only property below for legacy callers that only want
     # "the first broker".
     mqtt_brokers: list[MqttBrokerSpec] = field(default_factory=list)
+    # CFX-IPC stations (each embeds one ipc-cfx CFXPlugin). Empty ⇒ no
+    # CFX ingest, ipc-cfx SDK never imported.
+    cfx_brokers: list[CfxBrokerSpec] = field(default_factory=list)
     auto_detect: bool = False
 
     @property
@@ -1041,6 +1104,74 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             max_log_payload=int(entry.get("max_log_payload", 500)),
         ))
 
+    # CFX-IPC stations — top-level `cfx:` block (mirrors `mqtt:`). Two
+    # accepted shapes: list of station dicts (multi-station) or a single
+    # dict (wrapped, name="default"). Each station carries an `endpoints:`
+    # list (broker + p2p in parallel); a flat single-endpoint station
+    # (transport fields at the station top level) is also accepted.
+    # Absent / empty ⇒ no stations, ipc-cfx SDK is never imported.
+    cfx_raw = data.get("cfx")
+    cfx_brokers: list[CfxBrokerSpec] = []
+    if isinstance(cfx_raw, dict) and cfx_raw:
+        cfx_entries = [{"name": "default", **cfx_raw}]
+    elif isinstance(cfx_raw, list):
+        cfx_entries = cfx_raw
+    else:
+        cfx_entries = []
+    cfx_seen: set[str] = set()
+    for entry in cfx_entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_name = str(entry.get("name") or "default").strip() or "default"
+        cname = raw_name
+        _sfx = 2
+        while cname in cfx_seen:
+            cname = f"{raw_name}-{_sfx}"
+            _sfx += 1
+        cfx_seen.add(cname)
+
+        topics_raw = entry.get("topics", [])
+        if isinstance(topics_raw, str):
+            cfx_topics = [t.strip() for t in topics_raw.split(",") if t.strip()]
+        else:
+            cfx_topics = [str(t).strip() for t in (topics_raw or []) if str(t).strip()]
+
+        # Endpoints — explicit list, or wrap the station-level transport
+        # keys as a single endpoint (flat single-endpoint shape).
+        endpoints_raw = entry.get("endpoints")
+        if not isinstance(endpoints_raw, list) or not endpoints_raw:
+            has_flat = any(k in entry for k in
+                           ("amqp_uri", "uri", "url", "transport", "queue",
+                            "exchange", "routing_key", "source"))
+            endpoints_raw = [entry] if has_flat else []
+        cfx_endpoints: list[CfxEndpointSpec] = []
+        for ep in endpoints_raw:
+            if not isinstance(ep, dict):
+                continue
+            cfx_endpoints.append(CfxEndpointSpec(
+                transport=str(ep.get("transport", "broker") or "broker"),
+                amqp_uri=str(ep.get("amqp_uri") or ep.get("uri")
+                             or ep.get("url") or ""),
+                queue=str(ep.get("queue", "") or ""),
+                exchange=str(ep.get("exchange", "") or ""),
+                routing_key=str(ep.get("routing_key", "") or ""),
+                source=str(ep.get("source", "") or ""),
+                mode=str(ep.get("mode", "connect") or "connect"),
+                tls=bool(ep.get("tls", False)),
+                ssl_config=(ep.get("ssl_config")
+                            if isinstance(ep.get("ssl_config"), dict) else None),
+            ))
+
+        cfx_brokers.append(CfxBrokerSpec(
+            name=cname,
+            enabled=bool(entry.get("enabled", True)),
+            machine_kind=str(entry.get("machine_kind", "generic") or "generic"),
+            cfx_handle=str(entry.get("cfx_handle", "") or ""),
+            topics=cfx_topics,
+            sdk_path=str(entry.get("sdk_path", "") or ""),
+            endpoints=cfx_endpoints,
+        ))
+
     kep_data = data.get("kep", {}) or {}
     kep = KepConfig(
         enabled=bool(kep_data.get("enabled", False)),
@@ -1065,6 +1196,7 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         biometric=biometric,
         shifts=shifts,
         mqtt_brokers=mqtt_brokers,
+        cfx_brokers=cfx_brokers,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 
@@ -1183,7 +1315,7 @@ def load_config(path: str | Path) -> AppConfig:
             # `push_config` handler only allows Odoo to rewrite the AC
             # ones — fiscal stays under customer-IT manual control.
             FRAGMENT_SECTIONS = (
-                "cameras", "access", "biometric", "mqtt",
+                "cameras", "access", "biometric", "mqtt", "cfx",
                 "printers", "pinpads", "scales",
                 "displays", "readers", "shifts", "trackers",
             )
