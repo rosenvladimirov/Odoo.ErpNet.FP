@@ -1460,6 +1460,210 @@ def _broker_spec_dirty(old: "MqttBrokerSpec", new: "MqttBrokerSpec") -> bool:
     return any(getattr(old, k) != getattr(new, k) for k in keys)
 
 
+# ─── CFX-IPC ingest registry ────────────────────────────────────────
+
+
+class CfxIngestRegistry:
+    """Multi-station CFX-IPC subscriber registry (mirrors MqttIngestRegistry).
+
+    One `CfxAmqpIngest` instance per `CfxBrokerSpec`, keyed by `spec.name`.
+    Each station embeds its own ipc-cfx `CFXPlugin` (which drives broker +
+    P2P endpoints on its own daemon threads); stations don't share state,
+    so a flaky broker can't take down the others.
+
+    Lifecycle parity with the other registries:
+    `from_config` / `start_all` / `stop_all` / `status`, plus granular
+    `reload_from_config`. Needs the FastAPI `app` (not a camera registry)
+    so each station can resolve the bus_inject/audit Odoo links via
+    `BusInjectClient.from_app`.
+
+    When `cfx_brokers` is empty (default), every method is a no-op and the
+    ipc-cfx SDK is never imported.
+    """
+
+    def __init__(self, app=None):
+        self._app = app
+        self.specs: dict[str, "CfxBrokerSpec"] = {}
+        self.ingests: dict[str, object] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig, app=None) -> "CfxIngestRegistry":
+        r = cls(app=app)
+        for spec in getattr(config, "cfx_brokers", []) or []:
+            r.specs[spec.name] = spec
+        return r
+
+    def bind_app(self, app) -> None:
+        """Inject/refresh the FastAPI app (needed for BusInjectClient)."""
+        self._app = app
+        for ingest in self.ingests.values():
+            ingest._app = app
+
+    def start_all(self) -> None:
+        # Lazy import — only paid if we actually have an enabled station.
+        if not any(s.enabled for s in self.specs.values()):
+            return
+        from ..drivers.cfx.amqp_listener import CfxAmqpIngest
+        for name, spec in self.specs.items():
+            if not spec.enabled:
+                continue
+            if name not in self.ingests:
+                self.ingests[name] = CfxAmqpIngest(spec, self._app)
+            self.ingests[name].start()
+
+    def stop_all(self) -> None:
+        for ingest in list(self.ingests.values()):
+            try:
+                ingest.stop()
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("CFX ingest[%s] stop failed: %s",
+                                getattr(ingest, "name", "?"), exc)
+        self.ingests.clear()
+
+    # ─── Runtime per-station toggle (landing UI helpers) ────────
+
+    def start_one(self, name: str) -> bool:
+        spec = self.specs.get(name)
+        if spec is None:
+            return False
+        from ..drivers.cfx.amqp_listener import CfxAmqpIngest
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            ingest = CfxAmqpIngest(spec, self._app)
+            self.ingests[name] = ingest
+        return bool(ingest.start())
+
+    def stop_one(self, name: str) -> bool:
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            return False
+        result = bool(ingest.stop())
+        self.ingests.pop(name, None)
+        return result
+
+    def status(self) -> dict:
+        stations: list[dict] = []
+        running = 0
+        enabled = 0
+        for name, spec in self.specs.items():
+            if spec.enabled:
+                enabled += 1
+            ingest = self.ingests.get(name)
+            if ingest is not None:
+                s = ingest.status()
+                stations.append(s)
+                if s.get("running"):
+                    running += 1
+            else:
+                stations.append({
+                    "name": name,
+                    "enabled": spec.enabled,
+                    "running": False,
+                    "machine_kind": spec.machine_kind,
+                    "cfx_handle": spec.cfx_handle,
+                    "endpoints": [
+                        {"transport": e.transport, "queue": e.queue,
+                         "exchange": e.exchange, "routing_key": e.routing_key,
+                         "source": e.source, "mode": e.mode}
+                        for e in (spec.endpoints or [])
+                    ],
+                })
+        return {
+            "stations": stations,
+            "enabled_count": enabled,
+            "running_count": running,
+        }
+
+    # ─── Granular hot-reload ────────────────────────────────────
+
+    def reload_from_config(self, new_config: AppConfig) -> dict:
+        new_specs = {s.name: s for s in (getattr(new_config, "cfx_brokers", []) or [])}
+        old_specs = dict(self.specs)
+
+        added: list[str] = []
+        removed: list[str] = []
+        restarted: list[str] = []
+        unchanged: list[str] = []
+
+        # 1. Stop & drop stations that no longer exist OR became disabled.
+        for name, old in old_specs.items():
+            new = new_specs.get(name)
+            if new is None:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                removed.append(name)
+            elif old.enabled and not new.enabled:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                restarted.append(name)
+
+        # 2. Stations present in BOTH — restart if the spec changed.
+        for name, new in new_specs.items():
+            old = old_specs.get(name)
+            if old is None or (old.enabled and not new.enabled):
+                continue
+            if _cfx_spec_dirty(old, new):
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if new.enabled:
+                    from ..drivers.cfx.amqp_listener import CfxAmqpIngest
+                    fresh = CfxAmqpIngest(new, self._app)
+                    fresh.start()
+                    self.ingests[name] = fresh
+                restarted.append(name)
+            else:
+                unchanged.append(name)
+
+        # 3. Brand-new stations — instantiate & start if enabled.
+        for name, new in new_specs.items():
+            if name in old_specs:
+                continue
+            if new.enabled:
+                from ..drivers.cfx.amqp_listener import CfxAmqpIngest
+                fresh = CfxAmqpIngest(new, self._app)
+                fresh.start()
+                self.ingests[name] = fresh
+            added.append(name)
+
+        # 4. Sync stored specs to the new config.
+        self.specs = new_specs
+
+        return {
+            "added": added,
+            "removed": removed,
+            "restarted": restarted,
+            "unchanged": unchanged,
+        }
+
+
+def _cfx_spec_dirty(old: "CfxBrokerSpec", new: "CfxBrokerSpec") -> bool:
+    """True iff old/new differ on any field demanding a plugin restart."""
+    if (old.enabled, old.machine_kind, old.cfx_handle, old.sdk_path) != (
+            new.enabled, new.machine_kind, new.cfx_handle, new.sdk_path):
+        return True
+    if tuple(old.topics) != tuple(new.topics):
+        return True
+    # Endpoint list — compare the fields that drive an AMQP reconnect.
+    def _ep_key(e):
+        return (e.transport, e.amqp_uri, e.queue, e.exchange,
+                e.routing_key, e.source, e.mode, e.tls)
+    old_eps = [_ep_key(e) for e in (old.endpoints or [])]
+    new_eps = [_ep_key(e) for e in (new.endpoints or [])]
+    return old_eps != new_eps
+
+
 # ─── GPS / vehicle-tracker registry ─────────────────────────────────
 
 
