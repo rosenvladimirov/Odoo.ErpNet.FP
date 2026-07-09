@@ -29,6 +29,7 @@ from .service import (
     AccessRegistry,
     BiometricRegistry,
     CameraRegistry,
+    CfxIngestRegistry,
     DisplayRegistry,
     MqttIngestRegistry,
     PinpadRegistry,
@@ -111,6 +112,9 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         # CameraEventBus.
         mqtt_ingest_registry.bind(camera_registry)
         mqtt_ingest_registry.start_all()
+        # CFX-IPC stations — each embeds an ipc-cfx CFXPlugin driving its
+        # broker + P2P endpoints. No-op when `cfx:` is absent/empty.
+        cfx_ingest_registry.start_all()
         # Fleet registry — pair once if needed, then heartbeat in
         # background. No-op when server.registry.enabled is false.
         from .registry import fleet_loop
@@ -160,6 +164,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                     except (asyncio.CancelledError, Exception):
                         pass
             mqtt_ingest_registry.stop_all()
+            cfx_ingest_registry.stop_all()
             await reader_registry.stop_all()
             await display_registry.stop_all()
             await camera_registry.stop_all()
@@ -190,6 +195,10 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     access_registry = AccessRegistry.from_config(config)
     biometric_registry = BiometricRegistry.from_config(config)
     mqtt_ingest_registry = MqttIngestRegistry.from_config(config)
+    # CFX-IPC ingest — each station embeds an ipc-cfx CFXPlugin. Needs the
+    # `app` for the bus_inject/audit Odoo links. No-op + zero imports when
+    # `cfx:` is absent/empty (pure-fiscal stays byte-identical).
+    cfx_ingest_registry = CfxIngestRegistry.from_config(config, app=app)
     # Shift bridges — long-lived TCP clients към Android ShiftBridgeService
     # (one per paired BlueCash device). Lazy-connect: socket се отваря на
     # първото HTTP /shifts/<serial>/* извикване.
@@ -206,6 +215,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.access_registry = access_registry
     app.state.biometric_registry = biometric_registry
     app.state.mqtt_ingest_registry = mqtt_ingest_registry
+    app.state.cfx_ingest_registry = cfx_ingest_registry
     app.state.shift_registry = shift_registry
     app.state.config = config
 
@@ -298,6 +308,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.biometric import router as biometric_router
     from .routes.polimex_events import router as polimex_events_router
     from .routes.mqtt import router as mqtt_router
+    from .routes.cfx import router as cfx_router
     from .routes.rescue import router as rescue_router
     # `shift_sync` + `shift_signal` бяха consolidated в единен
     # `shifts.py` router (виж feedback_shift_bridge_unification_2026_05_26).
@@ -317,6 +328,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(biometric_router)
     app.include_router(polimex_events_router)
     app.include_router(mqtt_router)
+    app.include_router(cfx_router)
     app.include_router(admin_router)
     app.include_router(rescue_router)
     app.include_router(shifts_router)
@@ -386,6 +398,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "access": list(access_registry.access.keys()),
             "biometric": list(biometric_registry.biometric.keys()),
             "mqtt": list(mqtt_ingest_registry.specs.keys()),
+            "cfx": list(cfx_ingest_registry.specs.keys()),
             "shifts": shift_registry.all_serials(),
         }
 
