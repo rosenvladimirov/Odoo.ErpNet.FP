@@ -50,6 +50,24 @@ def to_snake(name: str) -> str:
     return s.replace("-", "_").replace(".", "_").lower().strip("_")
 
 
+# CFX message class → bus event `type` (PLAN §3 vocabulary). Трябва да е
+# ИДЕНТИЧЕН на Odoo AUDIT-страната (cfx_ingest.py `_EVENT_TYPE_MAP`), за да
+# emit-ва proxy-live пътят и Odoo-audit-then-live пътят СЪЩИЯ `type` за едно
+# и също CFX съобщение — Phase-3 (mrp_display_cfx_patch.js) вижда един
+# вокабулар (напр. StationStateChanged → cfx.station_state, НЕ
+# cfx.station_state_changed; UnitsInspected → cfx.wo_progress). Непокрити
+# съобщения падат обратно на `cfx.<snake(message_name)>`.
+_EVENT_TYPE_MAP = {
+    "WorkStarted": "cfx.work_started",
+    "MaterialsInstalled": "cfx.materials_installed",
+    "WorkCompleted": "cfx.work_completed",
+    "StationStateChanged": "cfx.station_state",
+    "FaultOccurred": "cfx.fault",
+    "UnitsInspected": "cfx.wo_progress",
+    "UnitsProcessed": "cfx.wo_progress",
+}
+
+
 @dataclass
 class CfxEvent:
     """A single normalised CFX-IPC message.
@@ -82,10 +100,14 @@ class CfxEvent:
 
     @property
     def bus_type(self) -> str:
-        """bus_inject event `type` — `cfx.<message_name_snake>`
-        (vocabulary in PLAN §3: cfx.work_started, cfx.materials_installed,
-        cfx.work_completed, cfx.station_state, cfx.fault, …)."""
-        return f"cfx.{self.message_name_snake}"
+        """bus_inject event `type` (vocabulary in PLAN §3: cfx.work_started,
+        cfx.materials_installed, cfx.work_completed, cfx.station_state,
+        cfx.fault, cfx.wo_progress, …). Ползва `_EVENT_TYPE_MAP` (същия като
+        Odoo-страната), за да не се разминат snake-имената (напр.
+        StationStateChanged → cfx.station_state, не …_changed); при непознато
+        съобщение пада на `cfx.<snake>`."""
+        return _EVENT_TYPE_MAP.get(
+            self.message_name, f"cfx.{self.message_name_snake}")
 
     # ─── serialisers ────────────────────────────────────────────
 
@@ -110,25 +132,46 @@ class CfxEvent:
         frontend code. Only emitted when we actually carry a WO key."""
         if not self.wo_name:
             return []
+        # `mode` е "field" — същото като Odoo-страната (cfx_ingest.py
+        # `_emit_wo_refresh`). live_refresh_service.js:174 различава само
+        # "list" от всичко останало (→ LIVE_REFRESH_FIELD), така че всяка
+        # не-"list" стойност работи; държим я идентична за консистентност.
         return [{
             "model": "mrp.workorder",
             "match_field": "name",
             "match_value": self.wo_name,
             "field": "qty_produced",
-            "mode": "flash",
+            "mode": "field",
         }]
 
     def to_bus_data(self) -> dict:
-        """LIVE bus_inject `data` payload."""
+        """LIVE bus_inject `data` payload.
+
+        Имената на ключовете са ПОДРАВНЕНИ с Odoo-страната
+        (cfx_ingest.py `_emit_wo_refresh`) и с четенето на Shop Floor patch-а
+        (mrp_display_cfx_patch.js), за да изглеждат proxy-live пътят и
+        Odoo-audit-then-live пътят ИДЕНТИЧНИ на Phase-3:
+        `workorder`/`wo_name` (WO ключ), `placed` (overlay брояч),
+        `state` (station state) + `_refresh` hint. `counters` +
+        `transaction_id` остават като безобидни допълнителни полета.
+        """
         out: dict[str, Any] = {
             "machine_kind": self.machine_kind,
             "message_name": self.message_name,
+            # Phase-3 чете `data.workorder ?? data.wo_name ?? workorder_id`;
+            # даваме и двата алиаса (както Odoo-страната).
+            "workorder": self.wo_name,
             "wo_name": self.wo_name,
             "transaction_id": self.transaction_id,
             "counters": dict(self.counters),
         }
+        # `placed` на топ ниво (overlay значката го чете) — идва от counters.
+        placed = self.counters.get("placed")
+        if placed is not None:
+            out["placed"] = placed
+        # Shop Floor overlay-ът чете `data.state` за station state.
         if self.station_state is not None:
-            out["station_state"] = self.station_state
+            out["state"] = self.station_state
         refresh = self._refresh_hint()
         if refresh:
             out["_refresh"] = refresh
@@ -136,14 +179,23 @@ class CfxEvent:
 
     def audit_body(self) -> dict:
         """AUDIT signed-POST body — persisted by the Odoo machine_kind
-        dispatcher (POST /erpnet_fp/cfx/ingest)."""
-        return {
+        dispatcher (POST /erpnet_fp/cfx/ingest).
+
+        Носи `workorder` (когато е известен), защото Odoo-страната
+        (`_wo_key` в cfx_ingest.py) чете първо `event["workorder"]`, за да
+        emit-не WO live-refresh и от AUDIT пътя — иначе WO контекстът, който
+        proxy-то вече е извлякло, се губи.
+        """
+        body: dict[str, Any] = {
             "machine_kind": self.machine_kind,
             "message_name": self.message_name,
             "transaction_id": self.transaction_id,
             "cfx_handle": self.cfx_handle,
             "data": self.data,
         }
+        if self.wo_name:
+            body["workorder"] = self.wo_name
+        return body
 
 
 # ─── extraction helpers (permissive; SDK schema not pinned) ─────────

@@ -26,11 +26,11 @@ Lazy-import: the ipc-cfx SDK + ``rabbitmq-amqp-python-client`` are only
 touched inside ``start()`` (config-gated), so a pure-fiscal deployment
 without a ``cfx:`` section never imports them.
 
-⚠ Coupling: importing ``server.cfx_plugin`` transitively runs the SDK's
-``server/__init__.py`` (``from . import amqp`` → ``from proton import
-Delivery``), so ``python-qpid-proton`` must be installed even for a
-broker-only station. A missing dep is caught + logged in ``_bootstrap``
-(the station goes idle; the rest of the proxy is unaffected).
+Transport deps: the SDK imports ``python-qpid-proton`` **lazily** (only the
+P2P transport pulls it, at ``connect()``), so a broker-only station needs
+just ``rabbitmq-amqp-python-client`` and imports ``server.cfx_plugin``
+without qpid-proton installed. Any missing dep is caught + logged in
+``_bootstrap`` (the station goes idle; the rest of the proxy is unaffected).
 """
 
 from __future__ import annotations
@@ -296,9 +296,13 @@ class CfxAmqpIngest:
 
         Derives the CFX-ingest URL from the bus_inject client's already
         resolved base + reuses its HMAC secret/proxy name. Signs with the
-        proxy's canonical HMAC helper (odoo_forwarder.sign_body over
-        sort_keys canonical JSON) — the same scheme the Fleet controllers
-        verify. Best-effort: never raises into the caller.
+        proxy's HMAC helper (odoo_forwarder.sign_body = hex HMAC-SHA256 of
+        the on-wire bytes) and sends it under the **bus_inject** house
+        headers ``X-Bus-Inject-Signature`` + ``X-Bus-Inject-Proxy`` — the
+        exact scheme the Odoo cfx_ingest controller verifies (it recomputes
+        the HMAC over the raw request body, so signing the canonical bytes
+        we actually POST keeps both sides byte-identical). Best-effort:
+        never raises into the caller.
         """
         try:
             import httpx
@@ -318,7 +322,11 @@ class CfxAmqpIngest:
             with httpx.Client(timeout=5.0) as hc:
                 r = hc.post(audit_url, content=raw, headers={
                     "Content-Type": "application/json",
-                    "X-Registry-Signature": sig,
+                    # House convention (l10n_bg_erp_net_fp_bus_inject): the
+                    # signature header is X-Bus-Inject-Signature, NOT the
+                    # Fleet-registry X-Registry-Signature — cfx_ingest.py
+                    # reads X-Bus-Inject-Signature.
+                    "X-Bus-Inject-Signature": sig,
                     "X-Bus-Inject-Proxy": getattr(client, "proxy_name", ""),
                     "User-Agent": "Odoo.ErpNet.FP/1.0 (cfx ingest)",
                     "Accept": "application/json",
