@@ -60,6 +60,23 @@ dev = [
 zen = [
     "zen-engine>=0.30",
 ]
+# CFX-IPC (IPC-2591) machine-data ingest. Lazy-imported by the
+# `drivers/cfx` listener — pure-fiscal/POS deployments never load it and
+# stay byte-identical. Two AMQP libs:
+#   * rabbitmq-amqp-python-client — AMQP 1.0 broker transport;
+#   * python-qpid-proton — the AMQP 1.0 P2P transport AND (currently) a
+#     HARD import-time dep: the SDK's `server/__init__.py` eagerly does
+#     `from . import amqp` → `from proton import Delivery`, so importing
+#     `server.cfx_plugin` fails without proton even for broker-only use.
+# NB: the ipc-cfx SDK itself (repo `~/Проекти/amqp/proton-amqp`, package
+# `lib.cfx` + top-level `server`) is NOT on PyPI — install it separately
+# (`pip install -e <amqp>/proton-amqp`) OR point each station's
+# `sdk_path:` at `<amqp>/proton-amqp/src` so the listener adds it to
+# sys.path at start.
+cfx = [
+    "rabbitmq-amqp-python-client>=0.8.0",
+    "python-qpid-proton>=0.39",
+]
 
 [project.urls]
 Homepage = "https://github.com/rosenvladimirov/Odoo.ErpNet.FP"
