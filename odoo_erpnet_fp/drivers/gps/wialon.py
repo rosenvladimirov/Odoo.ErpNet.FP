@@ -35,6 +35,11 @@ from .common import GpsTracker, PositionEvent
 
 _logger = logging.getLogger(__name__)
 
+# Wialon приема токена като URL query параметър (не в тялото) → httpx на INFO
+# ниво логва пълния URL, вкл. токена. Заглушаваме httpx до WARNING, за да НЕ
+# изтича READ токенът в docker/файлови логове (secret hygiene).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Битова маска по подразбиране — base + last position + last message.
 # Същата стойност, доказана срещу CAST в Odoo wialon.config.search_flags.
 _DEFAULT_FLAGS = 5251073
@@ -110,8 +115,12 @@ class WialonTracker(GpsTracker):
     def start(self) -> None:
         if self._running:
             return
+        # follow_redirects=True: CAST white-label хостове често 301-редиректват
+        # (напр. api.cast-bg.net → my.kitin.at); requests (Odoo cron) следва по
+        # подразбиране, httpx — не, затова го включваме изрично.
         self._client = httpx.Client(
-            timeout=_HTTP_TIMEOUT_S, verify=self.verify_ssl
+            timeout=_HTTP_TIMEOUT_S, verify=self.verify_ssl,
+            follow_redirects=True,
         )
         self._stop_evt.clear()
         self._thread = threading.Thread(
