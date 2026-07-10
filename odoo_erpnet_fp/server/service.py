@@ -1779,7 +1779,7 @@ class TrackerRegistry:
 # Whitelist of AC sections the Fleet push_config command is allowed to
 # rewrite. Fiscal sections (printers/pinpads/scales/displays/readers)
 # stay under customer-IT manual control — never rewritten from Odoo.
-PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt")
+PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt", "cfx")
 
 
 def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) -> str:
@@ -1883,5 +1883,13 @@ async def hot_reload_ac_fragment(app, kind: str) -> dict:
         # Make sure camera_registry is bound (no-op if it already is).
         reg.bind(app.state.camera_registry)
         detail = reg.reload_from_config(new_cfg)
+
+    elif kind == "cfx":
+        # CFX ingest (broker + P2P) — пълен reload (registry няма granular).
+        reg = app.state.cfx_ingest_registry
+        reg.stop_all()
+        new = CfxIngestRegistry.from_config(new_cfg, app=app)
+        app.state.cfx_ingest_registry = new
+        new.start_all()
 
     return {"reloaded": kind, "ok": True, **({"detail": detail} if detail else {})}
