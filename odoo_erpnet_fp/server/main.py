@@ -81,6 +81,20 @@ def _read_version() -> str:
         return "dev"
 
 
+# Момент на стартиране на процеса — за uptime в /server/info
+import time as _time  # noqa: E402
+_STARTED_AT = _time.time()
+
+
+def _probe_import(module: str) -> bool:
+    """True ако модулът е наличен в имиджа (extras детекция за /server/info)."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
 def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     """Build a FastAPI app bound to the given config.
 
@@ -400,6 +414,65 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "mqtt": list(mqtt_ingest_registry.specs.keys()),
             "cfx": list(cfx_ingest_registry.specs.keys()),
             "shifts": shift_registry.all_serials(),
+        }
+
+    @app.get("/server/info")
+    def server_info():
+        """Инфо за билда и плъговете — консумира се от Info таба на дашборда.
+
+        * build — версия, python, платформа, uptime, extras в имиджа;
+        * static_drivers — вградените driver пакети (какво МОЖЕ проксито);
+        * dynamic — какво е конфигурирано/закачено В МОМЕНТА (устройства,
+          брокери, CFX станции) — идва от Odoo push_config / config.yaml.
+        """
+        import platform
+
+        drivers_dir = Path(__file__).resolve().parent.parent / "drivers"
+        static_drivers = {}
+        for d in sorted(drivers_dir.iterdir()):
+            if not d.is_dir() or d.name.startswith("_") or d.name == "base":
+                continue
+            mods = sorted(
+                f.stem for f in d.rglob("*.py")
+                if not f.name.startswith("_") and "__pycache__" not in f.parts
+            )
+            static_drivers[d.name] = {"count": len(mods), "modules": mods}
+
+        extras = {
+            "zen": _probe_import("zen"),
+            "cfx_broker": _probe_import("rabbitmq_amqp_python_client"),
+            "cfx_p2p": _probe_import("proton"),
+            # SDK-то живее на PVC (sdk_path) — виж се като зареден модул
+            "ipc_cfx_sdk": "server.cfx_plugin" in sys.modules,
+        }
+
+        dynamic = {
+            "printers": sorted(registry.printers.keys()),
+            "pinpads": sorted(pinpad_registry.pinpads.keys()),
+            "scales": sorted(scale_registry.scales.keys()),
+            "readers": sorted(reader_registry.readers.keys()),
+            "displays": sorted(display_registry.displays.keys()),
+            "cameras": sorted(camera_registry.cameras.keys()),
+            "trackers": sorted(tracker_registry.trackers.keys()),
+            "access": sorted(access_registry.access.keys()),
+            "biometric": sorted(biometric_registry.biometric.keys()),
+            "mqtt": sorted(mqtt_ingest_registry.specs.keys()),
+        }
+        try:
+            cfx_stations = cfx_ingest_registry.status().get("stations", [])
+        except Exception:  # noqa: BLE001
+            cfx_stations = []
+
+        return {
+            "version": _read_version(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "hostname": platform.node(),
+            "uptime_s": int(_time.time() - _STARTED_AT),
+            "extras": extras,
+            "static_drivers": static_drivers,
+            "dynamic": dynamic,
+            "cfx_stations": cfx_stations,
         }
 
     # Single-page dashboard at root. The HTML uses fetch() against the
