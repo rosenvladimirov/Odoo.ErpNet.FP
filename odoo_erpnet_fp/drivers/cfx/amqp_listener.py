@@ -250,6 +250,14 @@ class CfxAmqpIngest:
                 data=body,
                 counters=extract_counters(message_name, body),
             )
+            # Лек RX лог (като Polimex POST body реда) — по един ред на
+            # съобщение от абонирания канал: топик, машина, WO, размер.
+            _logger.info(
+                "CFX RX[%s] %s handle=%s wo=%s tx=%s (~%dB) msg#%d",
+                self.name, message_name or "?", event.cfx_handle or "-",
+                event.wo_name or "-", event.transaction_id or "-",
+                len(str(body)), self.messages_received,
+            )
             self._forward(event)
         except Exception as exc:  # noqa: BLE001
             _logger.exception("CFX ingest[%s] message handler crashed: %s",
@@ -332,8 +340,9 @@ class CfxAmqpIngest:
                     "Accept": "application/json",
                 })
             if r.status_code != 200:
-                _logger.debug("CFX audit[%s] → HTTP %d: %s",
-                              self.name, r.status_code, r.text[:200])
+                # Warning (не debug): фейлът тук = събитието НЕ стига до Odoo.
+                _logger.warning("CFX audit[%s] → HTTP %d: %s",
+                                self.name, r.status_code, r.text[:200])
                 return False
             return True
         except Exception:  # noqa: BLE001
