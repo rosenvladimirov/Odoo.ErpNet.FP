@@ -417,7 +417,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         }
 
     @app.get("/server/info")
-    def server_info():
+    def server_info(request: Request):
         """Инфо за билда и плъговете — консумира се от Info таба на дашборда.
 
         * build — версия, python, платформа, uptime, extras в имиджа;
@@ -458,8 +458,12 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "biometric": sorted(biometric_registry.biometric.keys()),
             "mqtt": sorted(mqtt_ingest_registry.specs.keys()),
         }
+        # hot_reload('cfx') ПОДМЕНЯ registry обекта в app.state — closure
+        # променливата остарява, затова четем живия през request.app.state.
         try:
-            cfx_stations = cfx_ingest_registry.status().get("stations", [])
+            live_cfx = getattr(request.app.state, "cfx_ingest_registry",
+                               cfx_ingest_registry)
+            cfx_stations = live_cfx.status().get("stations", [])
         except Exception:  # noqa: BLE001
             cfx_stations = []
 
