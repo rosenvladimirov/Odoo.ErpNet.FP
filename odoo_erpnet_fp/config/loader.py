@@ -1122,7 +1122,10 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
     for entry in cfx_entries:
         if not isinstance(entry, dict):
             continue
-        raw_name = str(entry.get("name") or "default").strip() or "default"
+        # Odoo cfx.endpoint.get_config_payload() праща `id` (slug от името),
+        # не `name` — приемаме и двете, иначе всяка станция става "default".
+        raw_name = str(entry.get("name") or entry.get("id")
+                       or "default").strip() or "default"
         cname = raw_name
         _sfx = 2
         while cname in cfx_seen:

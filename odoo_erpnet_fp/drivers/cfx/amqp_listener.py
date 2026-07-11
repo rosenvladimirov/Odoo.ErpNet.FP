@@ -86,6 +86,10 @@ class CfxAmqpIngest:
         self.events_live_ok = 0
         self.events_audit_ok = 0
         self.messages_dropped = 0
+        # Ring buffer с последните съобщения от канала — консумира се от
+        # 🐇 RabbitMQ таба на дашборда (live поток при 2s poll).
+        from collections import deque
+        self.recent = deque(maxlen=80)
 
     # ─── lifecycle ──────────────────────────────────────────────
 
@@ -140,13 +144,27 @@ class CfxAmqpIngest:
             "events_live_ok": self.events_live_ok,
             "events_audit_ok": self.events_audit_ok,
             "messages_dropped": self.messages_dropped,
+            "recent": list(self.recent),
         }
 
     @staticmethod
     def _endpoint_summary(e) -> dict:
         # Не издаваме credentials в status — само транспорт + топология.
+        # host = hostname:port от amqp_uri БЕЗ user/парола (за 🐇 таба).
+        host = ""
+        uri = getattr(e, "amqp_uri", "") or ""
+        if uri:
+            try:
+                from urllib.parse import urlparse
+                p = urlparse(uri)
+                host = p.hostname or ""
+                if p.port:
+                    host += f":{p.port}"
+            except Exception:  # noqa: BLE001
+                host = ""
         return {
             "transport": getattr(e, "transport", None),
+            "host": host,
             "queue": getattr(e, "queue", None),
             "exchange": getattr(e, "exchange", None),
             "routing_key": getattr(e, "routing_key", None),
@@ -258,6 +276,14 @@ class CfxAmqpIngest:
                 event.wo_name or "-", event.transaction_id or "-",
                 len(str(body)), self.messages_received,
             )
+            self.recent.append({
+                "ts": time.time(),
+                "message_name": message_name or "?",
+                "handle": event.cfx_handle or "",
+                "wo": event.wo_name or "",
+                "tx": event.transaction_id or "",
+                "bytes": len(str(body)),
+            })
             # Heartbeat-ите са liveness сигнал — виждат се в RX лога, но НЕ
             # се форуърдват (иначе всеки се превръща в cfx.machine.stat шум).
             if (message_name or "").lower() == "heartbeat":
