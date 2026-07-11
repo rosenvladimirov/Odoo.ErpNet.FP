@@ -1151,15 +1151,31 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         for ep in endpoints_raw:
             if not isinstance(ep, dict):
                 continue
+            ep_transport = str(ep.get("transport", "broker") or "broker")
+            ep_uri = str(ep.get("amqp_uri") or ep.get("uri")
+                         or ep.get("url") or "")
+            # Odoo cfx.endpoint (засега) няма поле mode — конвенция: p2p
+            # endpoint с wildcard host (0.0.0.0/::/*) значи СЛУШАМЕ ние
+            # (машината се свързва към проксито), иначе connect.
+            ep_mode = str(ep.get("mode", "") or "")
+            if not ep_mode:
+                host = ""
+                try:
+                    from urllib.parse import urlparse
+                    host = urlparse(ep_uri).hostname or ""
+                except Exception:  # noqa: BLE001
+                    pass
+                ep_mode = ("listen" if ep_transport == "p2p"
+                           and host in ("0.0.0.0", "::", "*")
+                           else "connect")
             cfx_endpoints.append(CfxEndpointSpec(
-                transport=str(ep.get("transport", "broker") or "broker"),
-                amqp_uri=str(ep.get("amqp_uri") or ep.get("uri")
-                             or ep.get("url") or ""),
+                transport=ep_transport,
+                amqp_uri=ep_uri,
                 queue=str(ep.get("queue", "") or ""),
                 exchange=str(ep.get("exchange", "") or ""),
                 routing_key=str(ep.get("routing_key", "") or ""),
                 source=str(ep.get("source", "") or ""),
-                mode=str(ep.get("mode", "connect") or "connect"),
+                mode=ep_mode,
                 tls=bool(ep.get("tls", False)),
                 ssl_config=(ep.get("ssl_config")
                             if isinstance(ep.get("ssl_config"), dict) else None),
