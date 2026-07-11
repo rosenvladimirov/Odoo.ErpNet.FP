@@ -258,6 +258,10 @@ class CfxAmqpIngest:
                 event.wo_name or "-", event.transaction_id or "-",
                 len(str(body)), self.messages_received,
             )
+            # Heartbeat-ите са liveness сигнал — виждат се в RX лога, но НЕ
+            # се форуърдват (иначе всеки се превръща в cfx.machine.stat шум).
+            if (message_name or "").lower() == "heartbeat":
+                return
             self._forward(event)
         except Exception as exc:  # noqa: BLE001
             _logger.exception("CFX ingest[%s] message handler crashed: %s",
