@@ -76,6 +76,10 @@ zen = [
 cfx = [
     "rabbitmq-amqp-python-client>=0.8.0",
     "python-qpid-proton>=0.39",
+    # AMQP 0-9-1 transport for RabbitMQ 3.x brokers (Europlacer PROMON) —
+    # the 1.0 client refuses <4.0 and the 3.x amqp1.0 plugin won't deliver
+    # to a qpid-proton receiver, so 3.x sources are consumed over 0-9-1.
+    "pika>=1.3",
 ]
 
 [project.urls]
