@@ -240,6 +240,15 @@
     font-size: 0.72rem; font-family: monospace; padding: 0.1rem 0.45rem;
     border-radius: 999px; background: var(--surface-hi); color: var(--text-dim);
   }
+  .cfx-json {
+    margin: 0.4rem 0 0.6rem; padding: 0.6rem; border-radius: 6px;
+    background: rgba(0,0,0,0.35); color: var(--text);
+    font-size: 0.72rem; line-height: 1.35; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-word;
+    border: 1px solid var(--surface-hi);
+  }
+  .reader-feed summary { cursor: pointer; }
+  .reader-feed summary:hover { color: var(--accent); }
 
   #toast {
     position: fixed; bottom: 1.5rem; right: 1.5rem;
@@ -1390,10 +1399,14 @@ async function loadRabbit() {
         : `${e.exchange || "—"} → ${e.queue || "—"}${e.routing_key ? " · rk=" + e.routing_key : ""}`;
       return `<dt>${e.transport}</dt><dd><code>${e.host || "?"}</code> ${bind}</dd>`;
     }).join("");
-    const feed = (s.recent || []).slice().reverse().map(m =>
-      `<li class="scan">${_fmtTs(m.ts)} · <b>${m.message_name}</b> · ${m.handle || "-"}` +
-      `${m.wo ? " · wo=" + m.wo : ""}${m.tx ? " · tx=" + String(m.tx).slice(0, 8) : ""} · ${m.bytes}B</li>`
-    ).join("");
+    const feed = (s.recent || []).slice().reverse().map(m => {
+      const head = `${_fmtTs(m.ts)} · <b>${m.message_name}</b> · ${m.handle || "-"}` +
+        `${m.wo ? " · wo=" + m.wo : ""}${m.tx ? " · tx=" + String(m.tx).slice(0, 8) : ""} · ${m.bytes}B`;
+      if (!m.payload) return `<li class="scan">${head}</li>`;
+      const esc = m.payload.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      return `<li class="scan"><details><summary>${head} <span class="badge muted">json</span></summary>` +
+        `<pre class="cfx-json">${esc}</pre></details></li>`;
+    }).join("");
     return `<div class="card">
       <div class="card-header"><h3>🏭 ${s.name}</h3>
         <span class="badge muted">${s.machine_kind || "?"}</span> ${badge}
@@ -1411,10 +1424,13 @@ async function loadRabbit() {
   }).join("");
 }
 
-// Live: 2s poll само докато 🐇 табът е активен
+// Live: 2s poll само докато 🐇 табът е активен. Пауза, докато има
+// отворен JSON (<details open>) — иначе презареждането го затваря.
 setInterval(() => {
   const active = document.querySelector('.tabs .tab.active');
-  if (active && active.dataset.kind === "rabbit") loadRabbit();
+  if (!active || active.dataset.kind !== "rabbit") return;
+  if (document.querySelector('#grid-rabbit details[open]')) return;
+  loadRabbit();
 }, 2000);
 
 // ─── Info tab ────────────────────────────────────────────────

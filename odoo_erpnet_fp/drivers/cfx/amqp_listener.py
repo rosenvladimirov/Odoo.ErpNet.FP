@@ -276,6 +276,17 @@ class CfxAmqpIngest:
                 event.wo_name or "-", event.transaction_id or "-",
                 len(str(body)), self.messages_received,
             )
+            # Пълният CFX payload, както Python го е парснал — за
+            # разгъваемия ред в 🐇 таба. Ограничаваме до 6KB, за да не
+            # раздува /cfx/status (DefectImages носят base64!).
+            try:
+                import json as _json
+                pretty = _json.dumps(payload, indent=2, ensure_ascii=False,
+                                     default=str)
+                if len(pretty) > 6000:
+                    pretty = pretty[:6000] + "\n… (отрязано)"
+            except Exception:  # noqa: BLE001
+                pretty = str(payload)[:6000]
             self.recent.append({
                 "ts": time.time(),
                 "message_name": message_name or "?",
@@ -283,6 +294,7 @@ class CfxAmqpIngest:
                 "wo": event.wo_name or "",
                 "tx": event.transaction_id or "",
                 "bytes": len(str(body)),
+                "payload": pretty,
             })
             # Heartbeat-ите са liveness сигнал — виждат се в RX лога, но НЕ
             # се форуърдват (иначе всеки се превръща в cfx.machine.stat шум).
