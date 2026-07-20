@@ -48,6 +48,7 @@ from .common import (
     extract_counters,
     extract_handle,
     extract_message_name,
+    extract_timestamp,
     extract_transaction_id,
     extract_wo_name,
 )
@@ -267,6 +268,7 @@ class CfxAmqpIngest:
                 wo_name=extract_wo_name(payload, body),
                 data=body,
                 counters=extract_counters(message_name, body),
+                cfx_timestamp=extract_timestamp(payload, props),
             )
             # Лек RX лог (като Polimex POST body реда) — по един ред на
             # съобщение от абонирания канал: топик, машина, WO, размер.

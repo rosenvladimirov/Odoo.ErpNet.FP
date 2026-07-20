@@ -1,4 +1,27 @@
 
+## [0.19.1] — 2026-07-20
+
+### Fixed — CFX envelope `TimeStamp` was never forwarded to Odoo
+
+- `CfxEvent.audit_body()` did not carry the event time, so the Odoo side
+  (`cfx_ingest.py`, `event.get("ts")`) always read `None` and fell back to a
+  body-derived time. Most CFX messages — `UnitsInspected`, `UnitsArrived`,
+  `UnitsDeparted` — carry no time in `MessageBody` at all, because CFX puts
+  it on the **envelope**. Result: `cfx.machine.stat.event_time` stayed empty
+  and those records never surfaced in time-sorted views.
+- Measured on the MEC production stack before the fix: **97.6 % of PARMI
+  records (1412/1447)** and **38 % of Europlacer (44922/118347)** had a null
+  `event_time`, while the messages themselves were arriving normally.
+- `extract_timestamp()` reads the envelope `TimeStamp` (with `cfx-timestamp`
+  AMQP property as fallback) and `CfxEvent.cfx_timestamp` forwards it raw as
+  `ts`. No reformatting: Odoo's `_parse_dt` hands it to
+  `datetime.fromisoformat`, which on py3.11+ parses the .NET 7-digit
+  fractional second (`…12.0702018+03:00`) directly. Verified on the proxy's
+  own py3.12.13.
+- Absent timestamp → the `ts` key is omitted entirely, preserving the
+  existing Odoo-side fallback. `to_json()` also exposes `cfxTimestamp`, kept
+  distinct from `timestamp` (proxy receive time).
+
 ## [0.18.0] — 2026-05-30
 
 ### Added — Polimex offline time-window enforcement (D3 time schedules)

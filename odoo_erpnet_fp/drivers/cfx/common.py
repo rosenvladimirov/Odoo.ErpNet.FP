@@ -90,6 +90,9 @@ class CfxEvent:
     counters: dict = field(default_factory=dict)
     station_state: Optional[str] = None
     timestamp: datetime = field(default_factory=datetime.now)
+    # Времето на СЪБИТИЕТО от CFX плика (raw ISO, машинно). Различно от
+    # `timestamp`, който е кога проксито е получило съобщението.
+    cfx_timestamp: str = ""
     source: str = "cfx"
 
     # ─── derived ────────────────────────────────────────────────
@@ -122,6 +125,7 @@ class CfxEvent:
             "counters": dict(self.counters),
             "stationState": self.station_state,
             "timestamp": self.timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f"),
+            "cfxTimestamp": self.cfx_timestamp,
             "source": self.source,
             "data": self.data,
         }
@@ -195,6 +199,13 @@ class CfxEvent:
         }
         if self.wo_name:
             body["workorder"] = self.wo_name
+        # `ts` = времето на събитието от CFX плика. Odoo-страната
+        # (cfx_ingest.py `_write_generic_stat`) чете първо него за
+        # `event_time`; без него пада на body-производно време, което
+        # повечето съобщения нямат → cfx.machine.stat.event_time остава
+        # празен и записите не изплуват в сортираните по време изгледи.
+        if self.cfx_timestamp:
+            body["ts"] = self.cfx_timestamp
         return body
 
 
@@ -232,6 +243,29 @@ def extract_body(payload: dict) -> dict:
         if isinstance(v, dict):
             return v
     return payload
+
+
+def extract_timestamp(payload: dict, properties: dict) -> str:
+    """The CFX **envelope** `TimeStamp`, raw, as the machine emitted it.
+
+    CFX carries the event time on the envelope, not in `MessageBody` — so
+    for most message types (`UnitsInspected`, `UnitsArrived`, …) it is the
+    only event time there is. Odoo's `_parse_dt` feeds it straight to
+    `datetime.fromisoformat`, which on py3.11+ accepts the .NET 7-digit
+    fractional second (`…12.0702018+03:00`), so no reformatting here.
+
+    Returns "" when absent — the caller then leaves `ts` out entirely and
+    Odoo falls back to its own body-derived time.
+    """
+    for k in ("TimeStamp", "timeStamp", "Timestamp", "timestamp"):
+        v = (payload or {}).get(k)
+        if v:
+            return str(v)
+    for k in ("cfx-timestamp", "cfx_timestamp"):
+        v = (properties or {}).get(k)
+        if v:
+            return str(v)
+    return ""
 
 
 def extract_wo_name(payload: dict, body: dict) -> str:
