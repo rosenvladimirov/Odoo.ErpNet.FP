@@ -74,7 +74,11 @@ zen = [
 # `sdk_path:` at `<amqp>/proton-amqp/src` so the listener adds it to
 # sys.path at start.
 cfx = [
-    "rabbitmq-amqp-python-client>=0.8.0",
+    # Pinned below 1.0: the 1.x line is a major rewrite and the broker
+    # transport is driven by the ipc-cfx SDK (not vendored here), so a
+    # rebuild must not silently swap it under a live PARMI endpoint.
+    # Lift the cap only after testing `transport: broker` against 1.x.
+    "rabbitmq-amqp-python-client>=0.8.0,<1.0",
     "python-qpid-proton>=0.39",
     # AMQP 0-9-1 transport for RabbitMQ 3.x brokers (Europlacer PROMON) —
     # the 1.0 client refuses <4.0 and the 3.x amqp1.0 plugin won't deliver
