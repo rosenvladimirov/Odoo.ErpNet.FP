@@ -31,6 +31,7 @@ from .service import (
     CameraRegistry,
     CfxIngestRegistry,
     DisplayRegistry,
+    EuroplacerRegistry,
     MqttIngestRegistry,
     PinpadRegistry,
     PrinterRegistry,
@@ -56,9 +57,11 @@ def _normalise_path(raw: str) -> str:
     """
     parts = raw.split("/")
     normalised: list[str] = []
-    # Known top-level resource collections that take an :id segment
+    # Known resource collections that take an :id segment. `order` collapses
+    # the unbounded europlacer order_id in /europlacer/{name}/order/{id}
+    # (the station {name} is bounded, so it stays a literal label).
     id_after = {"printers", "readers", "scales", "displays", "pinpads",
-                "cameras", "access", "iot_drivers", "hw_drivers"}
+                "cameras", "access", "iot_drivers", "hw_drivers", "order"}
     skip_next = False
     for i, part in enumerate(parts):
         if skip_next:
@@ -129,6 +132,10 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         # CFX-IPC stations — each embeds an ipc-cfx CFXPlugin driving its
         # broker + P2P endpoints. No-op when `cfx:` is absent/empty.
         cfx_ingest_registry.start_all()
+        # Europlacer producer stations — spin up their worker pools (the
+        # write→wait-.ans→retry happens per-order). No-op when
+        # `europlacer:` is absent/empty. SYNC like cfx (NOT awaited).
+        europlacer_registry.start_all()
         # Fleet registry — pair once if needed, then heartbeat in
         # background. No-op when server.registry.enabled is false.
         from .registry import fleet_loop
@@ -179,6 +186,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                         pass
             mqtt_ingest_registry.stop_all()
             cfx_ingest_registry.stop_all()
+            europlacer_registry.stop_all()
             await reader_registry.stop_all()
             await display_registry.stop_all()
             await camera_registry.stop_all()
@@ -213,6 +221,11 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     # `app` for the bus_inject/audit Odoo links. No-op + zero imports when
     # `cfx:` is absent/empty (pure-fiscal stays byte-identical).
     cfx_ingest_registry = CfxIngestRegistry.from_config(config, app=app)
+    # Europlacer material-OUT producer — writes ready order XML into each
+    # machine's shared folder + waits for the `.ans` answer. Needs `app`
+    # for the bus_inject result callback. No-op + zero imports when
+    # `europlacer:` is absent/empty (pure-fiscal stays byte-identical).
+    europlacer_registry = EuroplacerRegistry.from_config(config, app=app)
     # Shift bridges — long-lived TCP clients към Android ShiftBridgeService
     # (one per paired BlueCash device). Lazy-connect: socket се отваря на
     # първото HTTP /shifts/<serial>/* извикване.
@@ -230,6 +243,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.biometric_registry = biometric_registry
     app.state.mqtt_ingest_registry = mqtt_ingest_registry
     app.state.cfx_ingest_registry = cfx_ingest_registry
+    app.state.europlacer_registry = europlacer_registry
     app.state.shift_registry = shift_registry
     app.state.config = config
 
@@ -323,6 +337,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.polimex_events import router as polimex_events_router
     from .routes.mqtt import router as mqtt_router
     from .routes.cfx import router as cfx_router
+    from .routes.europlacer import router as europlacer_router
     from .routes.rescue import router as rescue_router
     # `shift_sync` + `shift_signal` бяха consolidated в единен
     # `shifts.py` router (виж feedback_shift_bridge_unification_2026_05_26).
@@ -343,6 +358,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(polimex_events_router)
     app.include_router(mqtt_router)
     app.include_router(cfx_router)
+    app.include_router(europlacer_router)
     app.include_router(admin_router)
     app.include_router(rescue_router)
     app.include_router(shifts_router)
@@ -413,6 +429,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "biometric": list(biometric_registry.biometric.keys()),
             "mqtt": list(mqtt_ingest_registry.specs.keys()),
             "cfx": list(cfx_ingest_registry.specs.keys()),
+            "europlacer": list(europlacer_registry.specs.keys()),
             "shifts": shift_registry.all_serials(),
         }
 

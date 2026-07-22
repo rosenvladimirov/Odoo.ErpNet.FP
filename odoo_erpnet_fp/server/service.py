@@ -1664,6 +1664,182 @@ def _cfx_spec_dirty(old: "CfxBrokerSpec", new: "CfxBrokerSpec") -> bool:
     return old_eps != new_eps
 
 
+# ─── Europlacer material-OUT producer registry ──────────────────────
+
+
+class EuroplacerRegistry:
+    """Multi-station Europlacer producer registry (mirrors CfxIngestRegistry).
+
+    One ``EuroplacerFileProducer`` per ``EuroplacerStationSpec``, keyed by
+    ``spec.name``. Each producer owns a worker pool for its write→wait-.ans
+    →retry cycles; stations don't share state. Needs the FastAPI ``app`` so
+    a producer can report outcomes back to Odoo via ``BusInjectClient``.
+
+    When ``europlacer_stations`` is empty (default), every method is a
+    no-op and the europlacer driver is never imported.
+    """
+
+    def __init__(self, app=None):
+        self._app = app
+        self.specs: dict[str, "EuroplacerStationSpec"] = {}
+        self.ingests: dict[str, object] = {}
+
+    @classmethod
+    def from_config(cls, config: AppConfig, app=None) -> "EuroplacerRegistry":
+        r = cls(app=app)
+        for spec in getattr(config, "europlacer_stations", []) or []:
+            r.specs[spec.name] = spec
+        return r
+
+    def bind_app(self, app) -> None:
+        self._app = app
+        for ingest in self.ingests.values():
+            ingest._app = app
+
+    def start_all(self) -> None:
+        # Lazy import — само ако има поне една enabled станция.
+        if not any(s.enabled for s in self.specs.values()):
+            return
+        from ..drivers.europlacer.producer import EuroplacerFileProducer
+        for name, spec in self.specs.items():
+            if not spec.enabled:
+                continue
+            if name not in self.ingests:
+                self.ingests[name] = EuroplacerFileProducer(spec, self._app)
+            self.ingests[name].start()
+
+    def stop_all(self) -> None:
+        for ingest in list(self.ingests.values()):
+            try:
+                ingest.stop()
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning("Europlacer producer[%s] stop failed: %s",
+                                getattr(ingest, "name", "?"), exc)
+        self.ingests.clear()
+
+    def start_one(self, name: str) -> bool:
+        spec = self.specs.get(name)
+        if spec is None:
+            return False
+        from ..drivers.europlacer.producer import EuroplacerFileProducer
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            ingest = EuroplacerFileProducer(spec, self._app)
+            self.ingests[name] = ingest
+        return bool(ingest.start())
+
+    def stop_one(self, name: str) -> bool:
+        ingest = self.ingests.get(name)
+        if ingest is None:
+            return False
+        result = bool(ingest.stop())
+        self.ingests.pop(name, None)
+        return result
+
+    def status(self) -> dict:
+        stations: list[dict] = []
+        running = 0
+        enabled = 0
+        for name, spec in self.specs.items():
+            if spec.enabled:
+                enabled += 1
+            ingest = self.ingests.get(name)
+            if ingest is not None:
+                s = ingest.status()
+                stations.append(s)
+                if s.get("running"):
+                    running += 1
+            else:
+                stations.append({
+                    "name": name,
+                    "enabled": spec.enabled,
+                    "running": False,
+                    "machine_kind": spec.machine_kind,
+                    "order_dir": spec.order_dir,
+                })
+        return {
+            "stations": stations,
+            "enabled_count": enabled,
+            "running_count": running,
+        }
+
+    def reload_from_config(self, new_config: AppConfig) -> dict:
+        new_specs = {s.name: s for s in
+                     (getattr(new_config, "europlacer_stations", []) or [])}
+        old_specs = dict(self.specs)
+
+        added: list[str] = []
+        removed: list[str] = []
+        restarted: list[str] = []
+        unchanged: list[str] = []
+
+        # 1. Stop & drop stations that vanished OR became disabled.
+        for name, old in old_specs.items():
+            new = new_specs.get(name)
+            if new is None:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                removed.append(name)
+            elif old.enabled and not new.enabled:
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                restarted.append(name)
+
+        # 2. Present in BOTH — restart if the spec changed.
+        for name, new in new_specs.items():
+            old = old_specs.get(name)
+            if old is None or (old.enabled and not new.enabled):
+                continue
+            if _europlacer_spec_dirty(old, new):
+                ingest = self.ingests.pop(name, None)
+                if ingest is not None:
+                    try:
+                        ingest.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if new.enabled:
+                    from ..drivers.europlacer.producer import EuroplacerFileProducer
+                    fresh = EuroplacerFileProducer(new, self._app)
+                    fresh.start()
+                    self.ingests[name] = fresh
+                restarted.append(name)
+            else:
+                unchanged.append(name)
+
+        # 3. Brand-new stations — instantiate & start if enabled.
+        for name, new in new_specs.items():
+            if name in old_specs:
+                continue
+            if new.enabled:
+                from ..drivers.europlacer.producer import EuroplacerFileProducer
+                fresh = EuroplacerFileProducer(new, self._app)
+                fresh.start()
+                self.ingests[name] = fresh
+            added.append(name)
+
+        self.specs = new_specs
+        return {"added": added, "removed": removed,
+                "restarted": restarted, "unchanged": unchanged}
+
+
+def _europlacer_spec_dirty(old: "EuroplacerStationSpec",
+                           new: "EuroplacerStationSpec") -> bool:
+    """True iff old/new differ on any field demanding a producer restart."""
+    keys = ("enabled", "machine_kind", "order_dir", "answer_dir",
+            "archive_dir", "filename_prefix", "answer_ext", "answer_timeout",
+            "poll_interval", "retry_limit", "retry_backoff",
+            "retry_backoff_max", "max_concurrent", "result_url")
+    return any(getattr(old, k) != getattr(new, k) for k in keys)
+
+
 # ─── GPS / vehicle-tracker registry ─────────────────────────────────
 
 
@@ -1779,7 +1955,8 @@ class TrackerRegistry:
 # Whitelist of AC sections the Fleet push_config command is allowed to
 # rewrite. Fiscal sections (printers/pinpads/scales/displays/readers)
 # stay under customer-IT manual control — never rewritten from Odoo.
-PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt", "cfx")
+PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt", "cfx",
+                        "europlacer")
 
 
 def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) -> str:
@@ -1891,5 +2068,11 @@ async def hot_reload_ac_fragment(app, kind: str) -> dict:
         new = CfxIngestRegistry.from_config(new_cfg, app=app)
         app.state.cfx_ingest_registry = new
         new.start_all()
+
+    elif kind == "europlacer":
+        # Europlacer producer — granular reload (запазва незасегнатите
+        # станции; рестартира само променените).
+        reg = app.state.europlacer_registry
+        detail = reg.reload_from_config(new_cfg)
 
     return {"reloaded": kind, "ok": True, **({"detail": detail} if detail else {})}
