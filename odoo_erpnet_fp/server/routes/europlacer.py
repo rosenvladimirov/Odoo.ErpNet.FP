@@ -21,10 +21,12 @@ The read-only status/poll endpoints are open (monitoring), like
 
 from __future__ import annotations
 
+import asyncio
+import os
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
 from ..odoo_forwarder import verify_signature
 
@@ -79,6 +81,138 @@ async def status_one(request: Request, name: str) -> dict:
         "machine_kind": spec.machine_kind,
         "order_dir": spec.order_dir,
     }
+
+
+# ─── live file-system view (read-only, open) ────────────────────────────
+#
+# What the producer WRITES (order XML) and what the machine RETURNS (.ans),
+# straight off the shared folder, for a live dashboard tab. Top-level only
+# (order_dir is a machine OUT tree with huge Outputs/ subfolders — never
+# recurse), scandir off the event loop with a hard timeout so a hung CIFS
+# mount can't wedge the proxy, and a path-traversal-safe content preview.
+
+_FILES_TIMEOUT = 8.0        # seconds — a hung mount aborts, never blocks
+_FILES_MAX = 200            # hard cap on rows returned
+_PREVIEW_MAX = 256 * 1024   # bytes — content preview ceiling
+
+
+def _classify_file(fname: str) -> str:
+    low = fname.lower()
+    if low.endswith(".ans"):
+        return "answer"       # machine → us
+    if low.endswith(".xml"):
+        return "order"        # us → machine
+    return "other"
+
+
+def _scan_dirs(dirs: list[str], limit: int) -> dict:
+    """Top-level file listing across `dirs` (deduped by path). Sync — run
+    via asyncio.to_thread with a timeout. Never raises: a per-dir OSError
+    (hung/absent mount) is recorded and skipped."""
+    seen: set[str] = set()
+    rows: list[dict] = []
+    errors: dict[str, str] = {}
+    for d in dirs:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if not e.is_file(follow_symlinks=False):
+                            continue
+                        st = e.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    rows.append({
+                        "name": e.name,
+                        "dir": d,
+                        "kind": _classify_file(e.name),
+                        "size": st.st_size,
+                        "mtime": st.st_mtime,
+                    })
+        except OSError as exc:
+            errors[d] = f"{exc.__class__.__name__}: {exc}"
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return {"files": rows[:limit], "total": len(rows),
+            "truncated": len(rows) > limit, "errors": errors}
+
+
+def _producer_dirs(request: Request, name: str):
+    """(producer-or-None, order_dir, answer_dir) for station `name`, or
+    raise 404 if the station is unknown."""
+    reg = getattr(request.app.state, "europlacer_registry", None)
+    if reg is None or name not in reg.specs:
+        raise HTTPException(status_code=404,
+                            detail=f"unknown Europlacer station {name!r}")
+    spec = reg.specs[name]
+    order_dir = getattr(spec, "order_dir", "") or ""
+    answer_dir = getattr(spec, "answer_dir", "") or order_dir
+    return reg.ingests.get(name), order_dir, answer_dir
+
+
+@router.get("/{name}/files")
+async def files(request: Request, name: str,
+                limit: int = Query(80, ge=1, le=_FILES_MAX)) -> dict:
+    """Live top-level listing of order_dir + answer_dir: order XML we write
+    and .ans answers the machine returns, newest first. Open (monitoring)."""
+    _prod, order_dir, answer_dir = _producer_dirs(request, name)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(_scan_dirs, [order_dir, answer_dir], limit),
+            timeout=_FILES_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail=f"listing timed out after {_FILES_TIMEOUT}s "
+                   "(mount may be hung)")
+    result.update({"name": name, "order_dir": order_dir,
+                   "answer_dir": answer_dir})
+    return result
+
+
+@router.get("/{name}/file")
+async def file_content(request: Request, name: str,
+                       filename: str = Query(..., min_length=1, max_length=255),
+                       ) -> dict:
+    """Path-traversal-safe content preview of ONE file (order XML or .ans)
+    living directly in order_dir/answer_dir. Capped at 256 KiB. Open."""
+    _prod, order_dir, answer_dir = _producer_dirs(request, name)
+    # basename only — never let the query escape the station's folders.
+    base = os.path.basename(filename)
+    if base != filename or base in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    target = None
+    for d in (order_dir, answer_dir):
+        if not d:
+            continue
+        cand = os.path.realpath(os.path.join(d, base))
+        # realpath of the file must stay inside the (realpath'd) dir.
+        if os.path.dirname(cand) == os.path.realpath(d) and os.path.isfile(cand):
+            target = cand
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail="file not found")
+
+    def _read(path: str) -> dict:
+        st = os.stat(path)
+        with open(path, "rb") as fh:
+            raw = fh.read(_PREVIEW_MAX + 1)
+        clipped = len(raw) > _PREVIEW_MAX
+        text = raw[:_PREVIEW_MAX].decode("utf-8", errors="replace")
+        return {"size": st.st_size, "mtime": st.st_mtime,
+                "clipped": clipped, "content": text}
+
+    try:
+        data = await asyncio.wait_for(
+            asyncio.to_thread(_read, target), timeout=_FILES_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="read timed out")
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail=f"read failed: {exc}")
+    data.update({"name": base, "kind": _classify_file(base)})
+    return data
 
 
 @router.post("/{name}/start")

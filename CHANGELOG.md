@@ -1,4 +1,19 @@
 
+## [0.21.0] — 2026-07-24
+
+### Added — Europlacer live file-system dashboard tab
+
+- Two read-only endpoints on the europlacer router: `GET /europlacer/{name}/files`
+  (top-level listing of `order_dir` + `answer_dir`, newest first — the order XML
+  the proxy writes and the `.ans` answers the machine returns, classified
+  order/answer) and `GET /europlacer/{name}/file?filename=` (path-traversal-safe
+  content preview, 256 KiB cap). Both scan off the event loop with an 8 s hard
+  timeout so a hung CIFS mount can never wedge the proxy; top-level only (never
+  recurse — `order_dir` is a machine OUT tree with huge `Outputs/` subfolders).
+- New `📁 Europlacer` dashboard tab (static UI): live 2 s polling of the producer
+  status + file listing, click-to-preview file content, paused while a preview is
+  open. Shows what we push and what the machine returns in real time.
+
 ## [0.20.0] — 2026-07-22
 
 ### Added — Europlacer material-OUT producer driver (first producer)
