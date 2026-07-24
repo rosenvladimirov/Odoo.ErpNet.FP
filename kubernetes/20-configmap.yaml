@@ -24,7 +24,7 @@ data:
         enabled: false             # Cloudflare + Traefik terminate TLS upstream
       registry:
         enabled: true
-        url: https://access-control.odoo-shell.space
+        url: https://uat-mec.odoo-shell.space
         name: erpnet-fp-mec
         public_url: https://fp-mec.odoo-shell.space
         interval_seconds: 60
