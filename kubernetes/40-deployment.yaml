@@ -82,6 +82,11 @@ spec:
               name: config-d
             - mountPath: /app/data
               name: data
+            # Europlacer material-OUT SMB shares (see 70-europlacer-smb.yaml).
+            - mountPath: /mnt/europlacer
+              name: europlacer-ep
+            - mountPath: /mnt/europlacer-ftps
+              name: europlacer-ftps
           livenessProbe:
             httpGet:
               path: /healthz
@@ -112,3 +117,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: erpnet-fp-data
+        - name: europlacer-ep
+          persistentVolumeClaim:
+            claimName: pvc-europlacer-ep
+        - name: europlacer-ftps
+          persistentVolumeClaim:
+            claimName: pvc-europlacer-ftps
