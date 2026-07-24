@@ -44,6 +44,8 @@ spec:
                     values:
                       - node1
                       - node2
+      imagePullSecrets:
+        - name: regcred
       containers:
         - name: proxy
           image: vladimirovrosen/odoo-erpnet-fp:0.21.0
