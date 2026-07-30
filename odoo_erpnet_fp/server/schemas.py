@@ -123,6 +123,12 @@ class SaleItem(_ItemBase):
     price_modifier_type: Optional[PriceModifierType] = Field(
         None, alias="priceModifierType"
     )
+    # PLU-based sale: ако е попълнено, receipt route ползва `sale_programmed`
+    # (cmd 0x3A — PLU lookup на устройството) вместо `register_sale` (cmd 0x31
+    # — free-text). Необходимо за фискални устройства в PLU-only mode (ERR_R_
+    # PLU_VAT_DISABLE). Стойността е PLU code (1..99999) програмиран на ФУ-то
+    # през /plu/sync endpoint-а.
+    plu_number: Optional[int] = Field(None, alias="pluNumber", ge=1, le=99999)
 
 
 class SubtotalAmountItem(_ItemBase):
