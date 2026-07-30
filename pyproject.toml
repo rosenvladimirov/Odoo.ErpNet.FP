@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odoo-erpnet-fp"
-version = "0.21.0"
+version = "0.22.0"
 description = "Python drop-in replacement for ErpNet.FP HTTP fiscal-printer server, oriented for the Bulgarian POS market"
 readme = "README.md"
 license = { text = "LGPL-3.0-or-later" }
@@ -84,6 +84,27 @@ cfx = [
     # the 1.0 client refuses <4.0 and the 3.x amqp1.0 plugin won't deliver
     # to a qpid-proton receiver, so 3.x sources are consumed over 0-9-1.
     "pika>=1.3",
+]
+
+# Външна база като източник на събития (Test Adapter на MS SQL и др.).
+# Ленив импорт: `drivers/dbsource/poller.py` вика `create_engine` ВЪТРЕ в
+# метода, тъй че чисто фискална инсталация никога не зарежда SQLAlchemy и
+# остава байт за байт същата.
+#
+# Защо синхронни драйвери, а не async: еднакъв async път през трите бази е
+# невъзможен — за MS SQL остава `aioodbc`, който сам е обвивка около
+# `pyodbc` в нишка. Затова един синхронен път за трите, изнесен в нишка с
+# `anyio.to_thread`.
+#
+# `pymssql` носи FreeTDS в колелото, тоест НИЩО не влиза в образа. Смяната
+# към `pyodbc` (официалният път на Microsoft, нужен за Azure AD) е един ред
+# в URL-а, но иска репозиторий на Microsoft и приемане на лиценз в билда.
+dbsource = [
+    "SQLAlchemy>=2.0,<3.0",
+    "pymssql>=2.3",
+    # Отключи при нужда от MySQL/MariaDB или Postgres източник:
+    # "PyMySQL>=1.1",
+    # "psycopg[binary]>=3.2",
 ]
 
 [project.urls]
