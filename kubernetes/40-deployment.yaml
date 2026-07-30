@@ -48,7 +48,7 @@ spec:
         - name: regcred
       containers:
         - name: proxy
-          image: vladimirovrosen/odoo-erpnet-fp:0.21.0
+          image: vladimirovrosen/odoo-erpnet-fp:0.24.3
           imagePullPolicy: IfNotPresent
           args:
             - "--config"

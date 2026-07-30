@@ -450,23 +450,55 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         body, ctype = metrics.render()
         return Response(content=body, media_type=ctype)
 
+    # 🚨 `hot_reload_ac_fragment` ПОДМЕНЯ обекта в `app.state`, а closure
+    # променливата остава да сочи стария. Затова /healthz и /status
+    # рапортуваха ПРАЗНО за всеки презареден вид, докато самите маршрути
+    # (/access, /scales, /cfx/status) връщаха вярното — тоест наблюдението
+    # показваше прокси без устройства, а то си работеше. Досега това беше
+    # заобиколено само за `cfx`; тук важи за всички.
+    def _live(request, attr, fallback):
+        return getattr(request.app.state, attr, fallback)
+
+    def _inventory(request):
+        return {
+            "printers": list(_live(request, "registry", registry)
+                             .printers.keys()),
+            "pinpads": list(_live(request, "pinpad_registry", pinpad_registry)
+                            .pinpads.keys()),
+            "scales": list(_live(request, "scale_registry", scale_registry)
+                           .scales.keys()),
+            "readers": list(_live(request, "reader_registry", reader_registry)
+                            .readers.keys()),
+            "displays": list(
+                _live(request, "display_registry", display_registry)
+                .displays.keys()),
+            "cameras": list(_live(request, "camera_registry", camera_registry)
+                            .cameras.keys()),
+            "trackers": list(
+                _live(request, "tracker_registry", tracker_registry)
+                .trackers.keys()),
+            "access": list(_live(request, "access_registry", access_registry)
+                           .access.keys()),
+            "biometric": list(
+                _live(request, "biometric_registry", biometric_registry)
+                .biometric.keys()),
+            "mqtt": list(
+                _live(request, "mqtt_ingest_registry", mqtt_ingest_registry)
+                .specs.keys()),
+            "cfx": list(
+                _live(request, "cfx_ingest_registry", cfx_ingest_registry)
+                .specs.keys()),
+            "europlacer": list(
+                _live(request, "europlacer_registry", europlacer_registry)
+                .specs.keys()),
+        }
+
     @app.get("/healthz")
-    def healthz():
+    def healthz(request: Request):
         return {
             "ok": True,
             "version": _read_version(),
-            "printers": list(registry.printers.keys()),
-            "pinpads": list(pinpad_registry.pinpads.keys()),
-            "scales": list(scale_registry.scales.keys()),
-            "readers": list(reader_registry.readers.keys()),
-            "displays": list(display_registry.displays.keys()),
-            "cameras": list(camera_registry.cameras.keys()),
-            "trackers": list(tracker_registry.trackers.keys()),
-            "access": list(access_registry.access.keys()),
-            "biometric": list(biometric_registry.biometric.keys()),
-            "mqtt": list(mqtt_ingest_registry.specs.keys()),
-            "cfx": list(cfx_ingest_registry.specs.keys()),
-            "europlacer": list(europlacer_registry.specs.keys()),
+            **_inventory(request),
             "shifts": shift_registry.all_serials(),
         }
 
@@ -500,17 +532,14 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "ipc_cfx_sdk": "server.cfx_plugin" in sys.modules,
         }
 
+        # Живите регистри, не closure-ите — иначе всеки презареден вид се
+        # отчита празен. Ключовете остават същите, за да не мърда формата.
+        inv = _inventory(request)
         dynamic = {
-            "printers": sorted(registry.printers.keys()),
-            "pinpads": sorted(pinpad_registry.pinpads.keys()),
-            "scales": sorted(scale_registry.scales.keys()),
-            "readers": sorted(reader_registry.readers.keys()),
-            "displays": sorted(display_registry.displays.keys()),
-            "cameras": sorted(camera_registry.cameras.keys()),
-            "trackers": sorted(tracker_registry.trackers.keys()),
-            "access": sorted(access_registry.access.keys()),
-            "biometric": sorted(biometric_registry.biometric.keys()),
-            "mqtt": sorted(mqtt_ingest_registry.specs.keys()),
+            k: sorted(inv[k]) for k in (
+                "printers", "pinpads", "scales", "readers", "displays",
+                "cameras", "trackers", "access", "biometric", "mqtt",
+            )
         }
         # hot_reload('cfx') ПОДМЕНЯ registry обекта в app.state — closure
         # променливата остарява, затова четем живия през request.app.state.

@@ -193,6 +193,30 @@ def test_info_response_for_a_serial_scale():
     assert resp.host is None
 
 
+def test_healthz_reports_the_live_registry_not_the_startup_one():
+    """🚨 `/healthz` четеше closure променливата, а `hot_reload_ac_fragment`
+    ПОДМЕНЯ обекта в `app.state`. Резултат: след push на конфигурация
+    наблюдението виждаше прокси без устройства, докато /scales, /access и
+    /cfx/status връщаха вярното."""
+    from fastapi.testclient import TestClient
+
+    from odoo_erpnet_fp.config.loader import AppConfig, ServerConfig
+    from odoo_erpnet_fp.server.main import create_app
+
+    app = create_app(AppConfig(server=ServerConfig()))
+    client = TestClient(app)
+    assert client.get("/healthz").json()["scales"] == []
+
+    # Точно каквото прави горещото презареждане.
+    app.state.scale_registry = ScaleRegistry.from_config(_config(ScaleConfig(
+        id="ohaus1", driver="ohaus_ranger",
+        transport="network", host="192.168.3.162", port=9761,
+    )))
+
+    assert client.get("/healthz").json()["scales"] == ["ohaus1"]
+    assert client.get("/server/info").json()["dynamic"]["scales"] == ["ohaus1"]
+
+
 def test_fragment_overrides_an_inline_scales_section(tmp_path: Path):
     # Фрагментът е по-силен от вписаното в основния файл — иначе push от
     # Odoo не би могъл да замени ръчно въведена везна.
