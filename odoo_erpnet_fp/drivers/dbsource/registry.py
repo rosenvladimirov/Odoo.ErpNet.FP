@@ -31,9 +31,10 @@ def _build_query(spec) -> tuple[str, dict]:
     ``production`` — неизядените редове, подредени по време на теста.
     Флагът е в източника, затова няма `WHERE Id > :last`.
 
-    ``lots`` — тесен прочит по вид устройство и воден знак от Odoo. Той се
-    подава отвън при всяко четене, защото Odoo знае докъде е стигнал, а не
-    проксито.
+    ``lots`` — тесен прочит по колоната `Product` и воден знак от Odoo.
+    Двете се подават отвън при всяко четене: артикулът от полето
+    `l10n_bg_dbsource_product`, водният знак от `max` на вписаните лотове —
+    защото Odoo знае докъде е стигнал, а проксито не.
     """
     m = spec.mapping or {}
     table = spec.table
@@ -41,19 +42,23 @@ def _build_query(spec) -> tuple[str, dict]:
     ts = m.get('source_timestamp') or key
 
     if spec.mode == 'lots':
-        dev = m.get('device_type') or 'DeviceType'
+        # Съпоставката е по колоната `Product`, НЕ по префикс на серийния
+        # номер: артикул с друга схема на номерата не се намира по префикс, а
+        # два артикула с общ префикс се привличат взаимно.
+        prod = m.get('product_code') or 'Product'
         cols = ', '.join(dict.fromkeys(filter(None, [
-            key, m.get('unit_ref'), m.get('customer_ref'), dev,
+            key, m.get('unit_ref'), m.get('customer_ref'), prod,
             m.get('source_timestamp'),
         ])))
         sql = (
             f"SELECT {cols} FROM {table} "
-            f"WHERE {dev} = :device_type AND {key} > :last_key "
+            f"WHERE {prod} = :product_code AND {key} > :last_key "
             f"ORDER BY {key} "
             f"OFFSET 0 ROWS FETCH NEXT :batch ROWS ONLY"
         )
-        # `device_type` и `last_key` се подават при всяко четене — първият
-        # от продукта в Odoo, вторият от „докъде сме".
+        # `product_code` и `last_key` се подават при ВСЯКО четене: първият от
+        # полето на артикула в Odoo, вторият от „докъде сме" — защото Odoo
+        # знае докъде е стигнал, а проксито не.
         return sql, {}
 
     stored = m.get('stored_flag') or 'StoredInOdoo'
