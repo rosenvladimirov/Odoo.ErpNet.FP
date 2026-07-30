@@ -49,6 +49,9 @@ class WeightReadResp(_CamelModel):
     # всяко четене, не само в `/scales`.
     scale_id: Optional[str] = Field(None, alias="scaleId")
     host: Optional[str] = None
+    # Броячен режим: `weightKg` остава празно, стойността е в `count`.
+    mode: str = "weight"
+    count: Optional[int] = None
 
 
 def _scale_registry(request: Request):
@@ -90,9 +93,14 @@ def _weight_event_data(scale_id: str, cfg, reading) -> dict:
     слушалката на работната карта приема само своето. `id` в конфига е
     произволно име и не става за това.
     """
+    counting = getattr(reading, "mode", "weight") == "count"
     return {
         "weight": reading.weight_kg,
-        "unit": "kg",
+        # При брояч мярката е „бройки", а `weight` остава празно. По-честно
+        # от число в килограми, каквото везната не е измервала.
+        "unit": "pcs" if counting else "kg",
+        "mode": "count" if counting else "weight",
+        "count": getattr(reading, "count", None),
         # Драйверът връща `ok=True` САМО за стабилно четене — нестабилното
         # идва като `ok=False` със статус „Scale unstable".
         "stable": bool(reading.ok),
@@ -235,6 +243,8 @@ async def scale_weight(id: str, request: Request):
         status=reading.status,
         scale_id=id,
         host=host,
+        mode=getattr(reading, "mode", "weight"),
+        count=getattr(reading, "count", None),
     )
 
 

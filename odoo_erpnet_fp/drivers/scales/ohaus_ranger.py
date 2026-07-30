@@ -62,7 +62,7 @@ _LINE_RE = re.compile(
     ^\s*
     (?P<sign>[+\-])?\s*
     (?P<num>\d+(?:\.\d+)?)\s*
-    (?P<unit>kg|g|lb:oz|lb|oz|t)
+    (?P<unit>kg|g|lb:oz|lb|oz|pcs|t)
     \s*
     (?P<unstable>\?)?
     \s*
@@ -301,8 +301,13 @@ class OhausRangerScale:
         if m.group("sign") == b"-":
             num = -num
         unit = m.group("unit").decode("ascii").lower()
-        kg = _convert_to_kg(num, unit)
         unstable = m.group("unstable") == b"?"
+        if unit == "pcs":
+            # Броячен режим — отчита БРОЙКИ, не маса. Няма тегло за
+            # връщане и `weight_kg` остава None: празна стойност е
+            # по-честна от подхлъзващо число в килограми.
+            return _make_count_reading(num, unstable, line)
+        kg = _convert_to_kg(num, unit)
         return _make_reading(kg, unstable, line)
 
 
@@ -313,3 +318,19 @@ def _make_reading(kg: float, unstable: bool, raw: bytes) -> WeightReading:
             status=["Scale unstable"], raw=raw,
         )
     return WeightReading(ok=True, weight_kg=kg, status=[], raw=raw)
+
+
+def _make_count_reading(num: float, unstable: bool,
+                        raw: bytes) -> WeightReading:
+    """Четене в броячен режим — бройки, без маса."""
+    if unstable:
+        return WeightReading(
+            ok=False, weight_kg=None, status=["Scale unstable"],
+            raw=raw, count=None, mode="count",
+        )
+    # Бройките са цели по определение; везната ги дава без дробна част,
+    # но закръгляме, за да не пропълзи 11.999999 при друг фърмуер.
+    return WeightReading(
+        ok=True, weight_kg=None, status=[], raw=raw,
+        count=int(round(num)), mode="count",
+    )

@@ -98,6 +98,41 @@ def test_parse_live_frame_shape_without_gn():
     assert r.weight_kg == pytest.approx(1.23456)
 
 
+# ─── parse: counting mode (Ranger Count) ───────────────────────
+#
+# A counting scale answers in pieces. Before this was handled the
+# parser rejected every such frame as unparseable — a station switched
+# to counting simply stopped reporting, with no hint why.
+
+
+def test_parse_counting_frame():
+    r = parse(b"      12 PCS       ")
+    assert r.ok is True
+    assert r.mode == "count"
+    assert r.count == 12
+    # Няма маса за отчитане — празно е по-честно от число в килограми.
+    assert r.weight_kg is None
+
+
+def test_parse_counting_lowercase():
+    assert parse(b"     250 pcs      ").count == 250
+
+
+def test_parse_counting_unstable():
+    r = parse(b"     250 pcs     ?N")
+    assert r.ok is False
+    assert r.mode == "count"
+    assert r.count is None
+    assert r.status == ["Scale unstable"]
+
+
+def test_weight_mode_still_reports_no_count():
+    r = parse(b"    1.234 kg     G")
+    assert r.mode == "weight"
+    assert r.count is None
+    assert r.weight_kg == pytest.approx(1.234)
+
+
 def test_parse_frame_ending_on_unit():
     # Nothing at all after the unit — must not be rejected.
     r = parse(b"    2.500 kg")

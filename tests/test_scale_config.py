@@ -238,6 +238,22 @@ def test_weight_event_matches_the_scale_handler_contract():
     assert data["scale_id"] == "ohaus1"
 
 
+def test_counting_reading_reports_pieces_not_kilograms():
+    from odoo_erpnet_fp.drivers.scales.toledo_8217 import WeightReading
+    from odoo_erpnet_fp.server.routes.scales import _weight_event_data
+
+    data = _weight_event_data(
+        "ohaus1", ScaleConfig(id="ohaus1", driver="ohaus_ranger"),
+        WeightReading(ok=True, weight_kg=None, status=[], raw=b"",
+                      count=12, mode="count"))
+
+    assert data["mode"] == "count"
+    assert data["count"] == 12
+    assert data["unit"] == "pcs"
+    # Везната не е мерила маса — не си измисляме такава.
+    assert data["weight"] is None
+
+
 def test_unstable_reading_is_marked_unstable():
     from odoo_erpnet_fp.drivers.scales.toledo_8217 import WeightReading
     from odoo_erpnet_fp.server.routes.scales import _weight_event_data

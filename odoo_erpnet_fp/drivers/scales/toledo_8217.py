@@ -44,12 +44,21 @@ _STATUS_RE = re.compile(rb"\x02\s*\?([^\x00])\r")
 
 @dataclass
 class WeightReading:
-    """Result of `read_weight()`."""
+    """Result of `read_weight()`.
+
+    A counting scale (OHAUS Ranger Count and friends) answers in pieces,
+    not in mass — there is no weight to report at all. Such a reading
+    carries `mode="count"` and fills `count`, leaving `weight_kg` None.
+
+    Both extra fields default, so weight-only drivers are unchanged.
+    """
 
     ok: bool
     weight_kg: Optional[float]
     status: list[str]
     raw: bytes = b""
+    count: Optional[int] = None
+    mode: str = "weight"
 
 
 class Toledo8217Scale:
