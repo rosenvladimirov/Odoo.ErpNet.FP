@@ -212,7 +212,7 @@ A compressed log of what landed already.
 | 0.8.0  | 2026-05-10 | InfoPay payment-bridge integration |
 | 0.7.0  | 2026-05-08 | Native Odoo IoT Box compat (v18 `/hw_drivers` + v19 `/iot_drivers`) |
 | 0.6.0  | 2026-05-07 | Camera Phase A — go2rtc media hub + ALPR + ONVIF edge-ANPR |
-| 0.5.0  | 2026-05-07 | OHAUS Ranger SICS scale; `read_device_info`; `vat-rates` GET/POST; `/admin/logs` + bootstrap-token |
+| 0.5.0  | 2026-05-07 | OHAUS Ranger Ethernet-kit scale; `read_device_info`; `vat-rates` GET/POST; `/admin/logs` + bootstrap-token |
 | 0.4.0  | 2026-05-07 | `l10n_bg_erp_net_fp_fleet` split (CE-installable, EE/OCA bridges separate) |
 | 0.3.0  | 2026-05-07 | Fleet remote management (HMAC heartbeat + pairing + Fernet admin token) |
 | 0.2.5  | 2026-05-06 | Prometheus `/metrics` + Grafana stack + iframe embed in Odoo |

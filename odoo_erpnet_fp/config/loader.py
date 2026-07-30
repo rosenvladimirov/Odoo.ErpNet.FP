@@ -262,13 +262,43 @@ class PinpadConfig:
 
 @dataclass
 class ScaleConfig:
-    """Weighing scale entry. Filled in Phase 5."""
+    """Weighing scale entry. Filled in Phase 5.
+
+    Two transports, едно поле за крайната точка. При `serial` `port` е
+    пътят до устройството (`/dev/ttyUSB1`). При `network` адресът идва в
+    `host`, а `port` е номерът на порта — така, както го подава Odoo.
+
+    🔑 Драйверите приемат крайната точка като ЕДИН низ (`host:port`),
+    защото серийните и мрежовите споделят един конструктор. Слепването
+    става в `endpoint()`, а не на четири места из сървъра.
+    """
 
     id: str
     driver: str = "adam"
-    port: Optional[str] = None
+    port: Optional[Any] = None
     baudrate: int = 9600
+    transport: str = "serial"
+    host: Optional[str] = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def endpoint(self) -> Optional[str]:
+        """Каквото драйверът получава като `port`.
+
+        Търпи и двете форми, с които може да пристигне мрежова везна:
+        разделените `host` + `port` (изричната, която Odoo подава) и
+        вече слепеното `port: "host:9761"` (ръчно писан конфиг). Иначе
+        всеки, който напише едната, получава мълчаливо счупена везна.
+
+        Без `host` полето `port` се връща непокътнато — това е серийният
+        път, който не бива да се пипа.
+        """
+        host = (self.host or "").strip()
+        if not host:
+            return self.port
+        port = self.port
+        if port in (None, "", 0):
+            return host
+        return f"{host}:{port}"
 
 
 @dataclass
@@ -928,7 +958,9 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 id=str(entry["id"]),
                 driver=entry.get("driver", "adam"),
                 port=entry.get("port"),
-                baudrate=int(entry.get("baudrate", 9600)),
+                baudrate=int(entry.get("baudrate") or 9600),
+                transport=str(entry.get("transport") or "serial"),
+                host=entry.get("host"),
                 extras=entry.get("extras", {}),
             )
         )

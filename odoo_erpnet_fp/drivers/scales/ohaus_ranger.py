@@ -51,13 +51,19 @@ DEFAULT_TCP_PORT = 9761
 # (g/kg/lb/oz/t/lb:oz), spaces, optional '?' (unstable), 'G' or 'N'.
 # Real frames use space-padding inside the 9-char weight field, so we
 # allow leading whitespace before the sign too.
+#
+# Both trailing groups are optional and so is the whitespace before
+# them: a Ranger Count 3000 with the Ethernet kit emits
+# `"    0.00000    kg      "` — no G/N letter at all, just padding.
+# Requiring whitespace after the unit would reject a frame that ends
+# on the unit itself.
 _LINE_RE = re.compile(
     rb"""
     ^\s*
     (?P<sign>[+\-])?\s*
     (?P<num>\d+(?:\.\d+)?)\s*
     (?P<unit>kg|g|lb:oz|lb|oz|t)
-    \s+
+    \s*
     (?P<unstable>\?)?
     \s*
     (?P<gn>[GN])?
@@ -209,12 +215,22 @@ class OhausRangerScale:
     # ─── internals ────────────────────────────────────────────
 
     @staticmethod
-    def _split_endpoint(port: str) -> tuple[str, int]:
-        """Parse `"host"` or `"host:port"`. Default port 9761."""
-        if ":" in port:
-            host, _, p = port.rpartition(":")
-            return host, int(p)
-        return port, DEFAULT_TCP_PORT
+    def _split_endpoint(port) -> tuple[str, int]:
+        """Parse `"host"` or `"host:port"`. Default port 9761.
+
+        Coerces to `str` first: a config that carries the port as a
+        number must not blow up with `TypeError` deep inside `in`.
+        A non-numeric part after `:` falls back to the fixed 9761
+        rather than raising — the kit has no other port anyway.
+        """
+        text = str(port).strip()
+        if ":" in text:
+            host, _, p = text.rpartition(":")
+            try:
+                return host, int(p)
+            except ValueError:
+                return host, DEFAULT_TCP_PORT
+        return text, DEFAULT_TCP_PORT
 
     def _read_first_line(self, timeout: float) -> bytes:
         """Read until \\n or timeout. Returns the line (without trailing

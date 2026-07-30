@@ -146,9 +146,18 @@ printers:
 #                      Aliases: mettler.toledo.8217, ariva-s.
 #   ohaus_ranger     — OHAUS Ranger 3000 / Count 3000 / Valor 7000 over
 #                      the Ethernet kit P/N 30037447 — TCP, port 9761
-#                      fixed by firmware. `port` field is the host or
-#                      `host:9761`; baudrate is ignored (Ethernet only).
+#                      fixed by firmware; baudrate is ignored.
 #                      Aliases: ohaus, ranger3000, ranger.count3000, valor7000.
+#
+# Network scales accept either form — pick one, they mean the same thing:
+#
+#   transport: network      |   port: "192.168.3.162:9761"
+#   host: 192.168.3.162     |
+#   port: 9761              |
+#
+# The split form is what Odoo pushes (`cas.scale` → `config.d/scales.yaml`);
+# the joined form is easier to type by hand. A scale whose driver the proxy
+# does not know is logged and skipped — it never blocks start-up.
 
 # scales:
 #   # CAS PR-II 6/15 kg counter scale (~250 BGN, itgstore.bg)
@@ -180,7 +189,9 @@ printers:
 #   #  port 9761 is hard-coded by the kit firmware)
 #   - id: ohaus1
 #     driver: ohaus_ranger
-#     port: 192.168.3.162           # or "192.168.3.162:9761"
+#     transport: network
+#     host: 192.168.3.162
+#     port: 9761
 
 # ─── Barcode readers ─────────────────────────────────────────────
 #

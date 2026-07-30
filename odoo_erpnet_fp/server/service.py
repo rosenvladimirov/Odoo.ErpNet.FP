@@ -460,19 +460,29 @@ class ScaleRegistry:
 
     @classmethod
     def from_config(cls, config: AppConfig) -> "ScaleRegistry":
+        # 🚨 Оттук НЕ се вдига. Регистърът се строи в `create_app()` без
+        # предпазител, тъй че една сгрешена везна би съборила ЦЯЛОТО
+        # прокси — а с него достъпният контрол, CFX ingest-ът и
+        # Europlacer. Периферия с грешна настройка спира само себе си.
         registry = cls()
         for cfg in config.scales:
             if cfg.id in registry.scales:
-                raise ValueError(f"Duplicate scale id: {cfg.id!r}")
-            if cfg.driver not in _SCALE_DRIVERS:
-                raise ValueError(
-                    f"Unsupported scale driver {cfg.driver!r}; "
-                    f"known: {', '.join(sorted(_SCALE_DRIVERS))}"
+                _logger.error(
+                    "Scale %r appears more than once — the later entry is "
+                    "ignored; give each scale a unique id", cfg.id,
                 )
+                continue
+            if cfg.driver not in _SCALE_DRIVERS:
+                _logger.error(
+                    "Scale %r has unknown driver %r — skipped; known "
+                    "drivers: %s", cfg.id, cfg.driver,
+                    ', '.join(sorted(_SCALE_DRIVERS)),
+                )
+                continue
             registry.scales[cfg.id] = ScaleEntry(config=cfg)
             _logger.info(
-                "Registered scale %r — driver=%s port=%s",
-                cfg.id, cfg.driver, cfg.port,
+                "Registered scale %r — driver=%s endpoint=%s",
+                cfg.id, cfg.driver, cfg.endpoint(),
             )
         return registry
 
@@ -485,10 +495,14 @@ class ScaleRegistry:
         return scale_id in self.scales
 
     def make_scale(self, scale_id: str):
-        """Returns one of: Toledo8217Scale, CasPrIIScale, AsciiContinuousScale."""
+        """Returns one of: Toledo8217Scale, CasPrIIScale,
+        AsciiContinuousScale, OhausRangerScale."""
         entry = self.get(scale_id)
         cls = _SCALE_DRIVERS[entry.config.driver]
-        return cls(port=entry.config.port, baudrate=entry.config.baudrate)
+        # `endpoint()` слепва `host` + `port` при мрежовите и връща
+        # серийния път непокътнат при останалите.
+        return cls(port=entry.config.endpoint(),
+                   baudrate=entry.config.baudrate)
 
     @asynccontextmanager
     async def with_scale(self, scale_id: str):

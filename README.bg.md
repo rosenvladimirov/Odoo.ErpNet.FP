@@ -75,7 +75,7 @@ BC-50MX) така и не беше покрито там, периферията
 | Клас | Драйвери / протоколи |
 |---|---|
 | **Клиентски дисплеи** | Datecs DPD-201; ESC/POS-съвместими (ICD CD-5220, Birch DSP-V9, Bematech PDX-3000) |
-| **Везни** | CAS PR-II/PD-II, Elicom EVL CASH47, Datecs CAS-compat (≈75 % от БГ retail-а), Toledo 8217, generic ASCII, OHAUS Ranger SICS over TCP |
+| **Везни** | CAS PR-II/PD-II, Elicom EVL CASH47, Datecs CAS-compat (≈75 % от БГ retail-а), Toledo 8217, generic ASCII, OHAUS Ranger/Valor over TCP (Ethernet kit 30037447) |
 | **Баркод четци** | USB HID + serial CDC + BLE през [`hid2serial`](https://github.com/rosenvladimirov/hid2serial) sister daemon. Linux `.deb` 0.1.7 production-ready; Windows 1.0.0 driver през [`hid2vsp`](https://github.com/rosenvladimirov/hid2serial/tree/main/driver/hid2vsp). |
 | **Pinpad-и** | Datecs Pay (BluePad-50, BluePad-55, BlueCash-50) — виж NDA бележката в края |
 | **Камери** | RTSP / ONVIF — multi-camera ingest, snapshot API, motion-event hook |

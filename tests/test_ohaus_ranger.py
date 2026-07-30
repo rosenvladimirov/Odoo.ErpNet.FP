@@ -62,6 +62,49 @@ def test_endpoint_custom_port():
     assert port == 8888
 
 
+def test_endpoint_tolerates_non_string():
+    # Odoo подава номера на порта като цяло число; преди коерцията
+    # `":" in 4001` вдигаше TypeError и убиваше цялата везна.
+    host, port = OhausRangerScale._split_endpoint(9761)
+    assert host == "9761"
+    assert port == DEFAULT_TCP_PORT
+
+
+def test_endpoint_non_numeric_port_falls_back():
+    host, port = OhausRangerScale._split_endpoint("192.168.3.162:auto")
+    assert host == "192.168.3.162"
+    assert port == DEFAULT_TCP_PORT
+
+
+# ─── parse: frames captured from the real scale ────────────────
+#
+# Ranger Count 3000 + Ethernet kit 30037447 at 192.168.3.162:9761,
+# captured 2026-07-30 with an empty pan. The scale sends NO G/N
+# letter and no stability character — just trailing padding.
+
+LIVE_ZERO = b"    0.00000    kg      "
+
+
+def test_parse_live_frame_zero():
+    r = parse(LIVE_ZERO)
+    assert r.ok is True
+    assert r.weight_kg == pytest.approx(0.0)
+
+
+def test_parse_live_frame_shape_without_gn():
+    # Same layout, real load. No G/N, no '?' — must still read stable.
+    r = parse(b"    1.23456    kg      ")
+    assert r.ok is True
+    assert r.weight_kg == pytest.approx(1.23456)
+
+
+def test_parse_frame_ending_on_unit():
+    # Nothing at all after the unit — must not be rejected.
+    r = parse(b"    2.500 kg")
+    assert r.ok is True
+    assert r.weight_kg == pytest.approx(2.5)
+
+
 # ─── parse: stable readings ────────────────────────────────────
 
 
