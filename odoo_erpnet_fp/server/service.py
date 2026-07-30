@@ -1969,8 +1969,15 @@ class TrackerRegistry:
 # Whitelist of AC sections the Fleet push_config command is allowed to
 # rewrite. Fiscal sections (printers/pinpads/scales/displays/readers)
 # stay under customer-IT manual control — never rewritten from Odoo.
+# Видовете, за които Odoo може да бута фрагмент в `config.d/`.
+#
+# 🚨 `scales` липсваше тук. Odoo обаче отдавна регистрира `scales` като
+# източник, нареждаше командата и я отчиташе като „Pushed" — а проксито
+# я изпълняваше, падаше в клона за единично устройство (който иска
+# `{kind, id}`) и НЕ записваше нищо. Тоест фрагментът за везни нямаше как
+# да стигне до диска, а от двете страни всичко изглеждаше успешно.
 PUSH_CONFIG_AC_KINDS = ("cameras", "access", "biometric", "mqtt", "cfx",
-                        "europlacer")
+                        "europlacer", "scales")
 
 
 def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) -> str:
@@ -2020,10 +2027,13 @@ def _write_fragment_atomic(fragment_path: "Path", section: str, payload: Any) ->
 async def hot_reload_ac_fragment(app, kind: str) -> dict:
     """Re-read config + restart ONLY the registry owning `kind`.
 
-    Fiscal/POS stack (printers/pinpads/scales/displays/readers/server/
-    registry/iot_setup) is NEVER touched — even though we re-load the
-    whole AppConfig from disk, only the AC registries get stop_all/
-    from_config/start_all'd.
+    The fiscal core (printers/pinpads/displays/readers/server/registry/
+    iot_setup) is NEVER touched — even though we re-load the whole
+    AppConfig from disk, only the registry named by `kind` is rebuilt.
+
+    `scales` is the one non-AC kind here, and it is safe for the same
+    reason the AC ones are: the scale registry holds no fiscal state and
+    no background tasks — it is rebuilt, not restarted.
 
     Used by the `push_config` Fleet command after a fragment file has
     been rewritten on disk.
@@ -2088,5 +2098,19 @@ async def hot_reload_ac_fragment(app, kind: str) -> dict:
         # станции; рестартира само променените).
         reg = app.state.europlacer_registry
         detail = reg.reload_from_config(new_cfg)
+
+    elif kind == "scales":
+        # Везните нямат фонови задачи — регистърът е пасивен и се строи
+        # наново от новия конфиг. Връзката се отваря на заявка, тъй че
+        # следващото четене вече минава по новия запис.
+        #
+        # ⚠️ Тесен прозорец: четене, тръгнало по СТАРИЯ регистър, държи
+        # неговата ключалка, а ново четене хваща ключалката на новия. Ако
+        # везната пуска само един TCP клиент (OHAUS Ethernet кит), в този
+        # миг второто четене може да получи отказ. Приемливо е за push на
+        # конфигурация — редува се веднъж, не в горещия път.
+        new = ScaleRegistry.from_config(new_cfg)
+        app.state.scale_registry = new
+        detail = {"scales": sorted(new.scales)}
 
     return {"reloaded": kind, "ok": True, **({"detail": detail} if detail else {})}
