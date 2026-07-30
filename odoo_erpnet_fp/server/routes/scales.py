@@ -30,7 +30,12 @@ class _CamelModel(BaseModel):
 class ScaleInfoResp(_CamelModel):
     id: str
     driver: str
+    # 🚨 Крайната точка, НЕ суровият `port`. При мрежова везна Odoo подава
+    # порта като число и обявеният тук `str` го отхвърляше — списъкът и
+    # информацията връщаха 500, докато четенето си работеше.
     port: Optional[str] = None
+    transport: Optional[str] = None
+    host: Optional[str] = None
 
 
 class WeightReadResp(_CamelModel):
@@ -60,18 +65,25 @@ async def list_scales(request: Request):
     if reg is None:
         return {}
     return {
-        sid: ScaleInfoResp(
-            id=sid, driver=entry.config.driver, port=entry.config.port
-        )
-        for sid, entry in reg.scales.items()
+        sid: _info(sid, entry.config) for sid, entry in reg.scales.items()
     }
+
+
+def _info(sid: str, cfg) -> "ScaleInfoResp":
+    endpoint = cfg.endpoint()
+    return ScaleInfoResp(
+        id=sid,
+        driver=cfg.driver,
+        port=None if endpoint is None else str(endpoint),
+        transport=cfg.transport,
+        host=cfg.host,
+    )
 
 
 @router.get("/{id}", response_model=ScaleInfoResp)
 async def scale_info(id: str, request: Request):
     reg = _require(request, id)
-    cfg = reg.get(id).config
-    return ScaleInfoResp(id=id, driver=cfg.driver, port=cfg.port)
+    return _info(id, reg.get(id).config)
 
 
 @router.get("/{id}/weight", response_model=WeightReadResp)

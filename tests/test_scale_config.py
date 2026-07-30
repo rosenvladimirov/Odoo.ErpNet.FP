@@ -168,6 +168,31 @@ def test_pushed_fragment_reaches_the_driver(tmp_path: Path):
     assert (scale.host, scale.tcp_port) == ("192.168.3.162", 9761)
 
 
+def test_info_response_survives_a_numeric_port():
+    """Мрежова везна носи порта като число. Отговорът обявява `str`, тъй
+    че суровият `port` го чупеше — `/scales` и `/scales/{id}` връщаха 500,
+    докато `/weight` си работеше."""
+    from odoo_erpnet_fp.server.routes.scales import _info
+
+    cfg = ScaleConfig(
+        id="ohaus1", driver="ohaus_ranger",
+        transport="network", host="192.168.3.162", port=9761,
+    )
+    resp = _info("ohaus1", cfg)
+    assert resp.port == "192.168.3.162:9761"
+    assert resp.transport == "network"
+    assert resp.host == "192.168.3.162"
+
+
+def test_info_response_for_a_serial_scale():
+    from odoo_erpnet_fp.server.routes.scales import _info
+
+    resp = _info("cas1", ScaleConfig(
+        id="cas1", driver="cas", port="/dev/ttyUSB1"))
+    assert resp.port == "/dev/ttyUSB1"
+    assert resp.host is None
+
+
 def test_fragment_overrides_an_inline_scales_section(tmp_path: Path):
     # Фрагментът е по-силен от вписаното в основния файл — иначе push от
     # Odoo не би могъл да замени ръчно въведена везна.
