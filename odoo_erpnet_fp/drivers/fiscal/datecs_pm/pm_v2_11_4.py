@@ -83,12 +83,20 @@ class PmDevice:
         deadline = time.monotonic() + (timeout or self.BOUNDED_OP_TIMEOUT)
         seq = self._next_seq()
         request = frame.encode_request(seq, cmd, data)
+        # DEBUG: log all PM exchanges for diagnostic
+        import logging as _l
+        _l.getLogger("odoo_erpnet_fp.drivers.fiscal.datecs_pm").info(
+            "PM >>> cmd=0x%02X data=%r", cmd, data,
+        )
 
         last_exc: Exception | None = None
         for _ in range(self._retries):
             try:
                 self._t.write(request)
                 response = self._read_one_frame(deadline)
+                _l.getLogger("odoo_erpnet_fp.drivers.fiscal.datecs_pm").info(
+                    "PM <<< cmd=0x%02X data=%r", cmd, response.data,
+                )
             except (frame.FrameError, TransportTimeout) as exc:
                 last_exc = exc
                 continue
@@ -170,18 +178,42 @@ class PmDevice:
 
         Per Datecs PM v2.11.4 §4.63: the response format is
             <Type>\\t<Version>\\t<Date>\\t<Time>\\t<Cert>\\t<SerialNumber>\\t<FmSerialNumber>
-        Some firmware revisions may add or omit the time field; we
-        unpack tolerantly so a short response still yields a partial
-        info dict instead of raising.
+
+        FALLBACK: някои устройства (напр. **ФП-700МК / FP-700MX**, FW 3.00
+        Jul25) връщат само ОДИН field на 0x7B — само type code (`-112001\\t`).
+        В такъв случай fall back-ваме на **CMD_DIAGNOSTIC (0x5A)** който
+        връща comma-separated: `<Model>,<Ver Date Time>,<Cert>,<?>,<Serial>,
+        <FmSerial>` (verified на FP-700MX → "FP-700MX,3.00 22Jul25 0923,
+        FFFF,00000000,DA052093,79052093").
         """
         resp = self._exchange(commands.CMD_DEVICE_INFO)
-        # No leading error code in this response — payload is just the
-        # TAB-separated fields. Decode as cp1251 (Cyrillic-friendly,
-        # matches PDF §1.5 character encoding).
         text = resp.data.decode("cp1251", errors="replace").rstrip("\r\n\t ")
         parts = text.split("\t")
-        # Tolerantly extract by index; pad with "" so callers don't
-        # crash on legacy short responses.
+
+        # Ако 0x7B върна < 6 непразни полета → пробваме 0x5A diagnostic
+        # за по-богат info (FP-700MX style).
+        nonempty = [p for p in parts if p.strip()]
+        if len(nonempty) < 6:
+            try:
+                diag = self._exchange(commands.CMD_DIAGNOSTIC)
+                diag_text = diag.data.decode("cp1251", errors="replace").rstrip("\r\n ")
+                diag_parts = [p.strip() for p in diag_text.split(",")]
+                # Очакваме: Model, FW_Ver+Date+Time, Cert, <?>, Serial, FmSerial
+                if len(diag_parts) >= 6:
+                    return {
+                        "model": diag_parts[0],
+                        "firmware_version": diag_parts[1],
+                        "firmware_date": "",  # вече в firmware_version
+                        "firmware_time": "",
+                        "certificate": diag_parts[2],
+                        "serial_number": diag_parts[4],
+                        "fiscal_memory_serial_number": diag_parts[5],
+                        "_source": "0x5A DIAGNOSTIC fallback",
+                    }
+            except Exception:  # noqa: BLE001
+                pass  # back to legacy parsing
+
+        # Legacy tolerant unpack за устройства с full 0x7B response
         while len(parts) < 7:
             parts.append("")
         return {
@@ -389,6 +421,38 @@ class PmDevice:
         running_total = float(rest[0]) if rest else 0.0
         return running_total, status.FiscalStatus.parse(resp.status)
 
+    def sale_programmed(
+        self,
+        plu_number: int,
+        quantity: float = 1.0,
+        price: float | None = None,
+        discount_percent: float | None = None,
+    ) -> tuple[float, status.FiscalStatus]:
+        """0x3A — Sale of a pre-programmed PLU item.
+
+        Required for fiscal devices in **PLU-only mode** (ФП-700МК и др.)
+        които отказват `register_sale` (cmd 0x31) с ERR_R_PLU_VAT_DISABLE.
+        PLU-то трябва да е предварително програмирано чрез `program_plu`
+        (cmd 0x6B) — VAT group, name, default price идват от програмираните
+        данни.
+
+        Параметри (PDF §4.27): PluNumber \\t Quantity \\t [Price] \\t
+        [DiscountType] \\t [DiscountValue]. Price е optional override; ако
+        не е подаден, ползва се price-а от програмираното PLU.
+        """
+        data = codec.encode_data(
+            str(plu_number),
+            f"{quantity:.3f}",
+            None if price is None else f"{price:.2f}",
+            None if discount_percent is None else "1",
+            None if discount_percent is None else f"{discount_percent:.2f}",
+        )
+        resp = self._exchange(commands.CMD_SALE_PROGRAMMED, data)
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+        running_total = float(rest[0]) if rest else 0.0
+        return running_total, status.FiscalStatus.parse(resp.status)
+
     def subtotal(
         self, print_subtotal: bool = False, display: bool = False
     ) -> tuple[float, status.FiscalStatus]:
@@ -420,7 +484,17 @@ class PmDevice:
         resp = self._exchange(commands.CMD_PAYMENT_TOTAL, data)
         code, rest = self._parse_error_code(resp.data)
         errors.raise_for_code(code)
-        change = float(rest[0]) if rest else 0.0
+        # FP-700MX (FW 3.00 Jul25) връща `<status_letter>\t<change>\t`
+        # (напр. "D\t0.00") където D=Done. По-стари устройства връщат само
+        # `<change>\t`. Опитваме да парсваме всеки field като float и взимаме
+        # първия успешен — толерантно към двата формата.
+        change = 0.0
+        for field in rest:
+            try:
+                change = float(field)
+                break
+            except (ValueError, IndexError):
+                continue
         return change, status.FiscalStatus.parse(resp.status)
 
     def close_fiscal_receipt(self) -> int:
@@ -454,7 +528,7 @@ class PmDevice:
         vat_group: str = "А",
         department: int = 0,
         group: int = 1,
-        price_type: int = 0,
+        price_type: int = 1,  # 1=free (device приема override от sale_programmed)
         quantity: float | None = None,
         barcodes: tuple[str, ...] = (),
         measurement_unit: int = 0,
@@ -495,6 +569,11 @@ class PmDevice:
         bars = list(barcodes) + [None] * (4 - len(barcodes))
         add_qty = "A" if quantity is not None else None
 
+        # FP-700MX (FW 3.00 Jul25) иска quantity да е РЕАЛНА стойност
+        # (`0.000` за "no stock change"), не празно — иначе ERR_FP_SYNTAX_
+        # PARAM_9. По-стари устройства (DP-25) приемат празно. `0.000`
+        # работи навсякъде като "no quantity adjustment".
+        qty_str = f"{quantity:.3f}" if quantity is not None else "0.000"
         data = codec.encode_data(
             "P",
             plu_number,
@@ -504,7 +583,7 @@ class PmDevice:
             price_type,
             f"{price:.2f}",
             add_qty,
-            None if quantity is None else f"{quantity:.3f}",
+            qty_str,
             bars[0],
             bars[1],
             bars[2],
