@@ -132,6 +132,8 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         # CFX-IPC stations — each embeds an ipc-cfx CFXPlugin driving its
         # broker + P2P endpoints. No-op when `cfx:` is absent/empty.
         cfx_ingest_registry.start_all()
+        # Външни бази — по една задача на източник. No-op без включени.
+        dbsource_registry.start_all()
         # Europlacer producer stations — spin up their worker pools (the
         # write→wait-.ans→retry happens per-order). No-op when
         # `europlacer:` is absent/empty. SYNC like cfx (NOT awaited).
@@ -186,6 +188,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                         pass
             mqtt_ingest_registry.stop_all()
             cfx_ingest_registry.stop_all()
+            dbsource_registry.stop_all()
             europlacer_registry.stop_all()
             await reader_registry.stop_all()
             await display_registry.stop_all()
@@ -221,6 +224,39 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     # `app` for the bus_inject/audit Odoo links. No-op + zero imports when
     # `cfx:` is absent/empty (pure-fiscal stays byte-identical).
     cfx_ingest_registry = CfxIngestRegistry.from_config(config, app=app)
+
+    # ── препращач за външните бази ────────────────────────────────
+    # Ползва СЪЩИЯ подписан канал като CFX (`post_signed` + споделената
+    # тайна от iot_setup), тоест нула нова автентикация. Не вдига при
+    # грешка: цикълът на поллера сам решава кога да повтори, а падналият
+    # Odoo не бива да убива четенето.
+    async def _dbsource_forward(body: dict) -> bool:
+        from .odoo_forwarder import post_signed
+        base = (getattr(getattr(config, "iot_setup", None), "odoo_url", "")
+                or "").rstrip("/")
+        secret = getattr(getattr(config, "iot_setup", None), "token", None)
+        if not base or not secret:
+            _logger.warning(
+                "dbsource: iot_setup.odoo_url/token не са настроени — "
+                "партидата не е подадена")
+            return False
+        status, parsed = await post_signed(
+            f"{base}/erpnet_fp/cfx/ingest", body, secret=secret, timeout=60.0)
+        if status == 0:
+            _logger.warning("dbsource: Odoo недостъпен: %s",
+                            parsed.get("error", "unknown"))
+            return False
+        if status >= 400:
+            _logger.warning("dbsource: Odoo върна %s: %s", status, parsed)
+            return False
+        return True
+
+    # Външна база като източник — периодично четене и подаване по същия
+    # подписан канал като CFX. Ленив: no-op + нула импорти, когато
+    # `dbsource:` липсва или е празен (чисто фискалната остава същата).
+    from ..drivers.dbsource.registry import DbSourceRegistry
+    dbsource_registry = DbSourceRegistry.from_config(
+        config, forwarder=_dbsource_forward, app=app)
     # Europlacer material-OUT producer — writes ready order XML into each
     # machine's shared folder + waits for the `.ans` answer. Needs `app`
     # for the bus_inject result callback. No-op + zero imports when
@@ -243,6 +279,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.biometric_registry = biometric_registry
     app.state.mqtt_ingest_registry = mqtt_ingest_registry
     app.state.cfx_ingest_registry = cfx_ingest_registry
+    app.state.dbsource_registry = dbsource_registry
     app.state.europlacer_registry = europlacer_registry
     app.state.shift_registry = shift_registry
     app.state.config = config
