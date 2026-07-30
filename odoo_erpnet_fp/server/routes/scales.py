@@ -43,10 +43,84 @@ class WeightReadResp(_CamelModel):
     weight_kg: Optional[float] = Field(None, alias="weightKg")
     status: list[str] = []
     error: Optional[str] = None
+    # 🔑 Кой е отговорил. Адресът е идентичността на станцията — той е
+    # закачен за желязото, докато `id` на везната е произволно име в
+    # конфигурацията. Слушалката филтрира по него, затова пътува с
+    # всяко четене, не само в `/scales`.
+    scale_id: Optional[str] = Field(None, alias="scaleId")
+    host: Optional[str] = None
 
 
 def _scale_registry(request: Request):
     return request.app.state.scale_registry
+
+
+# 🔑 Типът НЕ е свободен избор. `l10n_bg_live_refresh` вече го разпознава и
+# го префирва като `SCALE_READ` на `env.bus` (live_refresh_service.js), а
+# `scale_handler.js` чака `data` във вида `{weight, unit, stable}`. Всеки
+# друг низ би минал по канала и не би задействал НИЩО — мълчаливо, точно
+# като липсващ вид в `PUSH_CONFIG_AC_KINDS`.
+WEIGHT_EVENT_TYPE = "scale.weighed"
+
+
+def _bus_client(request: Request):
+    """Кешираният bus-inject клиент, или None ако не е конфигуриран.
+
+    Строи се лениво и се пази на `app.state`: `from_app` чете тайната от
+    диска, а това не бива да става на всяко мерене.
+    """
+    app = request.app
+    client = getattr(app.state, "scale_bus_client", None)
+    if client is not None:
+        return client or None
+    from ...clients.bus_inject import BusInjectClient
+    client = BusInjectClient.from_app(app)
+    # Пази и отрицателния отговор (False), за да не се опитва пак.
+    app.state.scale_bus_client = client or False
+    return client
+
+
+def _weight_event_data(scale_id: str, cfg, reading) -> dict:
+    """Тялото на събитието, във вида, който Odoo вече чака.
+
+    `weight`/`unit`/`stable` идват от договора на `scale_handler.js`.
+    Драйверите връщат винаги килограми, затова `unit` е фиксирана.
+
+    `host` е добавката: адресът е идентичността на станцията, тъй че
+    слушалката на работната карта приема само своето. `id` в конфига е
+    произволно име и не става за това.
+    """
+    return {
+        "weight": reading.weight_kg,
+        "unit": "kg",
+        # Драйверът връща `ok=True` САМО за стабилно четене — нестабилното
+        # идва като `ok=False` със статус „Scale unstable".
+        "stable": bool(reading.ok),
+        "scale_id": scale_id,
+        "host": cfg.host or "",
+        "driver": cfg.driver,
+        "status": list(reading.status),
+    }
+
+
+def _emit_weight(request: Request, scale_id: str, cfg, data: dict):
+    """Пуска събитие към Odoo. Никога не вдига.
+
+    Меренето е първичното — ако каналът към Odoo е паднал, операторът
+    пак трябва да получи теглото си. Затова провалът само се логва.
+    """
+    try:
+        client = _bus_client(request)
+        if client is None:
+            return
+        client.emit(
+            WEIGHT_EVENT_TYPE,
+            device=scale_id,
+            device_kind="scale",
+            data=data,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.warning("scale %s: bus emit failed", scale_id, exc_info=True)
 
 
 def _require(request: Request, id: str):
@@ -89,6 +163,10 @@ async def scale_info(id: str, request: Request):
 @router.get("/{id}/weight", response_model=WeightReadResp)
 async def scale_weight(id: str, request: Request):
     reg = _require(request, id)
+    # Адресът пътува и при провал — иначе консуматор, който подрежда
+    # четенията по станция, няма къде да сложи неуспешното.
+    cfg = reg.get(id).config
+    host = cfg.host
     from .. import metrics as _m
     try:
         async with reg.with_scale(id) as sc:
@@ -99,7 +177,13 @@ async def scale_weight(id: str, request: Request):
             _m.scale_reads_total.labels(scale_id=id, outcome="unreachable").inc()
         except Exception:
             pass
-        return WeightReadResp(ok=False, error=str(exc))
+        _emit_weight(request, id, cfg, {
+            "weight": None, "unit": "kg", "stable": False,
+            "scale_id": id, "host": cfg.host or "", "driver": cfg.driver,
+            "status": [], "error": str(exc),
+        })
+        return WeightReadResp(
+            ok=False, error=str(exc), scale_id=id, host=host)
 
     if reading.ok:
         try:
@@ -114,10 +198,13 @@ async def scale_weight(id: str, request: Request):
             _m.scale_reads_total.labels(scale_id=id, outcome=outcome).inc()
         except Exception:
             pass
+    _emit_weight(request, id, cfg, _weight_event_data(id, cfg, reading))
     return WeightReadResp(
         ok=reading.ok,
         weight_kg=reading.weight_kg,
         status=reading.status,
+        scale_id=id,
+        host=host,
     )
 
 

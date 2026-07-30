@@ -184,6 +184,96 @@ def test_info_response_survives_a_numeric_port():
     assert resp.host == "192.168.3.162"
 
 
+def test_weight_response_carries_the_identity_of_the_scale():
+    """Адресът е идентичността на станцията. Без него слушалката, която
+    подрежда четенията по работна карта, няма по какво да филтрира."""
+    from odoo_erpnet_fp.server.routes.scales import WeightReadResp
+
+    resp = WeightReadResp(
+        ok=True, weight_kg=1.234, scale_id="ohaus_ranger_count_3000",
+        host="192.168.3.162",
+    )
+    dumped = resp.model_dump(by_alias=True)
+    assert dumped["scaleId"] == "ohaus_ranger_count_3000"
+    assert dumped["host"] == "192.168.3.162"
+    assert dumped["weightKg"] == pytest.approx(1.234)
+
+
+class _RecordingBus:
+    def __init__(self, boom=False):
+        self.calls = []
+        self.boom = boom
+
+    def emit(self, event_type, device="", device_kind="", data=None):
+        if self.boom:
+            raise RuntimeError("Odoo е недостъпен")
+        self.calls.append((event_type, device, device_kind, data))
+
+
+def test_event_type_matches_what_odoo_already_listens_for():
+    """🚨 `l10n_bg_live_refresh` префирва САМО `scale.weighed` като
+    `SCALE_READ`. Всеки друг низ минава по канала и не задейства нищо."""
+    from odoo_erpnet_fp.server.routes.scales import WEIGHT_EVENT_TYPE
+
+    assert WEIGHT_EVENT_TYPE == "scale.weighed"
+
+
+def test_weight_event_matches_the_scale_handler_contract():
+    """`scale_handler.js` чака `{weight, unit, stable}`; `host` е добавката,
+    по която работната карта познава своята станция."""
+    from odoo_erpnet_fp.drivers.scales.toledo_8217 import WeightReading
+    from odoo_erpnet_fp.server.routes.scales import _weight_event_data
+
+    cfg = ScaleConfig(
+        id="ohaus1", driver="ohaus_ranger",
+        transport="network", host="192.168.3.162", port=9761)
+    data = _weight_event_data(
+        "ohaus1", cfg,
+        WeightReading(ok=True, weight_kg=1.5, status=[], raw=b""))
+
+    assert data["weight"] == pytest.approx(1.5)
+    assert data["unit"] == "kg"
+    assert data["stable"] is True
+    assert data["host"] == "192.168.3.162"
+    assert data["scale_id"] == "ohaus1"
+
+
+def test_unstable_reading_is_marked_unstable():
+    from odoo_erpnet_fp.drivers.scales.toledo_8217 import WeightReading
+    from odoo_erpnet_fp.server.routes.scales import _weight_event_data
+
+    data = _weight_event_data(
+        "ohaus1", ScaleConfig(id="ohaus1", driver="ohaus_ranger"),
+        WeightReading(ok=False, weight_kg=None,
+                      status=["Scale unstable"], raw=b""))
+    assert data["stable"] is False
+    assert data["weight"] is None
+
+
+def test_weight_event_is_emitted_with_the_right_type(monkeypatch):
+    from odoo_erpnet_fp.server.routes import scales as sc
+
+    bus = _RecordingBus()
+    monkeypatch.setattr(sc, "_bus_client", lambda request: bus)
+    sc._emit_weight(None, "ohaus1", ScaleConfig(id="ohaus1", driver="cas"),
+                    {"weight": 1.0, "unit": "kg", "stable": True})
+
+    (event_type, device, kind, data), = bus.calls
+    assert event_type == "scale.weighed"
+    assert (device, kind) == ("ohaus1", "scale")
+
+
+def test_a_dead_bus_never_breaks_the_weighing(monkeypatch):
+    """Меренето е първичното. Ако каналът към Odoo е паднал, операторът
+    пак трябва да получи теглото си."""
+    from odoo_erpnet_fp.server.routes import scales as sc
+
+    monkeypatch.setattr(sc, "_bus_client",
+                        lambda request: _RecordingBus(boom=True))
+    sc._emit_weight(None, "ohaus1", ScaleConfig(id="ohaus1", driver="cas"),
+                    {"weight": 1.0, "unit": "kg", "stable": True})
+
+
 def test_info_response_for_a_serial_scale():
     from odoo_erpnet_fp.server.routes.scales import _info
 
