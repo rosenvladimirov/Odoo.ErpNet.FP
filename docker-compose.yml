@@ -49,7 +49,7 @@ services:
   # ─── Our Python proxy (replaces ErpNet.FP C# container) ─────────
   odoo-erpnet-fp:
     # Access-control host (laptop primary) → zen variant за offline ZEN.
-    image: vladimirovrosen/odoo-erpnet-fp:0.18.0-zen
+    image: vladimirovrosen/odoo-erpnet-fp:0.19.1
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -331,6 +331,27 @@ services:
       - traefik
     networks:
       - erpnet
+
+  # Втори конектор — тунел `pg-erpnet-fp` в акаунта odoo-shell (НЕ teolino).
+  # Цел: браузърът (Firefox) да достига хардуерното прокси по валиден HTTPS
+  # хост вместо вътрешно IP със самоподписан сертификат.
+  #   erpnet.pg.odoo-shell.space -> http://odoo-erpnet-fp:8001
+  # TLS се терминира на CF edge. 2-level wildcard иска ACM — виж бележката
+  # при erpnet-cloudflared по-горе.
+  pg-cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pg-erpnet-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN_PG}
+    depends_on:
+      - odoo-erpnet-fp
+    networks:
+      - erpnet
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
 
 volumes:
   prometheus-data:
