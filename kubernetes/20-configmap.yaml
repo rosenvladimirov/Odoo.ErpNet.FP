@@ -24,7 +24,7 @@ data:
         enabled: false             # Cloudflare + Traefik terminate TLS upstream
       registry:
         enabled: true
-        url: https://access-control.odoo-shell.space
+        url: https://uat-mec.odoo-shell.space
         name: erpnet-fp-mec
         public_url: https://fp-mec.odoo-shell.space
         interval_seconds: 60
@@ -34,3 +34,20 @@ data:
     # AC fragments arrive via push_config — config.d/cameras.yaml etc.
     # are written by the proxy's own routes/registry.py handler.
     auto_detect: false
+
+    # Europlacer material-OUT producer (image >= 0.20.0 has the driver).
+    # order_dir = the common Europlacer warehouse folder, mounted from
+    # //192.6.3.106/europlacer (see 70-europlacer-smb.yaml → /mnt/europlacer).
+    # The signed POST /europlacer/epi-prep/order also needs
+    # server.iot_setup.token (pairing) — set separately for the Odoo submit.
+    europlacer:
+      - name: epi-prep
+        enabled: true
+        order_dir: "/mnt/europlacer/EP/TRACEABILITY"
+        answer_dir: ""                 # "" ⇒ same as order_dir
+        answer_timeout: 60
+        poll_interval: 0.5
+        retry_limit: 3
+        retry_backoff: 2.0
+        max_concurrent: 4
+        result_url: ""

@@ -44,9 +44,11 @@ spec:
                     values:
                       - node1
                       - node2
+      imagePullSecrets:
+        - name: regcred
       containers:
         - name: proxy
-          image: vladimirovrosen/odoo-erpnet-fp:0.9.0
+          image: vladimirovrosen/odoo-erpnet-fp:0.21.0
           imagePullPolicy: IfNotPresent
           args:
             - "--config"
@@ -82,6 +84,11 @@ spec:
               name: config-d
             - mountPath: /app/data
               name: data
+            # Europlacer material-OUT SMB shares (see 70-europlacer-smb.yaml).
+            - mountPath: /mnt/europlacer
+              name: europlacer-ep
+            - mountPath: /mnt/europlacer-ftps
+              name: europlacer-ftps
           livenessProbe:
             httpGet:
               path: /healthz
@@ -112,3 +119,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: erpnet-fp-data
+        - name: europlacer-ep
+          persistentVolumeClaim:
+            claimName: pvc-europlacer-ep
+        - name: europlacer-ftps
+          persistentVolumeClaim:
+            claimName: pvc-europlacer-ftps

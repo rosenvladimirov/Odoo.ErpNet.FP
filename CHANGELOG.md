@@ -1,4 +1,49 @@
 
+## [0.21.0] — 2026-07-24
+
+### Added — Europlacer live file-system dashboard tab
+
+- Two read-only endpoints on the europlacer router: `GET /europlacer/{name}/files`
+  (top-level listing of `order_dir` + `answer_dir`, newest first — the order XML
+  the proxy writes and the `.ans` answers the machine returns, classified
+  order/answer) and `GET /europlacer/{name}/file?filename=` (path-traversal-safe
+  content preview, 256 KiB cap). Both scan off the event loop with an 8 s hard
+  timeout so a hung CIFS mount can never wedge the proxy; top-level only (never
+  recurse — `order_dir` is a machine OUT tree with huge `Outputs/` subfolders).
+- New `📁 Europlacer` dashboard tab (static UI): live 2 s polling of the producer
+  status + file listing, click-to-preview file content, paused while a preview is
+  open. Shows what we push and what the machine returns in real time.
+
+## [0.20.0] — 2026-07-22
+
+### Added — Europlacer material-OUT producer driver (first producer)
+
+- New `drivers/europlacer/` + route `server/routes/europlacer.py`: the proxy's
+  FIRST *producer* driver. Odoo POSTs a ready material-order XML to
+  `POST /europlacer/{name}/order`; the driver writes it atomically into the
+  machine's shared folder (`order_dir`, e.g. the Europlacer `/STK/InputsOrders`
+  CIFS folder on the master), then — on a worker thread — waits for the
+  machine's `.ans` answer file, reads `<Error>N</Error>` and retries per the
+  reverse-engineered code table (0/5 = success incl. idempotent "already
+  existing"; 4/10/12/13/14 = transient → retry with backoff; others = fatal).
+  The `.ans` filename convention matches the Odoo 11 `dxf` mapper
+  (`europlacer_trac.py`: same stem, `.xml`→`.ans`); the wait + retry are new
+  (Odoo 11 did a single immediate check and only warned on mismatch).
+- Non-blocking: `POST /order` returns **202** immediately (the `.ans` wait can
+  reach the machine's answer timeout, param 290, far beyond any HTTP timeout);
+  the terminal outcome is delivered out-of-band — a live `bus_inject`
+  `europlacer.order.done|failed` ping plus an optional signed `result_url`
+  POST — and is pollable at `GET /europlacer/{name}/order/{order_id}`.
+- Auth: `POST /order|start|stop` are HMAC-guarded (`X-Registry-Signature` over
+  the raw body / URL path, keyed on `server.iot_setup.token`), like the other
+  Odoo→proxy business routes.
+- New `europlacer:` config section (`EuroplacerStationSpec`), registry
+  (`EuroplacerRegistry`, granular hot-reload), and `europlacer` added to the
+  `config.d` fragment + `push_config` allow-lists.
+- Fully isolated from the CFX consumer path (ADR-ERPNET-0003 "proxy = thin
+  relay"): with no `europlacer:` section the driver is never imported and the
+  pure-fiscal deployment stays byte-identical. See ADR-ERPNET-0005.
+
 ## [0.19.1] — 2026-07-20
 
 ### Fixed — CFX envelope `TimeStamp` was never forwarded to Odoo

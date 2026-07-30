@@ -366,6 +366,7 @@
     <button class="tab" data-kind="mqtt" onclick="switchTab('mqtt')">📡 MQTT <span class="count" id="cnt-mqtt">0</span></button>
     <button class="tab" data-kind="access" onclick="switchTab('access')">🚪 Access <span class="count" id="cnt-access">0</span></button>
     <button class="tab" data-kind="biometric" onclick="switchTab('biometric')">🧬 Biometric <span class="count" id="cnt-biometric">0</span></button>
+    <button class="tab" data-kind="europlacer" onclick="switchTab('europlacer')">📁 Europlacer <span class="count" id="cnt-europlacer">0</span></button>
   </div>
 
   <section class="devices active" data-kind="info">
@@ -410,6 +411,10 @@
 
   <section class="devices" data-kind="biometric">
     <div class="grid" id="grid-biometric"><div class="empty">Loading…</div></div>
+  </section>
+
+  <section class="devices" data-kind="europlacer">
+    <div class="grid" id="grid-europlacer"><div class="empty">Loading…</div></div>
   </section>
 </div>
 
@@ -1345,7 +1350,7 @@ function readerSubscribe(id) {
 
 function refreshAll() { loadVersion(); loadAll(); }
 
-const EXTRA_TABS = ["info", "rabbit"];
+const EXTRA_TABS = ["info", "rabbit", "europlacer"];
 
 function switchTab(kind) {
   if (!EXTRA_TABS.includes(kind) && !KINDS.includes(kind)) return;
@@ -1357,6 +1362,7 @@ function switchTab(kind) {
   });
   if (kind === "info") loadInfo();
   if (kind === "rabbit") loadRabbit();
+  if (kind === "europlacer") loadEuroplacer();
   if (window.location.hash !== "#" + kind) {
     history.replaceState(null, "", "#" + kind);
   }
@@ -1431,6 +1437,104 @@ setInterval(() => {
   if (!active || active.dataset.kind !== "rabbit") return;
   if (document.querySelector('#grid-rabbit details[open]')) return;
   loadRabbit();
+}, 2000);
+
+// ─── 📁 Europlacer tab — live файлова система на order_dir/answer_dir ─
+function _fmtBytes(n) {
+  if (n == null) return "—";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+function _esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+// Lazy content preview — fetch on <details> open, cache once. Reads the
+// station/file off data-* attributes (safe: no name interpolated into JS).
+async function euroPreviewEl(el) {
+  if (!el.open || el.dataset.loaded === "1") return;
+  const station = el.dataset.station, filename = el.dataset.file;
+  const box = el.querySelector(".euro-body");
+  box.innerHTML = "<em>зареждам…</em>";
+  try {
+    const d = await fetchJSON(ENDPOINT + "/europlacer/" +
+      encodeURIComponent(station) + "/file?filename=" + encodeURIComponent(filename));
+    el.dataset.loaded = "1";
+    const clip = d.clipped ? '<div class="badge muted">clipped @256KiB</div>' : "";
+    box.innerHTML = clip + '<pre class="cfx-json">' + _esc(d.content) + "</pre>";
+  } catch (e) {
+    box.innerHTML = '<div class="empty">Cannot read: ' + _esc(e) + "</div>";
+  }
+}
+
+async function loadEuroplacer() {
+  const grid = document.getElementById("grid-europlacer");
+  let st;
+  try {
+    st = await fetchJSON(ENDPOINT + "/europlacer/status");
+  } catch (e) {
+    grid.innerHTML = `<div class="empty">Cannot load <code>/europlacer/status</code>: ${_esc(e)}</div>`;
+    return;
+  }
+  const stations = st.stations || [];
+  document.getElementById("cnt-europlacer").textContent = stations.length;
+  if (!stations.length) {
+    grid.innerHTML = `<div class="empty">Няма конфигуриран Europlacer producer —
+      добави <code>europlacer:</code> секция в config (order_dir) и рестартирай.</div>`;
+    return;
+  }
+  // За всяка станция дърпаме файловия listing паралелно.
+  const cards = await Promise.all(stations.map(async s => {
+    let fl = { files: [], errors: {} };
+    try {
+      fl = await fetchJSON(ENDPOINT + "/europlacer/" +
+        encodeURIComponent(s.name) + "/files?limit=80");
+    } catch (e) { fl = { files: [], errors: { fetch: String(e) }, order_dir: s.order_dir }; }
+    const badge = s.running
+      ? '<span class="badge ok">running</span>'
+      : '<span class="badge err">stopped</span>';
+    const errs = Object.entries(fl.errors || {}).map(
+      ([d, m]) => `<div class="badge err" title="${_esc(d)}">${_esc(m)}</div>`).join("");
+    const rows = (fl.files || []).map(f => {
+      const kb = f.kind === "answer"
+        ? '<span class="badge ok">.ans ⬅ машина</span>'
+        : (f.kind === "order"
+            ? '<span class="badge muted">XML ➡ машина</span>'
+            : '<span class="badge muted">·</span>');
+      const head = `${kb} <code>${_esc(f.name)}</code> · ${_fmtBytes(f.size)} · ${_fmtTs(f.mtime)}`;
+      return `<li class="scan"><details data-station="${_esc(s.name)}" data-file="${_esc(f.name)}" ontoggle="euroPreviewEl(this)">` +
+        `<summary>${head}</summary><div class="euro-body"><em>кликни за съдържание…</em></div></details></li>`;
+    }).join("");
+    const cnt = (fl.files || []).length;
+    const more = fl.truncated ? ` (показани ${cnt} от ${fl.total})` : "";
+    return `<div class="card">
+      <div class="card-header"><h3>📁 ${_esc(s.name)}</h3>
+        <span class="badge muted">${_esc(s.machine_kind || "?")}</span> ${badge}</div>
+      <div class="card-body">
+        <dl>
+          <dt>order_dir</dt><dd><code>${_esc(fl.order_dir || s.order_dir || "?")}</code></dd>
+          <dt>answer_dir</dt><dd><code>${_esc(fl.answer_dir || s.answer_dir || s.order_dir || "?")}</code></dd>
+          <dt>Orders</dt><dd>received ${s.orders_received} · ok ${s.orders_success} ·
+            transient ${s.orders_failed_transient} · fatal ${s.orders_failed_fatal} ·
+            timeout ${s.orders_timeout} · inflight ${s.inflight}</dd>
+          <dt>Last order</dt><dd>${_fmtTs(s.last_order_time)}</dd>
+        </dl>${errs}
+        <div class="muted" style="margin:6px 0 2px">Файлове (най-нови${more}) — order XML пишем, .ans връща машината:</div>
+        <ul class="reader-feed" style="max-height:340px">${rows ||
+          '<li>— още няма файлове в папката —</li>'}</ul>
+      </div>
+    </div>`;
+  }));
+  grid.innerHTML = cards.join("");
+}
+
+// Live: 2s poll докато 📁 табът е активен; пауза при отворен preview.
+setInterval(() => {
+  const active = document.querySelector('.tabs .tab.active');
+  if (!active || active.dataset.kind !== "europlacer") return;
+  if (document.querySelector('#grid-europlacer details[open]')) return;
+  loadEuroplacer();
 }, 2000);
 
 // ─── Info tab ────────────────────────────────────────────────

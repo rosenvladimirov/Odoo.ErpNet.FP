@@ -1,0 +1,95 @@
+# Europlacer material-OUT SMB shares (ns erpnet-fp-mec).
+#
+# Mounts the common Europlacer warehouse folder (//192.6.3.106/europlacer —
+# the XML dropbox shared by ALL machines) and the Windows/FTPS folder
+# (//192.6.3.106/FTPS — .ans answers) into the proxy pod, so the Europlacer
+# file-producer driver can write order XML and read the .ans reply.
+#
+# Ported from the legacy Odoo 11 docker host (192.168.222.2) fstab, which
+# mounted the same shares (vers=2.1, uid=101, user 'machine') into the
+# odoo-data volume at .local/europlacer-win{,-ep}. Here they become k8s
+# static PVs via csi-driver-smb (smb.csi.k8s.io — already installed).
+#
+# Reachability verified: node1 + node2 → 192.6.3.106:445 open (routed via
+# 192.168.3.1). Mounted in the proxy at /mnt/europlacer and
+# /mnt/europlacer-ftps (producer order_dir → a subfolder of /mnt/europlacer,
+# e.g. EP/STK…, set in the europlacer config.d fragment — Phase 3/5).
+#
+# The credentials Secret is created imperatively (password NOT stored in git):
+#   U/P from the O11 host cifspasswd (user 'machine'):
+#   kubectl -n erpnet-fp-mec create secret generic smbcreds-europlacer \
+#     --from-literal=username=machine --from-literal=password=<pw>
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-europlacer-ep
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions: [dir_mode=0777, file_mode=0777, uid=101, gid=0, vers=2.1, nobrl]
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: europlacer-ep-106
+    volumeAttributes:
+      source: //192.6.3.106/europlacer
+    nodeStageSecretRef:
+      name: smbcreds-europlacer
+      namespace: erpnet-fp-mec
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-europlacer-ep
+  namespace: erpnet-fp-mec
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: pv-europlacer-ep
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-europlacer-ftps
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions: [dir_mode=0777, file_mode=0777, uid=101, gid=0, vers=2.1, nobrl]
+  csi:
+    driver: smb.csi.k8s.io
+    volumeHandle: europlacer-ftps-106
+    volumeAttributes:
+      source: //192.6.3.106/FTPS
+    nodeStageSecretRef:
+      name: smbcreds-europlacer
+      namespace: erpnet-fp-mec
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-europlacer-ftps
+  namespace: erpnet-fp-mec
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: pv-europlacer-ftps
+  resources:
+    requests:
+      storage: 20Gi
+# NB: the erpnet-fp Deployment (40-deployment.yaml) also gets these two
+# volumes + volumeMounts (proxy container):
+#   volumeMounts:
+#     - {name: europlacer-ep,   mountPath: /mnt/europlacer}
+#     - {name: europlacer-ftps, mountPath: /mnt/europlacer-ftps}
+#   volumes:
+#     - {name: europlacer-ep,   persistentVolumeClaim: {claimName: pvc-europlacer-ep}}
+#     - {name: europlacer-ftps, persistentVolumeClaim: {claimName: pvc-europlacer-ftps}}

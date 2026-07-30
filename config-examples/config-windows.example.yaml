@@ -90,3 +90,29 @@ readers:
   #   port: COM32
   #   baudrate: 9600
   #   webhooks: []
+
+# ─── Europlacer material-OUT producer ─────────────────────────────
+# Run this service ON the Europlacer master (the machine that owns the
+# STK shared folder). Odoo POSTs a ready order XML; the proxy drops it
+# into `order_dir` and waits for the machine's `.ans` answer.
+#
+# REQUIRED for the signed /europlacer/{name}/order endpoint:
+#   server.iot_setup.token  — the shared HMAC secret; set the SAME value
+#                             in Odoo (System Parameter that the module
+#                             signs the order with). Without it /order
+#                             returns 503 ("proxy not paired").
+# Optional, for pushing the outcome back to Odoo:
+#   server.registry.{enabled,url,name} + the registry_secret file, used
+#   by the bus_inject live ping and the signed result_url callback.
+#
+# europlacer:
+#   - name: epi-prep                       # → /europlacer/epi-prep/order
+#     order_dir: "C:\\STK\\InputsOrders"   # where the order XML is written
+#     answer_dir: ""                        # where .ans appears ("" = order_dir)
+#     archive_dir: "C:\\STK\\Processed"     # move done .xml/.ans here ("" = leave)
+#     answer_timeout: 60                     # SECONDS to wait for .ans (param 290)
+#     poll_interval: 0.5
+#     retry_limit: 3                         # retries on transient/timeout
+#     retry_backoff: 2.0
+#     max_concurrent: 4
+#     result_url: ""                         # optional durable outcome POST to Odoo

@@ -1,0 +1,29 @@
+# config.d fragment — Europlacer material-OUT producer.
+#
+# Drop this file (renamed to `europlacer.yaml`) into the proxy's config.d
+# directory to add the Europlacer producer to an ALREADY-INSTALLED proxy
+# WITHOUT editing the main config.yaml:
+#
+#   Windows:  %PROGRAMDATA%\Odoo.ErpNet.FP\config.d\europlacer.yaml
+#   Linux:    <config-dir>/config.d/europlacer.yaml
+#
+# The loader overlays the `europlacer:` section from here on top of the base
+# config (fragment-overridable section). Odoo's push_config can also rewrite
+# it. Restart the service (or push_config) after adding.
+#
+# NB: the signed POST /europlacer/{name}/order also needs
+# `server.iot_setup.token` set in the MAIN config.yaml (the shared HMAC
+# secret) — that is not a fragment-overridable section here.
+
+europlacer:
+  - name: epi-prep                       # → POST /europlacer/epi-prep/order
+    enabled: true
+    order_dir: "/STK/InputsOrders"       # folder the order XML is written into
+    answer_dir: ""                        # where the .ans appears ("" = order_dir)
+    archive_dir: ""                       # move processed .xml/.ans here ("" = leave)
+    answer_timeout: 60                     # SECONDS to wait for a .ans (Europlacer param 290)
+    poll_interval: 0.5
+    retry_limit: 3                         # retries on transient error / timeout
+    retry_backoff: 2.0                     # exponential backoff base (seconds)
+    max_concurrent: 4
+    result_url: ""                         # optional durable outcome callback to Odoo

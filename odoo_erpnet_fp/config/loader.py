@@ -618,6 +618,77 @@ class CfxBrokerSpec:
 
 
 @dataclass
+class DbSourceSpec:
+    """Един източник от външна база — периодично четене и подаване.
+
+    Два режима, различни по това КАКВО Odoo прави с редовете, а не по
+    четенето (то е едно и също):
+
+    * ``production`` — тествани бройки влизат в производствен ордер.
+      Флагът за изядено живее в ИЗТОЧНИКА (``stored_flag``) и Odoo го гаси
+      след реалното производство, затова тук няма локален воден знак.
+    * ``lots`` — серийни номера и референции стават ``stock.lot``. Само
+      четене; водният знак идва ОТ Odoo („докъде сме" по продукт), затова
+      четенето е тясно и подредено по ``Id``.
+
+    ``url_env`` е ИМЕТО на променлива на средата, не самият URL — паролата
+    не бива да живее в конфигурационен файл. Форматът е стандартният
+    SQLAlchemy URL, тъй че един и същ код обслужва MS SQL, MySQL/MariaDB и
+    PostgreSQL.
+
+    ``mapping`` свързва неутралните ни имена с колоните на източника, за да
+    не се пише SQL на ръка за всеки нов източник.
+
+    Absent / no enabled sources ⇒ никакъв поллер, SQLAlchemy не се импортира
+    и чисто фискалната инсталация остава байт за байт същата.
+    """
+
+    name: str = "default"
+    enabled: bool = True
+    mode: str = "production"          # production | lots
+    url_env: str = ""
+    table: str = ""
+    interval_s: float = 30.0
+    batch: int = 300
+    mapping: dict = field(default_factory=dict)
+
+
+@dataclass
+class EuroplacerStationSpec:
+    """One Europlacer material-OUT station — a machine's shared folder.
+
+    The FIRST *producer* section (ADR-ERPNET-0005): the proxy writes the
+    ready order XML Odoo hands it into ``order_dir`` and waits for the
+    machine's ``.ans`` answer file (same stem, ``answer_ext``, in
+    ``answer_dir`` or the same folder), reading ``<Error>N</Error>`` and
+    retrying per the code table. Multi-station like ``CfxBrokerSpec``:
+    the ``europlacer:`` YAML accepts a list; ``name`` is the registry key
+    and the ``/europlacer/<name>/order`` route token.
+
+    ``answer_timeout`` is the machine's answer timeout in SECONDS
+    (Europlacer param 290 = the *purpose*, not a fixed value) — a tuning
+    knob per deployment. Absent / no enabled stations ⇒ no producer, the
+    driver is never imported (pure-fiscal stays byte-identical).
+    """
+
+    name: str = "default"
+    enabled: bool = True
+    machine_kind: str = "europlacer"
+    order_dir: str = "/STK/InputsOrders"   # папката, в която пишем order XML
+    answer_dir: str = ""                    # където се появява .ans (празно ⇒ order_dir)
+    archive_dir: str = ""                   # преместваме обработените тук (празно ⇒ оставяме)
+    filename_prefix: str = "EUROPLACER"     # <prefix>_<ts>_<oid>.xml
+    answer_ext: str = ".ans"
+    answer_timeout: float = 60.0            # секунди (Europlacer param 290)
+    poll_interval: float = 0.5
+    retry_limit: int = 3
+    retry_backoff: float = 2.0
+    retry_backoff_max: float = 30.0
+    max_concurrent: int = 4
+    result_url: str = ""                    # опц. durable outcome callback към Odoo
+
+
+@dataclass
 class ShiftConfig:
     """Shift-sync bridge endpoint — long-lived TCP client to Android.
 
@@ -686,6 +757,10 @@ class AppConfig:
     # CFX-IPC stations (each embeds one ipc-cfx CFXPlugin). Empty ⇒ no
     # CFX ingest, ipc-cfx SDK never imported.
     cfx_brokers: list[CfxBrokerSpec] = field(default_factory=list)
+    dbsource: list[DbSourceSpec] = field(default_factory=list)
+    # Europlacer material-OUT producer stations. Empty ⇒ no producer, the
+    # europlacer driver is never imported (pure-fiscal stays byte-identical).
+    europlacer_stations: list[EuroplacerStationSpec] = field(default_factory=list)
     auto_detect: bool = False
 
     @property
@@ -1104,6 +1179,40 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             max_log_payload=int(entry.get("max_log_payload", 500)),
         ))
 
+    # Външна база като източник — top-level `dbsource:` блок. Приема списък
+    # от източници или единичен dict (обвива се, name="default"). Absent /
+    # empty ⇒ никакъв поллер, SQLAlchemy не се импортира.
+    db_raw = data.get("dbsource")
+    dbsource: list[DbSourceSpec] = []
+    if isinstance(db_raw, dict) and db_raw:
+        db_entries = [{"name": "default", **db_raw}]
+    elif isinstance(db_raw, list):
+        db_entries = db_raw
+    else:
+        db_entries = []
+    db_seen: set[str] = set()
+    for entry in db_entries:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or entry.get("id") or "default").strip()
+        if not name or name in db_seen:
+            continue
+        db_seen.add(name)
+        mode = str(entry.get("mode") or "production").strip().lower()
+        if mode not in ("production", "lots"):
+            mode = "production"
+        mapping = entry.get("mapping")
+        dbsource.append(DbSourceSpec(
+            name=name,
+            enabled=bool(entry.get("enabled", True)),
+            mode=mode,
+            url_env=str(entry.get("url_env") or "").strip(),
+            table=str(entry.get("table") or "").strip(),
+            interval_s=float(entry.get("interval_s", 30) or 30),
+            batch=int(entry.get("batch", 300) or 300),
+            mapping=dict(mapping) if isinstance(mapping, dict) else {},
+        ))
+
     # CFX-IPC stations — top-level `cfx:` block (mirrors `mqtt:`). Two
     # accepted shapes: list of station dicts (multi-station) or a single
     # dict (wrapped, name="default"). Each station carries an `endpoints:`
@@ -1191,6 +1300,55 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             endpoints=cfx_endpoints,
         ))
 
+    # Europlacer material-OUT producer — top-level `europlacer:` block
+    # (mirrors `cfx:`, но плосък — producer няма nested endpoints). List of
+    # station dicts или единичен dict (wrapped, name="default"). Absent /
+    # empty ⇒ no stations, europlacer driver-ът никога не се импортира.
+    eur_raw = data.get("europlacer")
+    europlacer_stations: list[EuroplacerStationSpec] = []
+    if isinstance(eur_raw, dict) and eur_raw:
+        eur_entries = [{"name": "default", **eur_raw}]
+    elif isinstance(eur_raw, list):
+        eur_entries = eur_raw
+    else:
+        eur_entries = []
+    eur_seen: set[str] = set()
+    for entry in eur_entries:
+        if not isinstance(entry, dict):
+            continue
+        # Приемаме и `id` (slug от Odoo config payload), не само `name`,
+        # иначе всяка станция става "default" и се сблъскват под dedup.
+        raw_name = str(entry.get("name") or entry.get("id")
+                       or "default").strip() or "default"
+        ename = raw_name
+        _sfx = 2
+        while ename in eur_seen:
+            ename = f"{raw_name}-{_sfx}"
+            _sfx += 1
+        eur_seen.add(ename)
+
+        europlacer_stations.append(EuroplacerStationSpec(
+            name=ename,
+            enabled=bool(entry.get("enabled", True)),
+            machine_kind=str(entry.get("machine_kind", "europlacer")
+                             or "europlacer"),
+            order_dir=str(entry.get("order_dir", "/STK/InputsOrders")
+                          or "/STK/InputsOrders"),
+            answer_dir=str(entry.get("answer_dir", "") or ""),
+            archive_dir=str(entry.get("archive_dir", "") or ""),
+            filename_prefix=str(entry.get("filename_prefix", "EUROPLACER")
+                                or "EUROPLACER"),
+            answer_ext=str(entry.get("answer_ext", ".ans") or ".ans"),
+            answer_timeout=float(entry.get("answer_timeout", 60.0) or 60.0),
+            poll_interval=float(entry.get("poll_interval", 0.5) or 0.5),
+            retry_limit=int(entry.get("retry_limit", 3) or 0),
+            retry_backoff=float(entry.get("retry_backoff", 2.0) or 0.0),
+            retry_backoff_max=float(entry.get("retry_backoff_max", 30.0)
+                                    or 30.0),
+            max_concurrent=int(entry.get("max_concurrent", 4) or 4),
+            result_url=str(entry.get("result_url", "") or ""),
+        ))
+
     kep_data = data.get("kep", {}) or {}
     kep = KepConfig(
         enabled=bool(kep_data.get("enabled", False)),
@@ -1216,6 +1374,8 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         shifts=shifts,
         mqtt_brokers=mqtt_brokers,
         cfx_brokers=cfx_brokers,
+        dbsource=dbsource,
+        europlacer_stations=europlacer_stations,
         auto_detect=bool(data.get("auto_detect", False)),
     )
 
@@ -1334,7 +1494,7 @@ def load_config(path: str | Path) -> AppConfig:
             # `push_config` handler only allows Odoo to rewrite the AC
             # ones — fiscal stays under customer-IT manual control.
             FRAGMENT_SECTIONS = (
-                "cameras", "access", "biometric", "mqtt", "cfx",
+                "cameras", "access", "biometric", "mqtt", "cfx", "europlacer",
                 "printers", "pinpads", "scales",
                 "displays", "readers", "shifts", "trackers",
             )
