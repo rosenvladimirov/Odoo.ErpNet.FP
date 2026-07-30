@@ -263,6 +263,53 @@ def test_weight_event_is_emitted_with_the_right_type(monkeypatch):
     assert (device, kind) == ("ohaus1", "scale")
 
 
+def test_emit_does_not_block_the_event_loop(monkeypatch):
+    """🚨 `BusInjectClient.emit` е синхронен httpx. Извикан направо в async
+    маршрут, той блокира event loop-а на цялото прокси. Измерено на живо:
+    мерене от ~200 ms стана 3158 ms, с достъпа и CFX-а спрели зад него."""
+    import asyncio
+    import time
+
+    from odoo_erpnet_fp.server.routes import scales as sc
+
+    started = []
+
+    class _SlowBus:
+        def emit(self, *a, **kw):
+            started.append(time.monotonic())
+            time.sleep(0.3)
+
+    monkeypatch.setattr(sc, "_bus_client", lambda request: _SlowBus())
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+
+    async def scenario():
+        t0 = time.monotonic()
+        sc._schedule_emit(request, "ohaus1",
+                          ScaleConfig(id="ohaus1", driver="cas"),
+                          {"weight": 1.0, "unit": "kg", "stable": True})
+        elapsed = time.monotonic() - t0
+        # Задачата се пуска настрани — планирането не чака бавния HTTP.
+        assert elapsed < 0.1, f"планирането отне {elapsed:.3f}s"
+        tasks = request.app.state.scale_emit_tasks
+        assert len(tasks) == 1
+        await asyncio.gather(*list(tasks))
+
+    asyncio.run(scenario())
+    assert len(started) == 1
+
+
+def test_scheduling_outside_a_loop_still_emits(monkeypatch):
+    # Тестове и синхронни повиквания нямат цикъл — тогава се върши направо,
+    # вместо да се губи мълчаливо.
+    from odoo_erpnet_fp.server.routes import scales as sc
+
+    bus = _RecordingBus()
+    monkeypatch.setattr(sc, "_bus_client", lambda request: bus)
+    sc._schedule_emit(None, "ohaus1", ScaleConfig(id="ohaus1", driver="cas"),
+                      {"weight": 1.0, "unit": "kg", "stable": True})
+    assert len(bus.calls) == 1
+
+
 def test_a_dead_bus_never_breaks_the_weighing(monkeypatch):
     """Меренето е първичното. Ако каналът към Odoo е паднал, операторът
     пак трябва да получи теглото си."""

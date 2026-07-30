@@ -103,6 +103,36 @@ def _weight_event_data(scale_id: str, cfg, reading) -> dict:
     }
 
 
+def _schedule_emit(request: Request, scale_id: str, cfg, data: dict):
+    """Пуска събитието НАСТРАНИ и се връща веднага.
+
+    🚨 `BusInjectClient.emit` е синхронен httpx. Извикан направо в async
+    маршрут, той блокира event loop-а на ЦЯЛОТО прокси, докато трае
+    заявката към Odoo — а тя минава през Cloudflare и мери в секунди.
+    Измерено на живо: мерене от ~200 ms стана 3158 ms, при това с
+    достъпа и CFX-а спрели зад него.
+
+    Теглото е отговорът към оператора; известяването на Odoo е странична
+    последица и няма право да го бави.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Извън цикъл (тест) — върши го направо.
+        _emit_weight(request, scale_id, cfg, data)
+        return
+    task = loop.create_task(
+        asyncio.to_thread(_emit_weight, request, scale_id, cfg, data))
+    # Задача без държана референция може да бъде събрана от GC преди да
+    # е свършила. Пазим я, докато приключи.
+    pending = getattr(request.app.state, "scale_emit_tasks", None)
+    if pending is None:
+        pending = set()
+        request.app.state.scale_emit_tasks = pending
+    pending.add(task)
+    task.add_done_callback(pending.discard)
+
+
 def _emit_weight(request: Request, scale_id: str, cfg, data: dict):
     """Пуска събитие към Odoo. Никога не вдига.
 
@@ -177,7 +207,7 @@ async def scale_weight(id: str, request: Request):
             _m.scale_reads_total.labels(scale_id=id, outcome="unreachable").inc()
         except Exception:
             pass
-        _emit_weight(request, id, cfg, {
+        _schedule_emit(request, id, cfg, {
             "weight": None, "unit": "kg", "stable": False,
             "scale_id": id, "host": cfg.host or "", "driver": cfg.driver,
             "status": [], "error": str(exc),
@@ -198,7 +228,7 @@ async def scale_weight(id: str, request: Request):
             _m.scale_reads_total.labels(scale_id=id, outcome=outcome).inc()
         except Exception:
             pass
-    _emit_weight(request, id, cfg, _weight_event_data(id, cfg, reading))
+    _schedule_emit(request, id, cfg, _weight_event_data(id, cfg, reading))
     return WeightReadResp(
         ok=reading.ok,
         weight_kg=reading.weight_kg,
