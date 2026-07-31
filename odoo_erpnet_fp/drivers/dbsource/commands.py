@@ -92,6 +92,53 @@ class DbSourceCommands:
             extra={"new_wo": new_wo},
         )
 
+    async def lookup_device(self, serial: str) -> dict:
+        """Един ред от източника по сериен номер, с етикета.
+
+        Различава се от четенето в цикъла по това, че е ПО ЗАЯВКА и връща
+        `LabelData` — вложения JSON, в който пише кои устройства влизат в
+        бъндъла. Той не се тегли в потока, защото е голям и нужен само в
+        мига, в който операторът поиска конкретния кит.
+
+        🚨 Търси се и по СЪДЪРЖАНИЕТО на етикета, не само по серийния на
+        реда: сканираното може да е на вложен участник. Така е и в Odoo 11
+        (`mrp_workorder_bundle`), и без това китът не се намира по
+        серийния на своя елемент.
+        """
+        cfg = self._poller.cfg
+        m = cfg.mapping or {}
+        table = cfg.params.get("table") or cfg.params.get("source_table")
+        key = m.get("row_key") or "Id"
+        unit = m.get("unit_ref") or "SerialNumber"
+        label = m.get("label_data") or "LabelData"
+        if not table:
+            return {"ok": False, "error": "липсва `table` в конфигурацията"}
+        text = (serial or "").strip()
+        if not text:
+            return {"ok": False, "error": "празен сериен номер"}
+
+        from sqlalchemy import text as _sql
+        sql = (
+            f"SELECT TOP 5 {key}, {unit}, {label} FROM {table} "
+            f"WHERE {unit} = :serial OR {label} LIKE :like_serial"
+        )
+
+        def _run():
+            engine = self._poller._get_engine()
+            with engine.connect() as conn:
+                res = conn.execute(_sql(sql), {
+                    "serial": text, "like_serial": f"%{text}%"})
+                return [dict(r._mapping) for r in res]
+
+        try:
+            rows = await anyio.to_thread.run_sync(_run)
+        except Exception as exc:  # noqa: BLE001
+            _logger.exception("dbsource[%s]: търсенето по %r пропадна",
+                              cfg.name, text)
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "serial": text, "rows": rows,
+                "columns": {"key": key, "unit": unit, "label": label}}
+
     # ── партидиране ──────────────────────────────────────────────
     async def _run_batched(self, keys, sql, extra=None) -> CommandResult:
         clean = [str(k).strip() for k in (keys or []) if str(k).strip()]

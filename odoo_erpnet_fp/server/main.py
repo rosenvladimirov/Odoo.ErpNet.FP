@@ -374,6 +374,8 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.polimex_events import router as polimex_events_router
     from .routes.mqtt import router as mqtt_router
     from .routes.cfx import router as cfx_router
+    # Запитване по заявка към външна база — етикетът на бъндъла.
+    from .routes.dbsource import router as dbsource_router
     from .routes.europlacer import router as europlacer_router
     from .routes.rescue import router as rescue_router
     # `shift_sync` + `shift_signal` бяха consolidated в единен
@@ -395,6 +397,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(polimex_events_router)
     app.include_router(mqtt_router)
     app.include_router(cfx_router)
+    app.include_router(dbsource_router)
     app.include_router(europlacer_router)
     app.include_router(admin_router)
     app.include_router(rescue_router)
