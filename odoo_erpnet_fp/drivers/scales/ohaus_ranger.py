@@ -107,6 +107,7 @@ class OhausRangerScale:
     DEFAULT_PORT = DEFAULT_TCP_PORT
     READ_TIMEOUT = 2.0
     CONNECT_TIMEOUT = 1.5
+    DRAIN_TIMEOUT = 0.15
 
     def __init__(
         self,
@@ -137,6 +138,10 @@ class OhausRangerScale:
             raise
         s.settimeout(self.read_timeout)
         self._sock = s
+        # Китът буферира отговори и ги доставя в СЛЕДВАЩАТА сесия, ако
+        # предишният четец е затворил, преди те да пристигнат. Без това
+        # източване `P` получава отговора на предишната команда.
+        self._drain()
 
     def close(self) -> None:
         if self._sock is not None:
@@ -202,7 +207,14 @@ class OhausRangerScale:
             self._sock.sendall(cmd)
 
     def probe(self) -> bool:
-        """Send `PV` and check for any non-empty response."""
+        """Send `PV` and check for any non-empty response.
+
+        Drains afterwards no matter what: `PV` answers with the software
+        revision (`SR 1.21`), and a slow reply that arrives after the
+        1-second read window would otherwise be delivered into the next
+        session — where `read_weight()` reads it instead of the weight
+        and fails with `Unparseable: 'SR 1.21'`.
+        """
         if self._sock is None:
             return False
         try:
@@ -211,6 +223,8 @@ class OhausRangerScale:
             return bool(raw.strip())
         except Exception:  # noqa: BLE001
             return False
+        finally:
+            self._drain()
 
     # ─── internals ────────────────────────────────────────────
 
@@ -231,6 +245,49 @@ class OhausRangerScale:
             except ValueError:
                 return host, DEFAULT_TCP_PORT
         return text, DEFAULT_TCP_PORT
+
+    def _drain(self, timeout: float = DRAIN_TIMEOUT) -> int:
+        """Discard bytes left over from an earlier command or session.
+
+        The Ethernet kit buffers its output. When a reader closes before
+        a slow reply lands — `probe()` waits 1 s for `PV`, the kit can be
+        slower — that reply is delivered into the *next* TCP session. The
+        following `read_weight()` then parses `SR 1.21` as a weight frame
+        and fails with `Unparseable`, which looks like a flaky cable but
+        is a one-command offset in the stream.
+
+        Cheap insurance: a short non-blocking sweep on open, and after
+        `probe()`. Returns how many bytes were thrown away so a caller
+        can log an unexpectedly noisy device. Never raises — a device we
+        could not drain is still worth talking to.
+        """
+        if self._sock is None:
+            return 0
+        dropped = 0
+        deadline = time.monotonic() + timeout
+        try:
+            self._sock.settimeout(0.05)
+            while time.monotonic() < deadline:
+                try:
+                    chunk = self._sock.recv(256)
+                except socket.timeout:
+                    break  # тихо е — нищо не е останало
+                except Exception:  # noqa: BLE001
+                    break
+                if not chunk:
+                    break
+                dropped += len(chunk)
+        finally:
+            try:
+                self._sock.settimeout(self.read_timeout)
+            except Exception:  # noqa: BLE001
+                pass
+        if dropped:
+            _logger.debug(
+                "OHAUS %s:%s — изхвърлени %d изостанали байта",
+                self.host, self.tcp_port, dropped,
+            )
+        return dropped
 
     def _read_first_line(self, timeout: float) -> bytes:
         """Read until \\n or timeout. Returns the line (without trailing
