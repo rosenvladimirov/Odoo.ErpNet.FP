@@ -67,12 +67,21 @@ WEIGHT_EVENT_TYPE = "scale.weighed"
 
 
 def _bus_client(request: Request):
+    """Кешираният bus-inject клиент за HTTP маршрут."""
+    return _bus_client_for_app(request.app)
+
+
+def _bus_client_for_app(app):
     """Кешираният bus-inject клиент, или None ако не е конфигуриран.
 
     Строи се лениво и се пази на `app.state`: `from_app` чете тайната от
     диска, а това не бива да става на всяко мерене.
+
+    🔑 Приема `app`, не `Request`: фоновият четец
+    (`scale_bus.scale_poll_loop`) няма заявка, а трябва да праща по същия
+    път, иначе биха се получили два различни начина да се стигне до
+    шината — и само единият тестван.
     """
-    app = request.app
     client = getattr(app.state, "scale_bus_client", None)
     if client is not None:
         return client or None
@@ -142,13 +151,30 @@ def _schedule_emit(request: Request, scale_id: str, cfg, data: dict):
 
 
 def _emit_weight(request: Request, scale_id: str, cfg, data: dict):
+    """Пуска събитие към Odoo от HTTP маршрут.
+
+    🔑 Клиентът се взима през `_bus_client(request)`, а НЕ през
+    `_bus_client_for_app`. Това е шевът, който тестовете подменят
+    (`monkeypatch.setattr(sc, "_bus_client", …)`) и подават `request=None`
+    — заобикалянето му би минало покрай подмяната и би търсило `.app` на
+    `None`.
+    """
+    _emit_with(lambda: _bus_client(request), scale_id, cfg, data)
+
+
+def emit_weight_for_app(app, scale_id: str, cfg, data: dict):
+    """Същото, но за фонов четец, който няма заявка (`scale_bus`)."""
+    _emit_with(lambda: _bus_client_for_app(app), scale_id, cfg, data)
+
+
+def _emit_with(get_client, scale_id: str, cfg, data: dict):
     """Пуска събитие към Odoo. Никога не вдига.
 
     Меренето е първичното — ако каналът към Odoo е паднал, операторът
     пак трябва да получи теглото си. Затова провалът само се логва.
     """
     try:
-        client = _bus_client(request)
+        client = get_client()
         if client is None:
             return
         client.emit(

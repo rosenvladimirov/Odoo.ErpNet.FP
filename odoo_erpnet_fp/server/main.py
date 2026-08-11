@@ -175,11 +175,20 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                 watchdog_loop(app),
                 name="controller-watchdog",
             )
+        # Живо тегло на картата в Shop Floor. Картата е пасивен слушател
+        # на `SCALE_READ`, а `/weight` праща събитие само когато го
+        # попитат — тоест без този четец екранът никога не показва тегло.
+        # No-op, докато нито една везна няма `poll_ms` в `extras`.
+        from .scale_bus import scale_poll_loop
+        scale_poll_task: asyncio.Task | None = asyncio.create_task(
+            scale_poll_loop(app),
+            name="scale-poll",
+        )
         try:
             yield
         finally:
             for t in (fleet_task, iot_setup_task, autodetect_task,
-                      watchdog_task):
+                      watchdog_task, scale_poll_task):
                 if t is not None:
                     t.cancel()
                     try:

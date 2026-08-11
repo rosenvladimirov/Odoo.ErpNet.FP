@@ -73,6 +73,56 @@ _LINE_RE = re.compile(
 )
 
 
+# ─── MT-SICS dialect ──────────────────────────────────────────────
+# 🚨 Не всеки OHAUS с Ethernet кит говори SCP протокола от мануала.
+# Измерено на MEC (`192.168.3.162:9761`, R31P1502 Abacus, 06.08.2026):
+#
+#     P   → b'ES\r\n'                      ← SCP командата се ОТХВЪРЛЯ
+#     SI  → b'S S       2.15 g\r\n'        ← MT-SICS работи
+#     S   → b'S S       2.15 g\r\n'
+#     I2  → b'I2 A "R31P1502 Abacus 1504.50 g"'
+#
+# Тоест уредът е на MT-SICS, където `P` е невалидна команда и връща `ES`
+# (syntax error). Симптомът в Odoo е `Unparseable: 'ES'` при ВСЯКО четене
+# и празен екран в Shop Floor.
+#
+# Дialektът се РАЗПОЗНАВА, не се конфигурира: първото четене пробва SCP
+# (заварено поведение), а при `ES`/`ET`/`EL` минава на MT-SICS и помни
+# кое е сработило. Така везните, които говорят SCP, не се пипат.
+# 🚨 Коментарите вътре в израза са на английски по НЕОБХОДИМОСТ: това е
+# байтов литерал (`rb"""`), а той не приема не-ASCII знаци — кирилица там
+# дава `SyntaxError: bytes can only contain ASCII literal characters`.
+# Ехото е `S` (и на `SI` уредът отговаря `S`), после статус S/D.
+_MTSICS_RE = re.compile(
+    rb"""
+    ^\s*S\s*I?\s+                 # command echo: `S`
+    (?P<st>[SD])\s+               # S = stable, D = dynamic (unstable)
+    (?P<sign>[+\-])?\s*
+    (?P<num>\d+(?:\.\d+)?)\s*
+    (?P<unit>kg|g|lb:oz|lb|oz|pcs|t)
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Отговори на MT-SICS, които НЕ са тегло.
+_MTSICS_ERRORS = {
+    "ES": "Scale rejected the command (MT-SICS syntax error)",
+    "ET": "Transmission error",
+    "EL": "Logical error",
+}
+_MTSICS_NOT_A_WEIGHT = {
+    "S I": "Scale busy — no stable value yet",
+    "S +": "Overload",
+    "S -": "Underload",
+}
+
+
+def _is_mtsics_error(line: bytes) -> bool:
+    """Отговорът ли е от вида, който казва „не разбрах командата"?"""
+    return line.decode("ascii", "replace").strip().upper() in _MTSICS_ERRORS
+
+
 def _convert_to_kg(num: float, unit: str) -> float:
     u = unit.lower()
     if u in ("kg", "t"):
@@ -123,6 +173,10 @@ class OhausRangerScale:
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
         self._sock: Optional[socket.socket] = None
+        # Кой диалект говори ТОЗИ уред: None = още не знаем, "scp" =
+        # протоколът от мануала на кита, "mtsics" = MT-SICS. Пази се на
+        # инстанцията, за да не плащаме пробата при всяко четене.
+        self._dialect: Optional[str] = None
 
     # ─── lifecycle ─────────────────────────────────────────────
 
@@ -164,13 +218,24 @@ class OhausRangerScale:
     # ─── public API ────────────────────────────────────────────
 
     def read_weight(self) -> WeightReading:
-        """Send `P`, return first complete frame as a `WeightReading`.
+        """Read the weight, in whichever dialect this device speaks.
 
         Behaviour matches Toledo8217Scale: stable readings return
         ok=True; unstable returns ok=False with status=["Scale unstable"].
+
+        🔑 Два диалекта, разпознати автоматично. Първо се пробва `P`
+        (SCP, от мануала на Ethernet кита — заварено поведение). Ако
+        уредът отговори `ES`/`ET`/`EL`, значи не разбира командата и е на
+        MT-SICS: минаваме на `SI` и помним това за следващите четения.
+
+        Обратното НЕ се прави — щом веднъж сме на MT-SICS, не се връщаме
+        към SCP. Иначе всяко четене би плащало по един провален обмен.
         """
         if self._sock is None:
             raise RuntimeError("Scale not open")
+
+        if self._dialect == "mtsics":
+            return self._read_mtsics()
 
         # `P` triggers a single print. We collect bytes for up to
         # `read_timeout` seconds, take the first non-empty line.
@@ -183,7 +248,81 @@ class OhausRangerScale:
             )
 
         raw = self._read_first_line(timeout=self.read_timeout)
-        return self._parse_line(raw)
+        if _is_mtsics_error(raw):
+            _logger.info(
+                "ohaus %s:%s rejected SCP `P` with %r — switching to MT-SICS",
+                self.host, self.tcp_port, raw.strip())
+            self._dialect = "mtsics"
+            # Застоялото от отхвърлената команда не бива да влезе в
+            # следващото четене (виж `_drain`).
+            self._drain()
+            return self._read_mtsics()
+
+        reading = self._parse_line(raw)
+        if reading.ok:
+            self._dialect = "scp"
+        return reading
+
+    def _read_mtsics(self) -> WeightReading:
+        """Прочети теглото по MT-SICS: `SI` → `S S <тегло> <единица>`.
+
+        Ползва се `SI` (send immediately), не `S`: `S` чака стабилност и
+        при движеща се везна може да не отговори в прозореца, а Shop Floor
+        предпочита нестабилна стойност пред празен екран — нестабилността
+        се вижда от флага, не от липсата на число.
+        """
+        try:
+            self._sock.sendall(b"SI\r\n")
+        except Exception as exc:  # noqa: BLE001
+            return WeightReading(
+                ok=False, weight_kg=None,
+                status=[f"Send failed: {exc}"], raw=b"",
+            )
+        raw = self._read_first_line(timeout=self.read_timeout)
+        return self._parse_mtsics(raw)
+
+    @staticmethod
+    def _parse_mtsics(line: bytes) -> WeightReading:
+        """MT-SICS отговор → `WeightReading`."""
+        if not line.strip():
+            return WeightReading(
+                ok=False, weight_kg=None,
+                status=["No data from scale"], raw=line,
+            )
+        text = line.decode("ascii", errors="replace").strip()
+        upper = text.upper()
+
+        if upper in _MTSICS_ERRORS:
+            return WeightReading(
+                ok=False, weight_kg=None,
+                status=[_MTSICS_ERRORS[upper]], raw=line,
+            )
+        # `S I` / `S +` / `S -` — уредът отговаря, но не с тегло.
+        for prefix, msg in _MTSICS_NOT_A_WEIGHT.items():
+            if upper.startswith(prefix) and not upper[len(prefix):].strip():
+                return WeightReading(
+                    ok=False, weight_kg=None, status=[msg], raw=line,
+                )
+
+        m = _MTSICS_RE.match(line)
+        if m is None:
+            return WeightReading(
+                ok=False, weight_kg=None,
+                status=[f"Unparseable: {text!r}"], raw=line,
+            )
+        try:
+            num = float(m.group("num"))
+        except (TypeError, ValueError):
+            return WeightReading(
+                ok=False, weight_kg=None,
+                status=[f"Unparseable: {text!r}"], raw=line,
+            )
+        if m.group("sign") == b"-":
+            num = -num
+        kg = _convert_to_kg(num, m.group("unit").decode("ascii", "replace"))
+        # `D` = dynamic ⇒ везната още не е стабилна.
+        unstable = m.group("st").upper() == b"D"
+        return _make_reading(kg, unstable, line)
 
     def zero(self) -> None:
         """Same as pressing the Zero key on the scale."""

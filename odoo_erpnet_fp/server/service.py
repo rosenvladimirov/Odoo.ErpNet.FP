@@ -84,6 +84,7 @@ from ..drivers.readers import (
 from ..drivers.scales import (
     AsciiContinuousScale,
     CasPrIIScale,
+    ElicomNlScale,
     OhausRangerScale,
     Toledo8217Scale,
 )
@@ -433,6 +434,11 @@ _SCALE_DRIVERS = {
     "elicom.cash47": CasPrIIScale,
     "elicom.evl": CasPrIIScale,
     "datecs.cas": CasPrIIScale,
+
+    # Elicom NL indicator (EEP N/NL platform scales) — continuous
+    # CR-terminated broadcast, no commands. NOT the EVL CASH47 mode.
+    "elicom.nl": ElicomNlScale,
+    "elicom.eep": ElicomNlScale,
 
     # Generic ASCII continuous-stream scales — passive listener.
     # Covers ACS 6/15, ACS 15/30, JCS, no-name OEM Chinese scales.

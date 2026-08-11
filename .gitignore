@@ -34,3 +34,8 @@ letsencrypt/
 
 # Runtime data — local state, never commit
 data/
+
+# Ръчни резервни копия — .env.bak е носил ЖИВИ тайни (11.08.2026)
+*.bak
+*.bak-*
+*.bak.*
