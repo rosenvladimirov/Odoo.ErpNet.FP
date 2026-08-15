@@ -430,6 +430,22 @@ async def _execute_command(cmd: dict, app=None) -> tuple[bool, dict | None, str]
                     "echo": payload,
                 }, ("" if known
                     else f"device not known: HTTP {r.status_code}")
+            elif kind == "mark_stored":
+                # Обратната връзка към Test Adapter: Odoo е произвело
+                # бройките и иска флагът `StoredInOdoo` да се вдигне.
+                # Заявката е идемпотентна (`WHERE flag = 0`), тъй че
+                # повторено нареждане не пипа нищо и връща нула засегнати
+                # — това НЕ е провал и Odoo го чете така.
+                source = (payload.get("source") or "").strip()
+                if not source:
+                    return False, None, "source required"
+                keys = payload.get("row_keys") or []
+                if not isinstance(keys, list):
+                    return False, None, "row_keys must be a list"
+                r = await c.post(
+                    f"{base}/dbsource/{source}/mark_stored",
+                    headers=headers, json={"row_keys": keys},
+                )
             else:
                 return False, None, f"Unknown command kind: {kind!r}"
             ok = r.status_code < 400
