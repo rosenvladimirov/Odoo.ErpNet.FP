@@ -64,7 +64,16 @@ def test_program_plu_pdf_syntax2_example():
 
 
 def test_program_plu_minimal_no_quantity_no_barcodes():
-    """When quantity is None we omit AddQty + Quantity fields (empty)."""
+    """При `quantity=None`: AddQty е празно, а Quantity е `0.000`.
+
+    ⚖️ Тестът очакваше празно и в двете. FP-700MX (FW 3.00 Jul25) обаче
+    отказва празно Quantity с `ERR_FP_SYNTAX_PARAM_9` — иска реална
+    стойност, а `0.000` работи навсякъде, включително на по-старите
+    DP-25 (комит `2f6b5ef`, 30.07.2026).
+
+    🔑 Наличността НЕ се пипа: това решава AddQty, който тук е празен.
+    `0.000` е само запълване на позицията в синтаксиса.
+    """
     mock = MockDevice()
     mock.expect_static(0x6B, data=codec.encode_data(0), status=b"\x80" * 8)
 
@@ -77,11 +86,11 @@ def test_program_plu_minimal_no_quantity_no_barcodes():
     )
 
     fields = codec.decode_data(mock.history[-1].data)
-    # Expected: P, 1, А, 0, 1, 0, 1.50, '', '', '', '', '', '', Хляб, 0
+    # Expected: P, 1, А, 0, 1, 0, 1.50, '', 0.000, '', '', '', '', Хляб, 0
     assert fields[0] == "P"
     assert fields[6] == "1.50"
-    assert fields[7] == ""  # AddQty empty
-    assert fields[8] == ""  # Quantity empty
+    assert fields[7] == ""       # AddQty празно ⇒ без промяна на наличност
+    assert fields[8] == "0.000"  # Quantity — позицията иска стойност
     assert fields[9:13] == ["", "", "", ""]
     assert fields[13] == "Хляб"
     assert fields[14] == "0"  # default measurement unit (бр.)

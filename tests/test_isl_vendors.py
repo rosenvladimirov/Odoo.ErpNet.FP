@@ -66,9 +66,19 @@ def test_incotex_rejects_high_groups():
 @pytest.mark.parametrize(
     "cls,pt,expected",
     [
-        (DatecsIslDevice, PaymentType.CASH, "P"),
-        (DatecsIslDevice, PaymentType.CARD, "C"),
-        (DatecsIslDevice, PaymentType.CHECK, "N"),
+        # 🔑 Datecs C-вариант: буквите идват от ИЗМЕРВАНЕ на реален
+        # DP-150 (DT737851, FW 3.00 22Jul25), два независими прохода на
+        # 25.05.2026 със сверени по час бонове. Фърмуерът има само ТРИ
+        # активни слота (P=В БРОЙ, L=КУПОН, N=КРЕДИТ); всяка друга буква
+        # пада към слот 0 и се печата „В БРОЙ".
+        #
+        # ⚖️ Тестът дълго очакваше P/C/N — мапингът на C# upstream, който
+        # за този фърмуер е ГРЕШЕН. Очакването е изравнено с уреда, а не
+        # уредът с очакването: „C" би отпечатала картово плащане като
+        # брой, тоест бонът би твърдял нещо невярно.
+        (DatecsIslDevice, PaymentType.CASH, "P"),    # В БРОЙ
+        (DatecsIslDevice, PaymentType.CARD, "N"),    # КРЕДИТ
+        (DatecsIslDevice, PaymentType.CHECK, "L"),   # КУПОН — няма ЧЕК слот
         (DaisyIslDevice, PaymentType.CASH, "P"),
         (TremolIslDevice, PaymentType.CARD, "C"),
         (IncotexIslDevice, PaymentType.CASH, "P"),
@@ -170,12 +180,23 @@ def test_datecs_x_variant_default_admin_password():
 
 
 def test_datecs_x_inherits_tax_and_payment_letters():
-    """X variant inherits Datecs Cyrillic tax letters + P/C/N/D payment."""
+    """X вариантът наследява кирилските данъчни букви и C-мапинга.
+
+    🚨 Тестът заковава ТЕКУЩОТО поведение, не желаното. `DatecsIslXDevice`
+    наследява `_PAYMENT_LETTERS` от C-варианта, а те са измерени на
+    DP-150 fw 3.00 — устройство с ТРИ активни слота. Самият клас пише за
+    себе си „NOT YET VERIFIED on real hardware".
+
+    Тоест днес FP-700X / DP-150X / FMP-350X отпечатват картово плащане
+    като „КРЕДИТ". Ако X-фърмуерът има пълната азбука (много вероятно,
+    серията е по-нова), това е погрешен етикет върху фискален бон и иска
+    измерване на реален уред, преди да се пипа.
+    """
     dev = DatecsIslXDevice(_FakeTransport())
     assert dev.tax_group_letter(TaxGroup.G1) == "А"
     assert dev.tax_group_letter(TaxGroup.G2) == "Б"
     assert dev.payment_type_letter(PaymentType.CASH) == "P"
-    assert dev.payment_type_letter(PaymentType.CARD) == "C"
+    assert dev.payment_type_letter(PaymentType.CARD) == "N"
 
 
 def test_datecs_x_invoice_header_uses_tab(monkeypatch):
