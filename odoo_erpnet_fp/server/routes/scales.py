@@ -114,7 +114,7 @@ def _weight_event_data(scale_id: str, cfg, reading) -> dict:
         # идва като `ok=False` със статус „Scale unstable".
         "stable": bool(reading.ok),
         "scale_id": scale_id,
-        "host": cfg.host or "",
+        "host": cfg.identity_host(),
         "driver": cfg.driver,
         "status": list(reading.status),
     }
@@ -214,7 +214,10 @@ def _info(sid: str, cfg) -> "ScaleInfoResp":
         driver=cfg.driver,
         port=None if endpoint is None else str(endpoint),
         transport=cfg.transport,
-        host=cfg.host,
+        # Същата дума значи същото и в списъка, и в събитието: адресът,
+        # по който станцията се разпознава. Крайната точка на връзката
+        # си стои в `port` и за серийната везна остава `/dev/tty*`.
+        host=cfg.identity_host(),
     )
 
 
@@ -230,7 +233,7 @@ async def scale_weight(id: str, request: Request):
     # Адресът пътува и при провал — иначе консуматор, който подрежда
     # четенията по станция, няма къде да сложи неуспешното.
     cfg = reg.get(id).config
-    host = cfg.host
+    host = cfg.identity_host()
     from .. import metrics as _m
     try:
         async with reg.with_scale(id) as sc:
@@ -241,9 +244,13 @@ async def scale_weight(id: str, request: Request):
             _m.scale_reads_total.labels(scale_id=id, outcome="unreachable").inc()
         except Exception:
             pass
+        # 🔑 Същите ключове като при успех (`_weight_event_data`) — иначе
+        # консуматорът получава две различни схеми за едно и също събитие
+        # и `mode`/`count` липсват точно когато четенето е пропаднало.
         _schedule_emit(request, id, cfg, {
-            "weight": None, "unit": "kg", "stable": False,
-            "scale_id": id, "host": cfg.host or "", "driver": cfg.driver,
+            "weight": None, "unit": "kg", "mode": "weight", "count": None,
+            "stable": False,
+            "scale_id": id, "host": cfg.identity_host(), "driver": cfg.driver,
             "status": [], "error": str(exc),
         })
         return WeightReadResp(

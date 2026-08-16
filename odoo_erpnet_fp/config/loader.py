@@ -279,7 +279,27 @@ class ScaleConfig:
     baudrate: int = 9600
     transport: str = "serial"
     host: Optional[str] = None
+    station_host: Optional[str] = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def identity_host(self) -> str:
+        """Адресът, по който станцията разпознава СВОЕТО четене.
+
+        🔑 Идентичността на везната е `модел + сериен номер + адрес,
+        откъдето идва` (решение на Росен, 15.08). Двата случая се
+        покриват от една схема: при мрежова везна адресът е нейният
+        собствен, при серийна — на хоста, на който виси.
+
+        🚨 Затова е ОТДЕЛНО поле, а не `host`: `endpoint()` слепва
+        `host:port` веднага щом `host` е непразен, тоест попълването му
+        за серийна везна чупи връзката към `/dev/tty*`. `station_host`
+        не участва в изграждането на крайната точка — той е само име.
+
+        Редът е нарочен: изричното бие изведеното, а `id` е последната
+        мрежа, за да не тръгне събитие с празен адрес (слушалката на
+        работната карта го изхвърля мълчаливо).
+        """
+        return (self.station_host or self.host or self.id or "").strip()
 
     def endpoint(self) -> Optional[str]:
         """Каквото драйверът получава като `port`.
@@ -961,6 +981,9 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
                 baudrate=int(entry.get("baudrate") or 9600),
                 transport=str(entry.get("transport") or "serial"),
                 host=entry.get("host"),
+                # Приема се и `station_host`, и по-краткото `station` —
+                # ръчно писаните конфиги на цеховите машини ползват второто.
+                station_host=entry.get("station_host") or entry.get("station"),
                 extras=entry.get("extras", {}),
             )
         )

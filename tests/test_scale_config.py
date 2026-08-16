@@ -338,12 +338,75 @@ def test_a_dead_bus_never_breaks_the_weighing(monkeypatch):
 
 
 def test_info_response_for_a_serial_scale():
+    """Серийната везна има адрес — този на хоста, на който виси.
+
+    ⚖️ Заменя по-ранното `assert resp.host is None`. Решение на Росен
+    (15.08): идентичността е `модел + сериен номер + адрес, откъдето
+    идва`, и двата случая се покриват еднакво — при мрежова везна
+    адресът е нейният, при серийна е на хоста ѝ. Крайната точка на
+    връзката остава в `port`.
+    """
     from odoo_erpnet_fp.server.routes.scales import _info
 
     resp = _info("cas1", ScaleConfig(
-        id="cas1", driver="cas", port="/dev/ttyUSB1"))
+        id="cas1", driver="cas", port="/dev/ttyUSB1",
+        station_host="192.168.3.44"))
     assert resp.port == "/dev/ttyUSB1"
-    assert resp.host is None
+    assert resp.host == "192.168.3.44"
+
+
+def test_identity_host_never_returns_empty():
+    """Празен адрес = четенето се изхвърля мълчаливо от станцията.
+
+    `scale_station_service.js` реже събитието още преди обработка, ако
+    `host` е празен — затова `id`-то е последната мрежа.
+    """
+    assert ScaleConfig(id="cas1", driver="cas",
+                       port="/dev/ttyUSB1").identity_host() == "cas1"
+
+
+def test_station_host_does_not_leak_into_the_endpoint():
+    """🚨 Регресионен: `endpoint()` слепва `host:port`.
+
+    Затова адресът за идентичност е ОТДЕЛНО поле — попълнен в `host`,
+    той би превърнал `/dev/ttyUSB1` в `192.168.3.44:/dev/ttyUSB1` и би
+    счупил серийната връзка.
+    """
+    cfg = ScaleConfig(id="cas1", driver="cas", port="/dev/ttyUSB1",
+                      station_host="192.168.3.44")
+    assert cfg.endpoint() == "/dev/ttyUSB1"
+    assert cfg.identity_host() == "192.168.3.44"
+
+
+def test_network_scale_keeps_its_own_address_as_identity():
+    """Мрежовата не се променя: адресът ѝ е и връзката, и идентичността."""
+    cfg = ScaleConfig(id="ohaus1", driver="ohaus_ranger", transport="network",
+                      host="192.168.3.162", port=9761)
+    assert cfg.endpoint() == "192.168.3.162:9761"
+    assert cfg.identity_host() == "192.168.3.162"
+
+
+def test_failed_read_event_carries_the_same_keys_as_a_good_one():
+    """Провалено четене идваше с ДРУГА схема — без `mode` и `count`."""
+    from odoo_erpnet_fp.server.routes import scales as sc
+
+    cfg = ScaleConfig(id="cas1", driver="cas", port="/dev/ttyUSB1",
+                      station_host="192.168.3.44")
+
+    class _R:
+        weight_kg = 1.0
+        ok = True
+        status: list = []
+        mode = "weight"
+        count = None
+
+    good = sc._weight_event_data("cas1", cfg, _R())
+    failed = {
+        "weight": None, "unit": "kg", "mode": "weight", "count": None,
+        "stable": False, "scale_id": "cas1", "host": cfg.identity_host(),
+        "driver": cfg.driver, "status": [], "error": "boom",
+    }
+    assert set(good) - set(failed) == set()
 
 
 def test_healthz_reports_the_live_registry_not_the_startup_one():
