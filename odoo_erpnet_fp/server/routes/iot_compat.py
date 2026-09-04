@@ -499,7 +499,7 @@ async def _printer_action(state, printer_id: str, data: dict) -> dict:
 
     async with reg.with_driver(printer_id) as drv:
         def _run():
-            # Method names differ between PM and ISL drivers; try a
+            # Method names differ between PM and ICP drivers; try a
             # short list of synonyms before declaring unsupported.
             candidates = {
                 "status": ["get_status", "status"],

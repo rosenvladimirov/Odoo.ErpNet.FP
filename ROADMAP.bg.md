@@ -13,7 +13,7 @@
 
 | Възможност | Статус |
 |---|:-:|
-| Datecs PM + ISL фискални драйвери (FP-700MX, BC-50MX, DP-150, DP-150X, FP-700X, FMP-350X, ...) | ✅ |
+| Datecs PM + ICP фискални драйвери (FP-700MX, BC-50MX, DP-150, DP-150X, FP-700X, FMP-350X, ...) | ✅ |
 | 6-slot payment mapping емпирично проверен на реален хардуер | ✅ |
 | PLU програмиране, X/Z отчети, ДДС програмиране | ✅ |
 | Клиентски дисплеи, везни, баркод четци (HID/BLE), pinpad-и | ✅ |
@@ -204,7 +204,7 @@ AES key от obfuscated Android class `d0/t0.java`. NDA-sensitive
 | **0.15.0** | 2026-05-26 | Offline ZEN решения за достъп на ниво прокси (Фаза 3) — `access_decision` пакет, GraphStore, `/access/evaluate`, graph sync |
 | **0.13.6** | 2026-05-25 | BlueCash shift_close + shift_signal contracts; bilingual README |
 | 0.13.0 | 2026-05-22 | BluePad-55 BLE bridge (NDA-safe GATT↔PTY) |
-| 0.12.0 | 2026-05-18 | DP-150 ISL payment-letter mapping verified emпирично |
+| 0.12.0 | 2026-05-18 | DP-150 ICP payment-letter mapping verified emпирично |
 | 0.11.0 | 2026-05-17 | Camera + access-control add-on (Phases A+B): Polimex iCON / Hikvision / Dahua actuators |
 | 0.10.0 | 2026-05-15 | MQTT generic bridge route group |
 | 0.9.0  | 2026-05-13 | Multi-device proxy (multiple printers per config) |
@@ -216,7 +216,7 @@ AES key от obfuscated Android class `d0/t0.java`. NDA-sensitive
 | 0.3.0  | 2026-05-07 | Fleet remote management (HMAC heartbeat + pairing + Fernet admin token) |
 | 0.2.5  | 2026-05-06 | Prometheus `/metrics` + Grafana stack + iframe embed в Odoo |
 | 0.2.0  | 2026-05-06 | HID barcode scanner през `hid2serial` sister daemon (Linux .deb + Windows installer) |
-| 0.1.0  | 2026-04-x  | Initial fork — Datecs PM/ISL драйвери + клиентски дисплеи + везни + Datecs Pay pinpad |
+| 0.1.0  | 2026-04-x  | Initial fork — Datecs PM/ICP драйвери + клиентски дисплеи + везни + Datecs Pay pinpad |
 
 ## График (преразгледан 2026-05-25)
 

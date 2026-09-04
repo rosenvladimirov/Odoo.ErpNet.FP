@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ...drivers.fiscal.datecs_pm.errors import FiscalError
-from ...drivers.fiscal.datecs_isl.protocol import IslDeviceInfo
+from ...drivers.fiscal.datecs_icp.protocol import IcpDeviceInfo
 from ..adapters import messages as msg_adapter
 from ..adapters import payment_type as pt_adapter
 from ..adapters import tax_group as tg_adapter
@@ -41,6 +41,24 @@ from ..schemas import (
 )
 
 _logger = logging.getLogger(__name__)
+
+# ErpNet.FP-style URI: bg.<vendor>[.<variant>].<protocol>.<transport>://<addr>
+# Вендорът е префиксът на СЕРИЙНИЯ НОМЕР (DT Datecs · DY Daisy ·
+# ED Eltrade · IN Incotex · IS ICP Bulgaria · ZK Tremol) — пълната
+# бележка е в drivers/fiscal/datecs_icp/vendors.py.
+#
+# 🚨 Тази карта трябва да е ОБРАТНАТА на `_URI_DRIVER_MAP` в
+# config/loader.py. Разминат ли се, URI-то, което издаваме по
+# `/printers`, не може да се прочете обратно от нашия собствен зареждач
+# на конфигурация. `test_uri_tables_are_mutual_inverses` го пази.
+_DRIVER_TO_URI: dict[str, str] = {
+    "datecs.pm": "bg.dt.pm",
+    "datecs.icp": "bg.dt.c.icp",
+    "datecs.icpx": "bg.dt.x.icp",
+    "daisy.icp": "bg.dy.icp",
+    "eltrade.icp": "bg.ed.icp",
+    "incotex.icp": "bg.in.icp",
+}
 router = APIRouter(prefix="/printers", tags=["printers"])
 
 
@@ -70,58 +88,47 @@ def _device_info(entry) -> DeviceInfo:
     cfg = entry.config
     if entry.info is not None:
         return entry.info
-    # Втори източник на info — cached IslDeviceInfo от opportunistic
+    # Втори източник на info — cached IcpDeviceInfo от opportunistic
     # detect (status route го попълва при първи успешен probe и го
     # persist-ва на диск). Map-ваме към ErpNet.FP-style DeviceInfo.
-    isl_cache = getattr(entry, "_isl_info_cache", None)
-    if isl_cache is not None:
+    icp_cache = getattr(entry, "_icp_info_cache", None)
+    if icp_cache is not None:
         return DeviceInfo(
-            uri=getattr(isl_cache, "uri", "") or "",
-            manufacturer=getattr(isl_cache, "manufacturer", "") or "Datecs",
-            model=getattr(isl_cache, "model", "") or "?",
-            firmware_version=getattr(isl_cache, "firmware_version", "") or "",
-            serial_number=getattr(isl_cache, "serial_number", "") or "",
+            uri=getattr(icp_cache, "uri", "") or "",
+            manufacturer=getattr(icp_cache, "manufacturer", "") or "Datecs",
+            model=getattr(icp_cache, "model", "") or "?",
+            firmware_version=getattr(icp_cache, "firmware_version", "") or "",
+            serial_number=getattr(icp_cache, "serial_number", "") or "",
             fiscal_memory_serial_number=getattr(
-                isl_cache, "fiscal_memory_serial_number", "") or "",
+                icp_cache, "fiscal_memory_serial_number", "") or "",
             tax_identification_number=getattr(
-                isl_cache, "tax_identification_number", "") or "",
-            item_text_max_length=getattr(isl_cache, "item_text_max_length", 36),
-            comment_text_max_length=getattr(isl_cache, "comment_text_max_length", 42),
+                icp_cache, "tax_identification_number", "") or "",
+            item_text_max_length=getattr(icp_cache, "item_text_max_length", 36),
+            comment_text_max_length=getattr(icp_cache, "comment_text_max_length", 42),
             operator_password_max_length=getattr(
-                isl_cache, "operator_password_max_length", 8),
+                icp_cache, "operator_password_max_length", 8),
             supported_payment_types=pt_adapter.supported_for(
                 cfg.driver,
-                model_name=getattr(isl_cache, "model", "") or "",
+                model_name=getattr(icp_cache, "model", "") or "",
             ),
         )
     addr = cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}"
     transport_token = {"serial": "com", "tcp": "tcp"}.get(cfg.transport, "com")
-    # ErpNet.FP-style URI: bg.<vendor>.<protocol>.<transport>://<addr>
-    driver_to_uri = {
-        "datecs.pm": "bg.dt.pm",
-        "datecs.isl": "bg.dt.isl",
-        "daisy.isl": "bg.dy.isl",
-        "eltrade.isl": "bg.el.isl",
-        "incotex.isl": "bg.is.icp",
-        "tremol.isl": "bg.tr.isl",
-    }
-    uri_prefix = driver_to_uri.get(cfg.driver, "bg.unknown")
+    uri_prefix = _DRIVER_TO_URI.get(cfg.driver, "bg.unknown")
     uri = f"{uri_prefix}.{transport_token}://{addr}"
     driver_to_model = {
         "datecs.pm": "PM (v2.11.4)",
-        "datecs.isl": "Datecs ISL (auto-detect)",
-        "daisy.isl": "Daisy ISL",
-        "eltrade.isl": "Eltrade ISL",
-        "incotex.isl": "Incotex ISL",
-        "tremol.isl": "Tremol ISL",
+        "datecs.icp": "Datecs ICP (auto-detect)",
+        "daisy.icp": "Daisy ICP",
+        "eltrade.icp": "Eltrade ICP",
+        "incotex.icp": "Incotex ICP",
     }
     driver_to_manufacturer = {
         "datecs.pm": "Datecs",
-        "datecs.isl": "Datecs",
-        "daisy.isl": "Daisy",
-        "eltrade.isl": "Eltrade",
-        "incotex.isl": "Incotex",
-        "tremol.isl": "Tremol",
+        "datecs.icp": "Datecs",
+        "daisy.icp": "Daisy",
+        "eltrade.icp": "Eltrade",
+        "incotex.icp": "Incotex",
     }
     return DeviceInfo(
         uri=uri,
@@ -162,7 +169,7 @@ async def printer_status(id: str, request: Request):
     is_pm = registry.is_pm(id)
     # Hard ceiling — status check must always resolve quickly so the
     # Odoo POS UI / backend buttons can react. With a paper-out or
-    # otherwise unresponsive device the underlying ISL frame timeout
+    # otherwise unresponsive device the underlying ICP frame timeout
     # is 5s; we cap at 8s total and surface E101 on overrun rather
     # than wedging the calling browser.
     try:
@@ -172,19 +179,19 @@ async def printer_status(id: str, request: Request):
                     fs = await asyncio.to_thread(drv.read_status)
                     # Opportunistic populate of device info (serial,
                     # FM serial, firmware, TIN) — same trick as the
-                    # ISL branch below. PM-only devices were missing
+                    # ICP branch below. PM-only devices were missing
                     # this so /printers always reported empty serial.
                     if not fs.has_critical_error():
                         entry = registry.get(id)
-                        if (getattr(entry, "_isl_info_cache", None) is None
+                        if (getattr(entry, "_icp_info_cache", None) is None
                                 and hasattr(drv, "detect")):
                             try:
                                 pm_info = await asyncio.to_thread(drv.detect)
                                 if pm_info:
-                                    # Reuse the ISL IslDeviceInfo dataclass —
+                                    # Reuse the ICP IcpDeviceInfo dataclass —
                                     # _device_info reads via getattr() so any
                                     # object exposing those names works.
-                                    entry._isl_info_cache = IslDeviceInfo(
+                                    entry._icp_info_cache = IcpDeviceInfo(
                                         manufacturer=pm_info.get(
                                             "manufacturer", "Datecs"),
                                         model=pm_info.get(
@@ -199,7 +206,7 @@ async def printer_status(id: str, request: Request):
                                             "tax_identification_number", ""),
                                     )
                                     try:
-                                        registry.persist_isl_info_cache()
+                                        registry.persist_icp_info_cache()
                                     except Exception:
                                         pass
                             except Exception as exc:
@@ -210,16 +217,16 @@ async def printer_status(id: str, request: Request):
                         device_date_time=_now_iso(),
                         messages=msg_adapter.from_status(fs),
                     )
-                isl_status = await asyncio.to_thread(drv.get_status)
-                # DP-150 (ISL C-variant, fw 3.00) reject CMD_GET_STATUS (0x4A)
+                icp_status = await asyncio.to_thread(drv.get_status)
+                # DP-150 (ICP C-variant, fw 3.00) reject CMD_GET_STATUS (0x4A)
                 # with E402+E199 sticky bits even when the device is fine
                 # and listening on PC mode. Detection (CMD_GET_DEVICE_INFO
                 # = 0x5A) is the universally-accepted alive probe, so when
                 # we see ONLY those two sticky bits we fall back to it —
                 # if device info reads, the device is alive and ready.
-                if (not isl_status.ok and isl_status.errors and all(
+                if (not icp_status.ok and icp_status.errors and all(
                         e.code in ("E402", "E199")
-                        for e in isl_status.errors) and hasattr(drv, "detect")):
+                        for e in icp_status.errors) and hasattr(drv, "detect")):
                     try:
                         info = await asyncio.to_thread(drv.detect)
                         if info is not None and info.model:
@@ -228,10 +235,10 @@ async def printer_status(id: str, request: Request):
                                 "(detect responded: %s)", id, info.model)
                             # Synthesise an OK status; the warning is kept
                             # so the UI can surface "had sticky bits, ignored".
-                            from odoo_erpnet_fp.drivers.fiscal.datecs_isl.status \
+                            from odoo_erpnet_fp.drivers.fiscal.datecs_icp.status \
                                 import DeviceStatus
-                            isl_status = DeviceStatus()
-                            isl_status.add_warning(
+                            icp_status = DeviceStatus()
+                            icp_status.add_warning(
                                 "W402", "Sticky E402+E199 ignored "
                                 "(device-info probe succeeded)")
                     except Exception as exc:
@@ -242,29 +249,29 @@ async def printer_status(id: str, request: Request):
                 # (FW, serial, FM serial, TIN) ако още не е cached.
                 # Status обикновено успява първи (cheap), а info-то
                 # после е готов за /printers и UI-то.
-                if isl_status.ok:
+                if icp_status.ok:
                     entry = registry.get(id)
-                    if (getattr(entry, "_isl_info_cache", None) is None
+                    if (getattr(entry, "_icp_info_cache", None) is None
                             and hasattr(drv, "detect")):
                         try:
                             info = await asyncio.to_thread(drv.detect)
                             if info is not None:
-                                entry._isl_info_cache = info
+                                entry._icp_info_cache = info
                                 # Persist веднага — следващия restart на
                                 # proxy-то ще започне с пълно info дори
                                 # ако device е offline в момента
                                 try:
-                                    registry.persist_isl_info_cache()
+                                    registry.persist_icp_info_cache()
                                 except Exception:
                                     pass
                         except Exception as exc:
                             _logger.debug("opportunistic detect failed: %s", exc)
                 return DeviceStatusWithDateTime(
-                    ok=isl_status.ok,
+                    ok=icp_status.ok,
                     device_date_time=_now_iso(),
                     messages=[
                         StatusMessage(type=m.type.value, code=m.code, text=m.text)
-                        for m in (isl_status.messages + isl_status.errors)
+                        for m in (icp_status.messages + icp_status.errors)
                     ],
                 )
         return await asyncio.wait_for(_do(), timeout=8.0)
@@ -305,49 +312,49 @@ async def printer_cash(id: str, request: Request):
 # ─── 5. POST /{id}/receipt ────────────────────────────────────────
 
 
-async def _isl_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceiptResult:
-    """ISL receipt path — uses IslDevice's open_receipt / add_item / add_payment / close."""
-    from ...drivers.fiscal.datecs_isl.protocol import (
-        PaymentType as IslPT,
-        PriceModifierType as IslPMT,
-        TaxGroup as IslTG,
+async def _icp_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceiptResult:
+    """ICP receipt path — uses IcpDevice's open_receipt / add_item / add_payment / close."""
+    from ...drivers.fiscal.datecs_icp.protocol import (
+        PaymentType as IcpPT,
+        PriceModifierType as IcpPMT,
+        TaxGroup as IcpTG,
     )
 
     payment_map = {
-        "cash": IslPT.CASH,
-        "card": IslPT.CARD,
-        "check": IslPT.CHECK,
+        "cash": IcpPT.CASH,
+        "card": IcpPT.CARD,
+        "check": IcpPT.CHECK,
     }
     pmt_map = {
-        PriceModifierType.discount_percent: IslPMT.DISCOUNT_PERCENT,
-        PriceModifierType.discount_amount: IslPMT.DISCOUNT_AMOUNT,
-        PriceModifierType.surcharge_percent: IslPMT.SURCHARGE_PERCENT,
-        PriceModifierType.surcharge_amount: IslPMT.SURCHARGE_AMOUNT,
+        PriceModifierType.discount_percent: IcpPMT.DISCOUNT_PERCENT,
+        PriceModifierType.discount_amount: IcpPMT.DISCOUNT_AMOUNT,
+        PriceModifierType.surcharge_percent: IcpPMT.SURCHARGE_PERCENT,
+        PriceModifierType.surcharge_amount: IcpPMT.SURCHARGE_AMOUNT,
     }
 
     try:
-        async with registry.with_driver(id) as isl:
+        async with registry.with_driver(id) as icp:
             opened = False
             try:
                 _logger.info(
                     "RECEIPT id=%s UNS=%r operator=%r items=%d total=%.2f",
                     id,
                     receipt.unique_sale_number,
-                    receipt.operator or getattr(isl, "operator_id", None),
+                    receipt.operator or getattr(icp, "operator_id", None),
                     len(receipt.items),
                     sum((i.unit_price * i.quantity)
                         for i in receipt.items
                         if isinstance(i, SaleItem)),
                 )
                 st = await asyncio.to_thread(
-                    isl.open_receipt,
+                    icp.open_receipt,
                     receipt.unique_sale_number,
                     receipt.operator,
                     receipt.operator_password,
                 )
                 if not st.ok:
                     _logger.warning(
-                        "ISL open_receipt failed: id=%s UNS=%r operator=%r errors=%s",
+                        "ICP open_receipt failed: id=%s UNS=%r operator=%r errors=%s",
                         id, receipt.unique_sale_number, receipt.operator,
                         [(e.code, e.text) for e in st.errors],
                     )
@@ -364,14 +371,14 @@ async def _isl_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                 receipt_amount = 0.0
                 for item in receipt.items:
                     if isinstance(item, SaleItem):
-                        tg = IslTG(str(item.tax_group))
+                        tg = IcpTG(str(item.tax_group))
                         pmt = (
-                            pmt_map.get(item.price_modifier_type, IslPMT.NONE)
+                            pmt_map.get(item.price_modifier_type, IcpPMT.NONE)
                             if item.price_modifier_type
-                            else IslPMT.NONE
+                            else IcpPMT.NONE
                         )
                         st = await asyncio.to_thread(
-                            isl.add_item,
+                            icp.add_item,
                             text=item.text,
                             unit_price=item.unit_price,
                             tax_group=tg,
@@ -387,19 +394,19 @@ async def _isl_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                         receipt_amount += float(item.quantity) * float(item.unit_price)
 
                 if not receipt.payments:
-                    st = await asyncio.to_thread(isl.full_payment)
+                    st = await asyncio.to_thread(icp.full_payment)
                 else:
                     for pay in receipt.payments:
                         st = await asyncio.to_thread(
-                            isl.add_payment,
+                            icp.add_payment,
                             pay.amount,
-                            payment_map.get(pay.payment_type.value, IslPT.CASH),
+                            payment_map.get(pay.payment_type.value, IcpPT.CASH),
                         )
                         if not st.ok:
                             raise RuntimeError(
                                 "; ".join(e.text for e in st.errors)
                             )
-                    st = await asyncio.to_thread(isl.close_receipt)
+                    st = await asyncio.to_thread(icp.close_receipt)
 
                 if not st.ok:
                     raise RuntimeError("; ".join(e.text for e in st.errors))
@@ -408,17 +415,17 @@ async def _isl_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                     ok=True,
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
-                    fiscal_memory_serial_number=isl.info.fiscal_memory_serial_number or "",
+                    fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",
                 )
             except Exception:
                 if opened:
                     try:
-                        await asyncio.to_thread(isl.abort_receipt)
+                        await asyncio.to_thread(icp.abort_receipt)
                     except Exception:
-                        _logger.exception("ISL abort after error failed")
+                        _logger.exception("ICP abort after error failed")
                 raise
     except Exception as exc:
-        _logger.exception("ISL receipt print failed on %s", id)
+        _logger.exception("ICP receipt print failed on %s", id)
         return PrintReceiptResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
 
 
@@ -428,8 +435,8 @@ async def _print_receipt_impl(
     registry = _require_printer(request, id)
     cfg = registry.get(id).config
 
-    if registry.is_isl(id):
-        return await _isl_print_receipt(registry, id, receipt)
+    if registry.is_icp(id):
+        return await _icp_print_receipt(registry, id, receipt)
 
     try:
         async with registry.with_pm(id) as pm:
@@ -513,7 +520,7 @@ async def _print_receipt_impl(
                     # per-family payment slot lookup — receipt label
                     # printed on the device depends on it.
                     _entry = registry.get(id)
-                    _info = getattr(_entry, "_isl_info_cache", None)
+                    _info = getattr(_entry, "_icp_info_cache", None)
                     _model = getattr(_info, "model", "") if _info else ""
                     for pay in receipt.payments:
                         await asyncio.to_thread(
@@ -566,19 +573,19 @@ async def print_receipt(
 # ─── 5b. POST /{id}/invoice ───────────────────────────────────────
 
 
-async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptResult:
-    """ISL invoice path — native (FW 3.00+) OR free-text fallback."""
-    from ...drivers.fiscal.datecs_isl.protocol import (
-        PaymentType as IslPT,
-        TaxGroup as IslTG,
+async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptResult:
+    """ICP invoice path — native (FW 3.00+) OR free-text fallback."""
+    from ...drivers.fiscal.datecs_icp.protocol import (
+        PaymentType as IcpPT,
+        TaxGroup as IcpTG,
     )
-    payment_map = {"cash": IslPT.CASH, "card": IslPT.CARD, "check": IslPT.CHECK}
+    payment_map = {"cash": IcpPT.CASH, "card": IcpPT.CARD, "check": IcpPT.CHECK}
 
     try:
-        async with registry.with_driver(id) as isl:
+        async with registry.with_driver(id) as icp:
             opened = False
             try:
-                native = bool(isl.info.supports_native_invoice)
+                native = bool(icp.info.supports_native_invoice)
                 _logger.info(
                     "INVOICE id=%s UNS=%r native=%s recipient=%r EIK=%s items=%d",
                     id, inv.unique_sale_number, native,
@@ -587,7 +594,7 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
 
                 if native:
                     st = await asyncio.to_thread(
-                        isl.open_invoice_receipt,
+                        icp.open_invoice_receipt,
                         unique_sale_number=inv.unique_sale_number,
                         recipient_name=inv.customer_name,
                         recipient_eik=inv.customer_eik,
@@ -622,12 +629,12 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                         # come out: a partially-printed invoice header
                         # plus the fallback fiscal receipt.
                         try:
-                            await asyncio.to_thread(isl.abort_receipt)
+                            await asyncio.to_thread(icp.abort_receipt)
                         except Exception:
                             _logger.debug("abort_receipt before fallback raised — likely no open receipt, continuing")
                         native = False
                         st = await asyncio.to_thread(
-                            isl.open_receipt,
+                            icp.open_receipt,
                             inv.unique_sale_number,
                             inv.operator,
                             inv.operator_password,
@@ -636,7 +643,7 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                     # Fallback: open normal fiscal receipt, then prefix
                     # with comment lines (CMD_FISCAL_RECEIPT_COMMENT).
                     st = await asyncio.to_thread(
-                        isl.open_receipt,
+                        icp.open_receipt,
                         inv.unique_sale_number,
                         inv.operator,
                         inv.operator_password,
@@ -667,7 +674,7 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                         invoice_header_lines.append(f"МОЛ: {inv.customer_buyer}"[:46])
                     invoice_header_lines.append("=" * 30)
                     for line in invoice_header_lines:
-                        cst = await asyncio.to_thread(isl.add_comment, line)
+                        cst = await asyncio.to_thread(icp.add_comment, line)
                         if not cst.ok:
                             _logger.warning("comment line failed: %s",
                                             [(e.code, e.text) for e in cst.errors])
@@ -676,9 +683,9 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                 receipt_amount = 0.0
                 for item in inv.items:
                     if isinstance(item, SaleItem):
-                        tg = IslTG(str(item.tax_group))
+                        tg = IcpTG(str(item.tax_group))
                         st = await asyncio.to_thread(
-                            isl.add_item,
+                            icp.add_item,
                             text=item.text,
                             unit_price=item.unit_price,
                             tax_group=tg,
@@ -689,18 +696,18 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                         receipt_amount += float(item.quantity) * float(item.unit_price)
 
                 if not inv.payments:
-                    st = await asyncio.to_thread(isl.full_payment)
+                    st = await asyncio.to_thread(icp.full_payment)
                 else:
                     for pay in inv.payments:
                         st = await asyncio.to_thread(
-                            isl.add_payment,
+                            icp.add_payment,
                             pay.amount,
-                            payment_map.get(pay.payment_type.value, IslPT.CASH),
+                            payment_map.get(pay.payment_type.value, IcpPT.CASH),
                         )
                         if not st.ok:
                             raise RuntimeError("; ".join(e.text for e in st.errors))
 
-                st = await asyncio.to_thread(isl.close_receipt)
+                st = await asyncio.to_thread(icp.close_receipt)
                 if not st.ok:
                     raise RuntimeError("; ".join(e.text for e in st.errors))
 
@@ -708,17 +715,17 @@ async def _isl_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                     ok=True,
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
-                    fiscal_memory_serial_number=isl.info.fiscal_memory_serial_number or "",
+                    fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",
                 )
             except Exception:
                 if opened:
                     try:
-                        await asyncio.to_thread(isl.abort_receipt)
+                        await asyncio.to_thread(icp.abort_receipt)
                     except Exception:
-                        _logger.exception("ISL abort after invoice error failed")
+                        _logger.exception("ICP abort after invoice error failed")
                 raise
     except Exception as exc:
-        _logger.exception("ISL invoice print failed on %s", id)
+        _logger.exception("ICP invoice print failed on %s", id)
         return PrintReceiptResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
 
 
@@ -730,7 +737,7 @@ async def print_invoice(
 ):
     """Print a fiscal invoice (фактура).
 
-    On firmware that supports native invoice opcode (Datecs ISL FW 3.00+):
+    On firmware that supports native invoice opcode (Datecs ICP FW 3.00+):
       header includes recipient + EIK + address + МОЛ + ИН по ЗДДС;
       device assigns invoice number from EEPROM auto-increment.
     On older firmware: regular fiscal receipt prefixed with comment
@@ -738,8 +745,8 @@ async def print_invoice(
       Naredba H-18 fiscal invoice.
     """
     registry = _require_printer(request, id)
-    if registry.is_isl(id):
-        return await _isl_print_invoice(registry, id, invoice)
+    if registry.is_icp(id):
+        return await _icp_print_invoice(registry, id, invoice)
     return PrintReceiptResult(
         ok=False,
         messages=[StatusMessage(
@@ -779,7 +786,7 @@ async def print_reversal(
 
 
 async def _dispatch_simple(
-    registry, id: str, pm_method: str, isl_method: str, *args
+    registry, id: str, pm_method: str, icp_method: str, *args
 ) -> GenericResult:
     """Generic dispatcher for endpoints that just call a one-shot method
     on either driver and return ok/messages.
@@ -790,13 +797,13 @@ async def _dispatch_simple(
             if is_pm:
                 await asyncio.to_thread(getattr(drv, pm_method), *args)
                 return GenericResult(ok=True)
-            # datecs.isl
-            isl_status = await asyncio.to_thread(getattr(drv, isl_method), *args)
+            # datecs.icp
+            icp_status = await asyncio.to_thread(getattr(drv, icp_method), *args)
             messages = [
                 StatusMessage(type=m.type.value, code=m.code, text=m.text)
-                for m in (isl_status.messages + isl_status.errors)
+                for m in (icp_status.messages + icp_status.errors)
             ]
-            return GenericResult(ok=isl_status.ok, messages=messages)
+            return GenericResult(ok=icp_status.ok, messages=messages)
     except Exception as exc:
         return GenericResult(ok=False, messages=[msg_adapter.from_fiscal_error(exc)])
 
@@ -873,7 +880,7 @@ async def print_z_report_with_totals(
     """Print Z-report AND return parsed totals when the driver supports it.
 
     Some drivers (Datecs PM v2.11.4) return `(report_number, dict[group, turnover])`
-    from `print_z_report()`; others (Datecs ISL) only flip device status. The
+    from `print_z_report()`; others (Datecs ICP) only flip device status. The
     response shape adapts:
 
         Driver returns tuple    → {ok, report_number, totals_by_group, device_returned_totals: true}
@@ -897,7 +904,7 @@ async def print_z_report_with_totals(
                 "totals_by_group": {k: float(v) for k, v in totals.items()},
                 "device_returned_totals": True,
             }
-        # ISL-style return: DeviceStatus (just an ack — no totals)
+        # ICP-style return: DeviceStatus (just an ack — no totals)
         ok = bool(getattr(result, "ok", False))
         messages = [str(m) for m in getattr(result, "messages", []) or []]
         return {
@@ -949,11 +956,11 @@ async def print_duplicate(
 @router.post("/{id}/reset", response_model=GenericResult)
 async def reset_printer(id: str, request: Request):
     """ErpNet.FP "reset" cancels a stuck open receipt. Both PM (cmd 0x3C)
-    and ISL (CMD_ABORT_FISCAL_RECEIPT 0x3C) treat this as idempotent.
+    and ICP (CMD_ABORT_FISCAL_RECEIPT 0x3C) treat this as idempotent.
 
     Връща ясна обратна връзка дали реално е имало висяща бележка (cancelled)
     или устройството вече е било чисто (no-op). E404 "Command not allowed
-    in the current fiscal mode" в ISL = няма отворена бележка → no-op.
+    in the current fiscal mode" в ICP = няма отворена бележка → no-op.
     """
     registry = _require_printer(request, id)
     is_pm = registry.is_pm(id)
@@ -975,11 +982,11 @@ async def reset_printer(id: str, request: Request):
                             type="info", code="NOOP",
                             text="Няма висяща бележка за прекъсване — устройството вече е чисто.")],
                     )
-            # datecs.isl — проверяваме реалния отговор
-            isl_status = await asyncio.to_thread(drv.abort_receipt)
+            # datecs.icp — проверяваме реалния отговор
+            icp_status = await asyncio.to_thread(drv.abort_receipt)
             no_open = any(
                 e.code in ("E404", "E197", "E198")  # "Command not allowed" варианти
-                for e in isl_status.errors
+                for e in icp_status.errors
             )
             if no_open:
                 return GenericResult(
@@ -988,7 +995,7 @@ async def reset_printer(id: str, request: Request):
                         type="info", code="NOOP",
                         text="Няма висяща бележка за прекъсване — устройството вече е чисто.")],
                 )
-            if isl_status.ok:
+            if icp_status.ok:
                 return GenericResult(
                     ok=True,
                     messages=[StatusMessage(
@@ -999,7 +1006,7 @@ async def reset_printer(id: str, request: Request):
                 ok=False,
                 messages=[
                     StatusMessage(type=m.type.value, code=m.code, text=m.text)
-                    for m in (isl_status.messages + isl_status.errors)
+                    for m in (icp_status.messages + icp_status.errors)
                 ],
             )
     except Exception as exc:
@@ -1018,8 +1025,8 @@ async def get_vat_rates(id: str, request: Request):
     Each rate is an integer × 100 (so 2000 = 20.00%); `null` means
     the slot is disabled.
 
-    PM-only for now; ISL devices use a different rate-read path
-    (cmd 0x21 sub 'I' on most variants) — TODO when first ISL request
+    PM-only for now; ICP devices use a different rate-read path
+    (cmd 0x21 sub 'I' on most variants) — TODO when first ICP request
     lands.
     """
     registry = _require_printer(request, id)
@@ -1108,7 +1115,7 @@ async def raw_request(id: str, frame_body: RequestFrame, request: Request):
 
 @router.post("/{id}/plu/sync")
 async def sync_plu_bulk(id: str, body: dict, request: Request):
-    """Bulk-program PLUs on the device (Datecs PM and ISL).
+    """Bulk-program PLUs on the device (Datecs PM and ICP).
 
     Request body: `{items: [{plu, name, price, vat_group, department,
                              barcode?, currency?, measurement_unit?}, ...]}`
@@ -1121,16 +1128,16 @@ async def sync_plu_bulk(id: str, body: dict, request: Request):
 
     Supported drivers:
     * Datecs PM (CMD ProgramPLU) — full feature set.
-    * Datecs ISL (CMD 0x4B) — DP-150 C variant; TODO X variant in a
+    * Datecs ICP (CMD 0x4B) — DP-150 C variant; TODO X variant in a
       subclass override when DP-150X / FP-700X test coverage is added.
     """
     registry = _require_printer(request, id)
-    if not (registry.is_pm(id) or registry.is_isl(id)):
+    if not (registry.is_pm(id) or registry.is_icp(id)):
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=(
                 "PLU programming is implemented only for Datecs PM and "
-                "Datecs ISL drivers."
+                "Datecs ICP drivers."
             ),
         )
     items = body.get("items") or []
@@ -1184,7 +1191,7 @@ async def program_operators(id: str, body: dict, request: Request):
     Request body: `{operators: [{code: str, name: str, password: str},
                                 ...]}`
 
-    PM driver: cmd 0x66 'P'. ISL: 0x65 (different framing). Both will
+    PM driver: cmd 0x66 'P'. ICP: 0x65 (different framing). Both will
     be wired up as the drivers gain a `program_operator` helper —
     until then we return 501 for missing capability.
     """
@@ -1239,7 +1246,7 @@ async def upload_logo(id: str, body: dict, request: Request):
     size constraints (Datecs PM accepts up to 384×128 monochrome).
 
     Both driver families need a `program_logo(image_bytes)` helper;
-    ISL family doesn't have one yet — returns 501 there.
+    ICP family doesn't have one yet — returns 501 there.
     """
     registry = _require_printer(request, id)
     image_b64 = body.get("image_b64") or ""

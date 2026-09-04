@@ -201,7 +201,7 @@ class ReversalReceipt(Receipt):
 class Invoice(Receipt):
     """Body of POST /printers/{id}/invoice — fiscal invoice (фактура).
 
-    On firmware that supports native invoice (Datecs ISL FW 3.00+),
+    On firmware that supports native invoice (Datecs ICP FW 3.00+),
     these fields are passed verbatim to `open_invoice_receipt`.
     On older firmware, the proxy falls back to a regular fiscal
     receipt prefixed with comment lines containing the same data.

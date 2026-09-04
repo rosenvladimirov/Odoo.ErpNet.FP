@@ -1,5 +1,5 @@
 """
-Transport ABC for Datecs ISL — same shape as the PM driver's transport
+Transport ABC for Datecs ICP — same shape as the PM driver's transport
 (serial / tcp). Different driver, different package, but identical
 contract: open / close / write / read / read_until.
 """

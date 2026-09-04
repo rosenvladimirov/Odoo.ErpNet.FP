@@ -228,7 +228,7 @@
 - `config.yaml` пример с `fp700mk` (driver `datecs.pm`).
 
 ### Notes
-- ФП-700МК е Datecs PM (НЕ ISL) — `datecs.pm` driver връща `PM (v2.11.4)` + fiscalized status. `datecs.isl`/`datecs.islx` връщат SYN+NAK (грешен framing).
+- ФП-700МК е Datecs PM (НЕ ICP) — `datecs.pm` driver връща `PM (v2.11.4)` + fiscalized status. `datecs.icp`/`datecs.icpx` връщат SYN+NAK (грешен framing).
 
 ## [0.13.6] — 2026-05-24
 ### Added

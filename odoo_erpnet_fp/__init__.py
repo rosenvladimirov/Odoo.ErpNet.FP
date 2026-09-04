@@ -10,7 +10,7 @@ Layout:
 
     odoo_erpnet_fp/
       ├── drivers/
-      │   ├── fiscal/      ← касови апарати (Datecs PM/ISL, Daisy, Tremol, ...)
+      │   ├── fiscal/      ← касови апарати (Datecs PM/ICP, Daisy, Tremol, ...)
       │   ├── pinpad/      ← payment terminals (DatecsPay BluePad, ...)
       │   ├── scales/      ← кантари
       │   └── readers/     ← баркод scanners, RFID

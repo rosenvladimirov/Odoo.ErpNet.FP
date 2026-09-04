@@ -94,7 +94,7 @@ auto_detect: false
 #
 # Supported drivers:
 #   datecs.pm   — Datecs FP-700 MX and other PM v2.11.4 (NEW MX series)
-#   datecs.isl  — Datecs ISL family (full coverage):
+#   datecs.icp  — Datecs ICP family (full coverage):
 #                   P/C : DP-25, DP-05, WP-50, DP-35
 #                   X   : FP-700X, WP-500X, DP-150X, FMP-350X, FMP-55X
 #                   FP  : FP-800, FP-2000, FP-650
@@ -112,9 +112,9 @@ printers:
     till_number: 1
     nsale_prefix: DT  # 2-letter prefix for Unique Sale Numbers (UNS)
 
-  # Datecs DP-150X (X-series ISL) over serial:
+  # Datecs DP-150X (X-series ICP) over serial:
   # - id: dp150
-  #   driver: datecs.isl
+  #   driver: datecs.icp
   #   transport: serial
   #   port: /dev/ttyUSB1
   #   baudrate: 115200
@@ -123,7 +123,7 @@ printers:
 
   # TCP printer over local network or VPN:
   # - id: fp2
-  #   driver: datecs.pm        # or datecs.isl for older Datecs over TCP
+  #   driver: datecs.pm        # or datecs.icp for older Datecs over TCP
   #   transport: tcp
   #   tcp_host: 192.168.1.77
   #   tcp_port: 9100

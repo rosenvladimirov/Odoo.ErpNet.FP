@@ -21,8 +21,8 @@ High-level usage:
     pm.close()
 
 Compatible devices: Datecs FP-700 MX and other PM-protocol fiscal devices
-(new MX series; the older ISL series — DP-25, FP-700X, FP-2000, etc. — is
-covered by `drivers/fiscal/datecs_isl/` once that port lands).
+(new MX series; the older ICP series — DP-25, FP-700X, FP-2000, etc. — is
+covered by `drivers/fiscal/datecs_icp/` once that port lands).
 """
 
 from . import codec, commands, errors, frame, status

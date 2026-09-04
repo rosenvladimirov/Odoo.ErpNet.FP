@@ -1,19 +1,18 @@
 """
-Sanity tests for ISL vendor variants — each subclass uses its own
+Sanity tests for ICP vendor variants — each subclass uses its own
 tax-group and payment-type letter mappings.
 """
 
 import pytest
 
-from odoo_erpnet_fp.drivers.fiscal.datecs_isl import (
-    DaisyIslDevice,
-    DatecsIslDevice,
-    DatecsIslXDevice,
-    EltradeIslDevice,
-    IncotexIslDevice,
-    TremolIslDevice,
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp import (
+    DaisyIcpDevice,
+    DatecsIcpDevice,
+    DatecsIcpXDevice,
+    EltradeIcpDevice,
+    IncotexIcpDevice,
 )
-from odoo_erpnet_fp.drivers.fiscal.datecs_isl.protocol import (
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp.protocol import (
     PaymentType,
     TaxGroup,
 )
@@ -32,19 +31,18 @@ def _make(cls):
     "cls,tg,expected",
     [
         # Datecs / Daisy / Tremol — Cyrillic
-        (DatecsIslDevice, TaxGroup.G1, "А"),
-        (DatecsIslDevice, TaxGroup.G2, "Б"),
-        (DatecsIslDevice, TaxGroup.G8, "З"),
-        (DaisyIslDevice, TaxGroup.G1, "А"),
-        (DaisyIslDevice, TaxGroup.G3, "В"),
-        (TremolIslDevice, TaxGroup.G1, "А"),
+        (DatecsIcpDevice, TaxGroup.G1, "А"),
+        (DatecsIcpDevice, TaxGroup.G2, "Б"),
+        (DatecsIcpDevice, TaxGroup.G8, "З"),
+        (DaisyIcpDevice, TaxGroup.G1, "А"),
+        (DaisyIcpDevice, TaxGroup.G3, "В"),
         # Eltrade — Latin A..H
-        (EltradeIslDevice, TaxGroup.G1, "A"),
-        (EltradeIslDevice, TaxGroup.G2, "B"),
-        (EltradeIslDevice, TaxGroup.G8, "H"),
+        (EltradeIcpDevice, TaxGroup.G1, "A"),
+        (EltradeIcpDevice, TaxGroup.G2, "B"),
+        (EltradeIcpDevice, TaxGroup.G8, "H"),
         # Incotex — only A..D
-        (IncotexIslDevice, TaxGroup.G1, "A"),
-        (IncotexIslDevice, TaxGroup.G4, "D"),
+        (IncotexIcpDevice, TaxGroup.G1, "A"),
+        (IncotexIcpDevice, TaxGroup.G4, "D"),
     ],
 )
 def test_tax_group_letter_per_vendor(cls, tg, expected):
@@ -53,7 +51,7 @@ def test_tax_group_letter_per_vendor(cls, tg, expected):
 
 
 def test_incotex_rejects_high_groups():
-    dev = _make(IncotexIslDevice)
+    dev = _make(IncotexIcpDevice)
     with pytest.raises(ValueError):
         dev.tax_group_letter(TaxGroup.G5)
     with pytest.raises(ValueError):
@@ -76,17 +74,16 @@ def test_incotex_rejects_high_groups():
         # за този фърмуер е ГРЕШЕН. Очакването е изравнено с уреда, а не
         # уредът с очакването: „C" би отпечатала картово плащане като
         # брой, тоест бонът би твърдял нещо невярно.
-        (DatecsIslDevice, PaymentType.CASH, "P"),    # В БРОЙ
-        (DatecsIslDevice, PaymentType.CARD, "N"),    # КРЕДИТ
-        (DatecsIslDevice, PaymentType.CHECK, "L"),   # КУПОН — няма ЧЕК слот
-        (DaisyIslDevice, PaymentType.CASH, "P"),
-        (TremolIslDevice, PaymentType.CARD, "C"),
-        (IncotexIslDevice, PaymentType.CASH, "P"),
+        (DatecsIcpDevice, PaymentType.CASH, "P"),    # В БРОЙ
+        (DatecsIcpDevice, PaymentType.CARD, "N"),    # КРЕДИТ
+        (DatecsIcpDevice, PaymentType.CHECK, "L"),   # КУПОН — няма ЧЕК слот
+        (DaisyIcpDevice, PaymentType.CASH, "P"),
+        (IncotexIcpDevice, PaymentType.CASH, "P"),
         # Eltrade has different letters for card/check
-        (EltradeIslDevice, PaymentType.CASH, "P"),
-        (EltradeIslDevice, PaymentType.CHECK, "N"),
-        (EltradeIslDevice, PaymentType.CARD, "L"),
-        (EltradeIslDevice, PaymentType.RESERVED1, "Q"),
+        (EltradeIcpDevice, PaymentType.CASH, "P"),
+        (EltradeIcpDevice, PaymentType.CHECK, "N"),
+        (EltradeIcpDevice, PaymentType.CARD, "L"),
+        (EltradeIcpDevice, PaymentType.RESERVED1, "Q"),
     ],
 )
 def test_payment_letter_per_vendor(cls, pt, expected):
@@ -100,12 +97,14 @@ def test_payment_letter_per_vendor(cls, pt, expected):
 @pytest.mark.parametrize(
     "cls,prefix",
     [
-        (DatecsIslDevice, "bg.dt.isl"),
-        (DatecsIslXDevice, "bg.dt.islx"),
-        (DaisyIslDevice, "bg.dy.isl"),
-        (EltradeIslDevice, "bg.el.isl"),
-        (IncotexIslDevice, "bg.is.icp"),
-        (TremolIslDevice, "bg.tr.isl"),
+        # Вендорският код е префиксът на серийния номер, не съкращение
+        # на името: DT Datecs · DY Daisy · ED Eltrade · IN Incotex ·
+        # IS ICP Bulgaria · ZK Tremol. Виж бележката в vendors.py.
+        (DatecsIcpDevice, "bg.dt.c.icp"),
+        (DatecsIcpXDevice, "bg.dt.x.icp"),
+        (DaisyIcpDevice, "bg.dy.icp"),
+        (EltradeIcpDevice, "bg.ed.icp"),
+        (IncotexIcpDevice, "bg.in.icp"),
     ],
 )
 def test_uri_prefix(cls, prefix):
@@ -135,8 +134,8 @@ class _FakeTransport:
         return b""
 
 
-def _capture_isl_request(monkeypatch):
-    """Patch IslDevice._isl_request so test sees the (cmd, data) it
+def _capture_icp_request(monkeypatch):
+    """Patch IcpDevice._icp_request so test sees the (cmd, data) it
     would have sent. Returns the captured list."""
     captured = []
 
@@ -144,15 +143,15 @@ def _capture_isl_request(monkeypatch):
         captured.append((command, data))
         return ("", None, b"")
 
-    from odoo_erpnet_fp.drivers.fiscal.datecs_isl import protocol as _proto
-    monkeypatch.setattr(_proto.IslDevice, "_isl_request", fake)
+    from odoo_erpnet_fp.drivers.fiscal.datecs_icp import protocol as _proto
+    monkeypatch.setattr(_proto.IcpDevice, "_icp_request", fake)
     return captured
 
 
 def test_datecs_c_variant_open_receipt_uses_comma(monkeypatch):
     """C variant header: `op,pw,UNS,1` — comma-separated, 4 fields."""
-    captured = _capture_isl_request(monkeypatch)
-    dev = DatecsIslDevice(_FakeTransport())
+    captured = _capture_icp_request(monkeypatch)
+    dev = DatecsIcpDevice(_FakeTransport())
     dev.open_receipt("DT123456-1234-1234567")
     cmd, data = captured[-1]
     assert cmd == 0x30  # CMD_OPEN_FISCAL_RECEIPT
@@ -162,8 +161,8 @@ def test_datecs_c_variant_open_receipt_uses_comma(monkeypatch):
 
 def test_datecs_x_variant_open_receipt_uses_tab(monkeypatch):
     """X variant header: `op\\tpw\\tUNS\\t1\\t\\t\\t` — TAB, 6 fields."""
-    captured = _capture_isl_request(monkeypatch)
-    dev = DatecsIslXDevice(_FakeTransport())
+    captured = _capture_icp_request(monkeypatch)
+    dev = DatecsIcpXDevice(_FakeTransport())
     dev.open_receipt("DT123456-1234-1234567")
     cmd, data = captured[-1]
     assert cmd == 0x30
@@ -173,8 +172,8 @@ def test_datecs_x_variant_open_receipt_uses_tab(monkeypatch):
 
 def test_datecs_x_variant_default_admin_password():
     """X variant defaults admin_password to '0000' (vs '9999' for C)."""
-    c = DatecsIslDevice(_FakeTransport())
-    x = DatecsIslXDevice(_FakeTransport())
+    c = DatecsIcpDevice(_FakeTransport())
+    x = DatecsIcpXDevice(_FakeTransport())
     assert c.admin_password == "9999"
     assert x.admin_password == "0000"
 
@@ -182,7 +181,7 @@ def test_datecs_x_variant_default_admin_password():
 def test_datecs_x_inherits_tax_and_payment_letters():
     """X вариантът наследява кирилските данъчни букви и C-мапинга.
 
-    🚨 Тестът заковава ТЕКУЩОТО поведение, не желаното. `DatecsIslXDevice`
+    🚨 Тестът заковава ТЕКУЩОТО поведение, не желаното. `DatecsIcpXDevice`
     наследява `_PAYMENT_LETTERS` от C-варианта, а те са измерени на
     DP-150 fw 3.00 — устройство с ТРИ активни слота. Самият клас пише за
     себе си „NOT YET VERIFIED on real hardware".
@@ -192,7 +191,7 @@ def test_datecs_x_inherits_tax_and_payment_letters():
     серията е по-нова), това е погрешен етикет върху фискален бон и иска
     измерване на реален уред, преди да се пипа.
     """
-    dev = DatecsIslXDevice(_FakeTransport())
+    dev = DatecsIcpXDevice(_FakeTransport())
     assert dev.tax_group_letter(TaxGroup.G1) == "А"
     assert dev.tax_group_letter(TaxGroup.G2) == "Б"
     assert dev.payment_type_letter(PaymentType.CASH) == "P"
@@ -201,8 +200,8 @@ def test_datecs_x_inherits_tax_and_payment_letters():
 
 def test_datecs_x_invoice_header_uses_tab(monkeypatch):
     """Invoice mode (flag '2') also TAB-separated on X variant."""
-    captured = _capture_isl_request(monkeypatch)
-    dev = DatecsIslXDevice(_FakeTransport())
+    captured = _capture_icp_request(monkeypatch)
+    dev = DatecsIcpXDevice(_FakeTransport())
     dev.open_invoice_receipt(
         unique_sale_number="DT123456-1234-1234567",
         recipient_name="ACME OOD",

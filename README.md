@@ -35,7 +35,7 @@ Same HTTP protocol as the original C# ErpNet.FP — existing Odoo
 
 | Class | Production drivers |
 |---|---|
-| **Fiscal printers** | Datecs PM (FP-700MX, BC-50MX), Datecs ISL (DP-25 / DP-150 / DP-150X / FP-700X / FP-2000 / FP-800 / FMP-350X / FMP-55X) |
+| **Fiscal printers** | Datecs PM (FP-700MX, BC-50MX), Datecs ICP (DP-25 / DP-150 / DP-150X / FP-700X / FP-2000 / FP-800 / FMP-350X / FMP-55X) |
 | **Customer displays** | Datecs DPD-201; ESC/POS-compatible (ICD CD-5220, Birch DSP-V9, Bematech PDX-3000) |
 | **Scales** | CAS PR-II/PD-II, Elicom EVL CASH47, Datecs CAS-compat (≈75 % of BG retail), Toledo 8217, generic ASCII, OHAUS Ranger/Valor over TCP (Ethernet kit 30037447) |
 | **Barcode readers** | USB HID + serial CDC + BLE — via [`hid2serial`](https://github.com/rosenvladimirov/hid2serial) sister daemon |

@@ -65,7 +65,7 @@ Canonical roadmap: **`ROADMAP.md`** → section "Access-control add-on
 9140a44 [ADD] access: Polimex iCON WebSDK driver + dashboard 🚪 Access tab
 9be05cb [ADD] access-control actuators — barrier/relay/turnstile (Phase B)
 81ccc87 [ADD] camera-stream driver family + ONVIF ANPR/control (Phase A)
-efd829d [ADD] DatecsIslXDevice … (0.5.5)  ← pre-add-on baseline
+efd829d [ADD] DatecsIcpXDevice … (0.5.5)  ← pre-add-on baseline
 ```
 pyproject `version` bumped 0.5.5 → **0.6.0**. All pushed to origin.
 

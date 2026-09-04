@@ -328,7 +328,7 @@ class PmDevice:
 
     def detect(self) -> dict:
         """Aggregate `read_device_info` + `read_tax_number` into a single
-        dict shaped like the ISL `IslDeviceInfo` cache used by
+        dict shaped like the ICP `IcpDeviceInfo` cache used by
         `printers.py:_device_info`. Tolerant — partial reads survive.
         """
         info: dict = {

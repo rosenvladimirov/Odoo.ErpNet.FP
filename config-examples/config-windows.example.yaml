@@ -29,7 +29,7 @@ printers:
   # Datecs DP-150 / FP-700 / FP-2000 over USB-CDC (Windows COM port).
   # Find the COM number in Device Manager → Ports (COM & LPT).
   # - id: dp150
-  #   driver: datecs.isl
+  #   driver: datecs.icp
   #   transport: serial
   #   port: COM3
   #   baudrate: 115200
@@ -44,7 +44,7 @@ printers:
 
   # TCP-attached printer (Eltrade etc.).
   # - id: eltrade
-  #   driver: datecs.isl
+  #   driver: datecs.icp
   #   transport: tcp
   #   tcp_host: 192.168.1.50
   #   tcp_port: 9100

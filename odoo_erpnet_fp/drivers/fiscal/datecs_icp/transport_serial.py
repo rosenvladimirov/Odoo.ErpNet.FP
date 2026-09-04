@@ -95,7 +95,7 @@ class SerialTransport(Transport):
                         timeout: float) -> bytes:
         """Read bytes until `terminator` is seen or `max_bytes` reached.
         Returns AS SOON AS terminator arrives — the key property the
-        ISL protocol layer needs to avoid eating the full 5s timeout
+        ICP protocol layer needs to avoid eating the full 5s timeout
         on every device round-trip.
         """
         ser = self._require()

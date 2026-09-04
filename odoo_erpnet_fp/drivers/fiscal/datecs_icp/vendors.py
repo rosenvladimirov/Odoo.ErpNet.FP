@@ -1,7 +1,7 @@
 """
-Vendor variants of the ISL driver.
+Vendor variants of the ICP driver.
 
-All BG fiscal-printer vendors that use the ISL framing layer share the
+All BG fiscal-printer vendors that use the ICP framing layer share the
 same protocol envelope (PRE/PST/BCC, command opcodes, status bytes) but
 differ in:
 
@@ -17,14 +17,68 @@ Within Datecs there are also two protocol-encoding variants:
   * **X variant** (DP-150X, FP-700X, FMP-350X) — `op\tpw\tUNS\t1\t\t\t` —
     TAB-separated, 6 fields, admin password default "0000"
 
-This module supplies one subclass of `IslDevice` per vendor:
+This module supplies one subclass of `IcpDevice` per vendor:
 
-  DatecsIslDevice    — Cyrillic А..З + P/C/N/D (C variant — DP-150 etc.)
-  DatecsIslXDevice   — same vendor, X variant encoding (DP-150X / FP-700X)
-  DaisyIslDevice     — same as Datecs (Cyrillic + P/C/N/D)
-  EltradeIslDevice   — Latin A..H + 11 payment letters
-  IncotexIslDevice   — Latin A..D only (4 VAT slots) + P/C/N/D
-  TremolIslDevice    — Cyrillic + P/C/N/D (Tremol legacy ISL)
+  DatecsIcpDevice    — Cyrillic А..З + P/C/N/D (C variant — DP-150 etc.)
+  DatecsIcpXDevice   — same vendor, X variant encoding (DP-150X / FP-700X)
+  DaisyIcpDevice     — same as Datecs (Cyrillic + P/C/N/D)
+  EltradeIcpDevice   — Latin A..H + 11 payment letters
+  IncotexIcpDevice   — Latin A..D only (4 VAT slots) + P/C/N/D
+
+⛔ Tremol НЯМА клас тук. Оригиналът също няма драйвер от това
+семейство за Tremol — техният протокол е ZFP (`bg.zk.zfp`,
+BgTremolZfpFiscalPrinterDriver). Заварената `TremolIslDevice` беше
+изобретена и е премахната.
+
+──────────────────────────────────────────────────────────────────────
+Защо семейството се казва ICP, а не ISL
+──────────────────────────────────────────────────────────────────────
+
+Дотук се казваше **ISL**. Това е ИМЕ НА ФИРМА: „ISL Integrated Systems
+Laboratory", София (www.isl.bg), която прави свои фискални принтери
+(ISL5011S-KL). Оригиналният ErpNet.FP (erp.bg), който този порт
+замества, беше лепнал името на един производител върху протокола на
+друг. Преименувано с решение на Росен, 04.09.2026.
+
+🔍 Какво показа проверката на първоизточниците:
+
+  * Нито един вендорски протоколен документ — Datecs P/C/PM, Daisy,
+    Eltrade — не съдържа „ISL", „ICP" или „ICL". Нула срещания.
+    Datecs кръщава своя документ просто „Programmer's Manual".
+  * Единственият документ с „ISL" е на самата фирма ISL:
+    `bg.icp.is.protocol-v.10.4.pdf`.
+  * Протокол „ICL" не съществува — това е разчитане на ICP.
+
+⚠️ **Цената на решението, записана нарочно.** В оригинала ICP беше
+името на протокола на ISL, който е ДРУГА рамка от нашата:
+
+      това семейство  преамбюл 0x01 · PST 0x05 · SEP 0x04 · TERM 0x03 · sequence
+      ICP на ISL      STX 0x02 · ETX 0x03 · ACK/NACK/WAIT · без sequence
+      ZFP на Tremol   STX 0x02 · ACK 0x06 · NAK 0x15 · sequence до 0x9F
+
+⇒ След преименуването `bg.dt.c.icp` и `bg.is.icp` носят едно име за две
+различни рамки. Разделя ги ВЕНДОРСКИЯТ код, не протоколният. Ако някой
+ден се пише драйвер за ISL5011S-KL, той НЕ бива да наследява този клас —
+рамката е друга (в оригинала: `BgIcpFiscalPrinter`, не
+`BgIslFiscalPrinter`).
+
+Схемата на URI-то е `bg.<вендор>[.<вариант>].<протокол>`, където
+**вендорът е префиксът на СЕРИЙНИЯ НОМЕР**:
+
+    DT/DA → Datecs · DY → Daisy · ED → Eltrade · IN → Incotex
+    IS    → ISL    · ZK → Tremol
+
+  bg.dt.c.icp   Datecs, C вариант      BgDatecsCIslFiscalPrinterDriver
+  bg.dt.p.icp   Datecs, P вариант      BgDatecsPIslFiscalPrinterDriver
+  bg.dt.x.icp   Datecs, X вариант      BgDatecsXIslFiscalPrinterDriver
+  bg.dy.icp     Daisy                  BgDaisyIslFiscalPrinterDriver
+  bg.ed.icp     Eltrade                BgEltradeIslFiscalPrinterDriver
+  bg.in.icp     Incotex                BgIncotexIslFiscalPrinterDriver
+  bg.is.icp     ISL Bulgaria           BgIslIcpFiscalPrinterDriver
+  bg.zk.zfp     Tremol                 BgTremolZfpFiscalPrinterDriver
+
+⛔ `bg.is.*` е ЗАПАЗЕНО за ISL Bulgaria. Не го давай на друг вендор —
+точно това беше сгрешено при Incotex.
 """
 
 from __future__ import annotations
@@ -34,18 +88,18 @@ from typing import Optional
 from . import commands as cmd
 from .protocol import (
     DeviceStatus,
-    IslDevice,
+    IcpDevice,
     PaymentType,
     TaxGroup,
 )
 
 
-class DatecsIslDevice(IslDevice):
-    """Datecs ISL — DP-150 family (C variant, comma-separated headers).
+class DatecsIcpDevice(IcpDevice):
+    """Datecs ICP — DP-150 family (C variant, comma-separated headers).
 
     Verified on real Datecs DP-150 (DT737851, FW 3.00 22Jul25 1109).
 
-    Payment letters override: базовият `IslDevice` дава `CARD = "C"`, но
+    Payment letters override: базовият `IcpDevice` дава `CARD = "C"`, но
     реалният DP-150 (FW 3.00) отказва `\\tC` при close с E404 "Command not
     allowed in the current fiscal mode". Per upstream Odoo IoT box driver +
     Eltrade variant, картовото плащане е **`L`**. Едновременно добавяме
@@ -53,7 +107,9 @@ class DatecsIslDevice(IslDevice):
     NRA съответствие.
     """
 
-    URI_PREFIX = "bg.dt.isl"
+    # C вариантът в оригинала е bg.dt.c.icp — вариантът е СРЕДНАТА
+    # част, не суфикс на протокола (BgDatecsCIcpFiscalPrinterDriver).
+    URI_PREFIX = "bg.dt.c.icp"
 
     _PAYMENT_LETTERS = {
         # Empirically verified labels on real DP-150 (DT737851,
@@ -84,7 +140,7 @@ class DatecsIslDevice(IslDevice):
         #   fall back to cash anyway — explicit so admins see one
         #   source-of-truth instead of "magic" behaviour).
         #
-        # NOTE: this PaymentType is the ISL-local one in
+        # NOTE: this PaymentType is the ICP-local one in
         # `protocol.py` with only 4 UPPERCASE members (CASH, CARD,
         # CHECK, RESERVED1). The server-side schemas.PaymentType has
         # 11 lowercase members; the adapter
@@ -100,8 +156,8 @@ class DatecsIslDevice(IslDevice):
     }
 
 
-class DatecsIslXDevice(DatecsIslDevice):
-    """Datecs ISL — X variant (DP-150X, FP-700X, FMP-350X).
+class DatecsIcpXDevice(DatecsIcpDevice):
+    """Datecs ICP — X variant (DP-150X, FP-700X, FMP-350X).
 
     Differences from the C-variant base:
 
@@ -110,12 +166,14 @@ class DatecsIslXDevice(DatecsIslDevice):
     * Default admin password is "0000" (vs "9999" for C variant).
 
     NOT YET VERIFIED on real hardware — subclass scaffolding only.
-    `program_plu` (TAB-separated, 6 fields per ISL X spec) is left
+    `program_plu` (TAB-separated, 6 fields per ICP X spec) is left
     inherited from the C base; it must be overridden once real-device
     test confirms the exact field order. Mark as TODO at call site.
     """
 
-    URI_PREFIX = "bg.dt.islx"
+    # BgDatecsXIcpFiscalPrinterDriver → bg.dt.x.icp. „icpx" не е
+    # протокол — X е вариант на записа, ICP е семейството.
+    URI_PREFIX = "bg.dt.x.icp"
 
     def __init__(
         self,
@@ -148,7 +206,7 @@ class DatecsIslXDevice(DatecsIslDevice):
         op = operator_id or self.operator_id
         pw = operator_password or self.operator_password
         header = "\t".join([op, pw, unique_sale_number, "1", "", "", ""])
-        _t, status, _r = self._isl_request(
+        _t, status, _r = self._icp_request(
             cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
@@ -185,29 +243,31 @@ class DatecsIslXDevice(DatecsIslDevice):
             recipient_eik_type,
             recipient_vat[:13],
         ])
-        _t, status, _r = self._isl_request(
+        _t, status, _r = self._icp_request(
             cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
 
-class DaisyIslDevice(IslDevice):
-    """Daisy fiscal printers (ISL family).
+class DaisyIcpDevice(IcpDevice):
+    """Daisy fiscal printers (ICP family).
 
-    Tax group / payment letters identical to Datecs ISL.
+    Tax group / payment letters identical to Datecs ICP.
     """
 
-    URI_PREFIX = "bg.dy.isl"
-    # _TAX_LETTERS, _PAYMENT_LETTERS inherited from IslDevice (Datecs default)
+    URI_PREFIX = "bg.dy.icp"
+    # _TAX_LETTERS, _PAYMENT_LETTERS inherited from IcpDevice (Datecs default)
 
 
-class EltradeIslDevice(IslDevice):
+class EltradeIcpDevice(IcpDevice):
     """Eltrade fiscal printers.
 
     Latin A..H tax groups; rich 11-letter payment alphabet covering all
     ErpNet.FP payment types one-to-one.
     """
 
-    URI_PREFIX = "bg.el.isl"
+    # Серийните на Eltrade започват с ED, не EL
+    # (BgEltradeIcpFiscalPrinterDriver: SerialNumberPrefix = "ED").
+    URI_PREFIX = "bg.ed.icp"
 
     _TAX_LETTERS = {
         TaxGroup.G1: "A",
@@ -230,13 +290,16 @@ class EltradeIslDevice(IslDevice):
     }
 
 
-class IncotexIslDevice(IslDevice):
+class IncotexIcpDevice(IcpDevice):
     """Incotex fiscal printers.
 
     Only 4 VAT slots A..D — `tax_group_letter` raises for G5..G8.
     """
 
-    URI_PREFIX = "bg.is.icp"
+    # 🚨 Тук стоеше "bg.is.icp" — това е URI-то на ICP Bulgaria
+    # (вендор IS, протокол ICP), чужд производител. Incotex е IN и
+    # говори ICP: BgIncotexIcpFiscalPrinterDriver → bg.in.icp.
+    URI_PREFIX = "bg.in.icp"
 
     _TAX_LETTERS = {
         TaxGroup.G1: "A",
@@ -247,23 +310,10 @@ class IncotexIslDevice(IslDevice):
     # Payment letters identical to Datecs default
 
 
-class TremolIslDevice(IslDevice):
-    """Tremol fiscal printers running the ISL profile.
-
-    Note: Tremol also has a "master/slave" framing protocol on older
-    devices (TremolFiscalPrinterDriver in Odoo IoT box). That one is
-    NOT covered here — only the ISL variant.
-    """
-
-    URI_PREFIX = "bg.tr.isl"
-    # Inherits Datecs defaults (Cyrillic А..З + P/C/N/D)
-
-
 __all__ = [
-    "DatecsIslDevice",
-    "DatecsIslXDevice",
-    "DaisyIslDevice",
-    "EltradeIslDevice",
-    "IncotexIslDevice",
-    "TremolIslDevice",
+    "DatecsIcpDevice",
+    "DatecsIcpXDevice",
+    "DaisyIcpDevice",
+    "EltradeIcpDevice",
+    "IncotexIcpDevice",
 ]

@@ -44,12 +44,15 @@ loader is provided for compatibility only.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -211,6 +214,26 @@ class ServerConfig:
     cors_origin_regex: Optional[str] = None
 
 
+# Семейството `*.isl` се преименува на `*.icp` (04.09.2026 — виж
+# drivers/fiscal/datecs_icp/vendors.py защо). Заварените конфигурации по
+# обектите носят СТАРИТЕ имена и не бива да падат при обновяване, затова
+# те се приемат като псевдоними и се нормализират при зареждане.
+#
+# 🔲 Махат се след един-два релийза, когато config.yaml по обектите са
+# минали на новите имена. Дотогава логът казва кой файл още е стар.
+_LEGACY_DRIVER_ALIASES = {
+    "datecs.isl": "datecs.icp",
+    "datecs.islx": "datecs.icpx",
+    "daisy.isl": "daisy.icp",
+    "eltrade.isl": "eltrade.icp",
+    "incotex.isl": "incotex.icp",
+    # Tremol никога не е говорил това семейство; класът е премахнат.
+    # Оставяме го само за да гръмне с ЯСНО съобщение, а не с
+    # „Unsupported driver 'tremol.isl'".
+    "tremol.isl": "tremol.zfp",
+}
+
+
 @dataclass
 class PrinterConfig:
     """Single printer entry.
@@ -219,6 +242,10 @@ class PrinterConfig:
     "datecs.pm" → odoo_erpnet_fp.drivers.fiscal.datecs_pm.
     `transport` is one of `serial` / `tcp` / `agent` and selects the
     corresponding Transport implementation in that driver subpackage.
+
+    Старите имена `*.isl` се приемат и се превеждат тук — един избор на
+    място, за да не се налага всеки консуматор (регистър, адаптери,
+    маршрути) да ги познава поотделно.
     """
 
     id: str
@@ -233,6 +260,16 @@ class PrinterConfig:
     till_number: int = 1
     nsale_prefix: Optional[str] = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        modern = _LEGACY_DRIVER_ALIASES.get(self.driver)
+        if modern:
+            _logger.warning(
+                "Printer %s: driver %r is the old name — using %r. "
+                "Update config.yaml; the alias goes away in a later release.",
+                self.id, self.driver, modern,
+            )
+            self.driver = modern
 
 
 @dataclass
@@ -1439,26 +1476,49 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
 
 
 _URI_DRIVER_MAP = {
-    # Maps the `bg.<vendor>.<protocol>` part of an ErpNet.FP URI to our
-    # dotted driver path. Extend as more drivers are ported.
+    # Maps the `bg.<vendor>[.<variant>].<protocol>` part of an ErpNet.FP
+    # URI to our dotted driver path. Extend as more drivers are ported.
     # X-variant Datecs (DP-150X / FP-700X / FMP-350X) routes to
-    # `datecs.islx` so the X subclass picks up TAB-sep headers + pw=0000.
+    # `datecs.icpx` so the X subclass picks up TAB-sep headers + pw=0000.
+    #
+    # 🔑 Вендорът е префиксът на СЕРИЙНИЯ НОМЕР, не съкращение на името:
+    # DT/DA Datecs · DY Daisy · ED Eltrade · IN Incotex · IS ISL
+    # Bulgaria · ZK Tremol. Защо семейството се преименува от ISL на
+    # ICP — в drivers/fiscal/datecs_icp/vendors.py.
+    #
+    # 🚨 Ключът се търси ТОЧНО (`.get(driver_key, driver_key)`), а не по
+    # префикс: „bg.dy" никога не съвпада с истинско URI „bg.dy.icp.com",
+    # затова съкратените ключове тук бяха мъртви. Стойността също трябва
+    # да е име на РЕАЛЕН драйвер от `SUPPORTED_DRIVERS`, иначе конфигът
+    # се зарежда и гърми чак при отваряне на устройството.
     "bg.dt.pm": "datecs.pm",
-    "bg.dt.c.isl": "datecs.isl",
-    "bg.dt.p.isl": "datecs.isl",
-    "bg.dt.x.isl": "datecs.islx",
-    "bg.dt.fp.isl": "datecs.isl",
-    "bg.dy": "daisy",
-    "bg.tr.zfp": "tremol.zfp",
-    "bg.tr.icp": "tremol.icp",
-    "bg.el": "eltrade",
-    "bg.is.icp": "incotex",
+    "bg.dt.c.icp": "datecs.icp",
+    "bg.dt.p.icp": "datecs.icp",
+    "bg.dt.x.icp": "datecs.icpx",
+    "bg.dt.fp.icp": "datecs.icp",
+    "bg.dy.icp": "daisy.icp",
+    "bg.ed.icp": "eltrade.icp",
+    "bg.in.icp": "incotex.icp",
+    # Tremol говори ZFP — оригиналът няма драйвер от това семейство
+    # за него.
+    "bg.zk.zfp": "tremol.zfp",
+    # 🚨 bg.is.* е на ISL Bulgaria (ISL5011S-KL) — ДРУГА рамка
+    # (STX/ETX, без sequence), не този клас. Тук стояха „bg.tr.icp" →
+    # tremol.icp и „bg.is.icp" → incotex; и двете я лепваха на чужд
+    # производител.
+    "bg.is.icp": "isl.icp",
 }
+
+# Имена, обявени в картата, но чиито класове още не са в дървото.
+# Ключът стои, за да се ЧЕТЕ конфигурация, писана за оригиналния
+# ErpNet.FP; отварянето на устройството ще гръмне ясно с „Unknown
+# driver" вместо конфигът да се разпадне при зареждане.
+_PLANNED_DRIVERS = frozenset({"tremol.zfp", "isl.icp"})
 
 
 def _parse_erpnet_uri(uri: str) -> tuple[str, str, str]:
-    """ErpNet.FP URIs look like `bg.dt.c.isl.com://COM5` or
-    `bg.dt.p.isl.tcp://192.168.1.77:9100`. Returns (driver, transport, addr).
+    """ErpNet.FP URIs look like `bg.dt.c.icp.com://COM5` or
+    `bg.dt.p.icp.tcp://192.168.1.77:9100`. Returns (driver, transport, addr).
     """
     if "://" not in uri:
         raise ValueError(f"Invalid ErpNet.FP URI: {uri!r}")

@@ -1,5 +1,5 @@
 """
-Datecs ISL frame layer + status parser tests.
+Datecs ICP frame layer + status parser tests.
 
 The reference frames here come from manual decoding of the IoT box
 driver's `_build_detection_message` / `_validate_checksum` helpers, so
@@ -8,9 +8,9 @@ porting parity is verifiable.
 
 import pytest
 
-from odoo_erpnet_fp.drivers.fiscal.datecs_isl import frame as fr
-from odoo_erpnet_fp.drivers.fiscal.datecs_isl import commands as cmd
-from odoo_erpnet_fp.drivers.fiscal.datecs_isl.status import parse_status_bytes
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp import frame as fr
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp import commands as cmd
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp.status import parse_status_bytes
 
 
 # ─── Encode / structure ──────────────────────────────────────────

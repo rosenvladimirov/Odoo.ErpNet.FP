@@ -1,7 +1,7 @@
 """
-ISL status byte decoder.
+ICP status byte decoder.
 
-Per Datecs ISL spec the response carries 6 status bytes (8 on FMP/FP v2).
+Per Datecs ICP spec the response carries 6 status bytes (8 on FMP/FP v2).
 Each bit signals a specific condition (paper, fiscal memory, syntax error,
 etc.). This module converts the raw bytes into a list of ErpNet.FP-style
 `StatusMessage`s ready to be returned by the HTTP layer.
@@ -53,7 +53,7 @@ class DeviceStatus:
 
 
 def parse_status_bytes(status_bytes: bytes) -> DeviceStatus:
-    """Decode 6 (or 8) status bytes per Datecs ISL spec."""
+    """Decode 6 (or 8) status bytes per Datecs ICP spec."""
     status = DeviceStatus()
     if not status_bytes or len(status_bytes) < 6:
         return status

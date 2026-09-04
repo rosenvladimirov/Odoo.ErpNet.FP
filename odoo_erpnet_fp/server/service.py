@@ -4,11 +4,11 @@ PrinterRegistry — multi-driver registry with per-printer asyncio.Lock.
 A single device can only be talked to by one writer at a time, so each
 registry entry has its own lock. The HTTP layer always acquires through
 `with_driver(printer_id)` which yields the appropriate driver instance
-(PmDevice or IslDevice) under the lock.
+(PmDevice or IcpDevice) under the lock.
 
 Drivers supported:
   datecs.pm     — Datecs FP-700 MX and other PM v2.11.4 devices
-  datecs.isl    — Datecs ISL family:
+  datecs.icp    — Datecs ICP family:
                     P/C  (DP-25, DP-05, WP-50, DP-35)
                     X    (FP-700X, WP-500X, DP-150X, FMP-350X)
                     FP   (FP-800, FP-2000, FP-650)
@@ -23,13 +23,13 @@ import os
 import time
 from pathlib import Path
 
-# Persistent on-disk cache за IslDeviceInfo (FW/serial/FM/TIN).
+# Persistent on-disk cache за IcpDeviceInfo (FW/serial/FM/TIN).
 # Без него — restart на proxy → info=празно докато device-ът не
 # отговори (което не може ако paper-out / cable disconnected).
 # С cache → последно successful detect остава видим.
-_ISL_INFO_CACHE_FILE = Path(os.environ.get(
+_ICP_INFO_CACHE_FILE = Path(os.environ.get(
     "ODOO_ERPNET_FP_INFO_CACHE",
-    "/app/data/.isl_info_cache.json"))
+    "/app/data/.icp_info_cache.json"))
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
@@ -98,43 +98,41 @@ from .camera_bus import CameraEventBus
 from .gps_bus import GpsEventBus
 from ..drivers.gps.common import GpsTracker
 from ..drivers.gps.wialon import WialonTracker
-from ..drivers.fiscal.datecs_isl import (
-    DaisyIslDevice,
-    DatecsIslDevice,
-    DatecsIslXDevice,
-    EltradeIslDevice,
-    IncotexIslDevice,
-    IslDevice,
-    TremolIslDevice,
+from ..drivers.fiscal.datecs_icp import (
+    DaisyIcpDevice,
+    DatecsIcpDevice,
+    DatecsIcpXDevice,
+    EltradeIcpDevice,
+    IncotexIcpDevice,
+    IcpDevice,
 )
-from ..drivers.fiscal.datecs_isl.transport_serial import (
-    SerialTransport as IslSerialTransport,
+from ..drivers.fiscal.datecs_icp.transport_serial import (
+    SerialTransport as IcpSerialTransport,
 )
-from ..drivers.fiscal.datecs_isl.transport_tcp import (
-    TcpTransport as IslTcpTransport,
+from ..drivers.fiscal.datecs_icp.transport_tcp import (
+    TcpTransport as IcpTcpTransport,
 )
 from ..drivers.fiscal.datecs_pm import PmDevice
 from ..drivers.fiscal.datecs_pm.transport_serial import SerialTransport
 from ..drivers.fiscal.datecs_pm.transport_tcp import TcpTransport
 from .schemas import DeviceInfo
 
-# Map driver name → IslDevice subclass.
-# `datecs.isl`  = C variant (DP-150 base, comma-sep, admin pw "9999")
-# `datecs.islx` = X variant (DP-150X / FP-700X / FMP-350X, TAB-sep, pw "0000")
-_ISL_DRIVERS: dict[str, type[IslDevice]] = {
-    "datecs.isl": DatecsIslDevice,
-    "datecs.islx": DatecsIslXDevice,
-    "daisy.isl": DaisyIslDevice,
-    "eltrade.isl": EltradeIslDevice,
-    "incotex.isl": IncotexIslDevice,
-    "tremol.isl": TremolIslDevice,
+# Map driver name → IcpDevice subclass.
+# `datecs.icp`  = C variant (DP-150 base, comma-sep, admin pw "9999")
+# `datecs.icpx` = X variant (DP-150X / FP-700X / FMP-350X, TAB-sep, pw "0000")
+_ICP_DRIVERS: dict[str, type[IcpDevice]] = {
+    "datecs.icp": DatecsIcpDevice,
+    "datecs.icpx": DatecsIcpXDevice,
+    "daisy.icp": DaisyIcpDevice,
+    "eltrade.icp": EltradeIcpDevice,
+    "incotex.icp": IncotexIcpDevice,
 }
 
 _logger = logging.getLogger(__name__)
 
 
 # Anything we can hand to the routes layer
-DriverInstance = Union[PmDevice, IslDevice]
+DriverInstance = Union[PmDevice, IcpDevice]
 
 
 @dataclass
@@ -144,7 +142,7 @@ class PrinterEntry:
     info: Optional[DeviceInfo] = None  # cached on first probe
 
 
-SUPPORTED_DRIVERS = {"datecs.pm"} | set(_ISL_DRIVERS.keys())
+SUPPORTED_DRIVERS = {"datecs.pm"} | set(_ICP_DRIVERS.keys())
 
 
 class PrinterRegistry:
@@ -154,7 +152,7 @@ class PrinterRegistry:
     @classmethod
     def from_config(cls, config: AppConfig) -> "PrinterRegistry":
         registry = cls()
-        cached_info = registry._load_isl_info_cache()
+        cached_info = registry._load_icp_info_cache()
         for cfg in config.printers:
             if cfg.id in registry.printers:
                 raise ValueError(f"Duplicate printer id: {cfg.id!r}")
@@ -164,11 +162,11 @@ class PrinterRegistry:
                     f"known: {', '.join(sorted(SUPPORTED_DRIVERS))}"
                 )
             entry = PrinterEntry(config=cfg)
-            # Restore cached IslDeviceInfo if we have it from a
+            # Restore cached IcpDeviceInfo if we have it from a
             # previous run (paper-out / cable-disconnected → still
             # show the last-known FW/serial/FM/TIN in the UI).
             if cfg.id in cached_info:
-                entry._isl_info_cache = cached_info[cfg.id]
+                entry._icp_info_cache = cached_info[cfg.id]
             registry.printers[cfg.id] = entry
             _logger.info(
                 "Registered printer %r — driver=%s transport=%s addr=%s%s",
@@ -180,44 +178,44 @@ class PrinterRegistry:
             )
         return registry
 
-    # ─── Persistent ISL info cache ─────────────────────────────
+    # ─── Persistent ICP info cache ─────────────────────────────
     @staticmethod
-    def _load_isl_info_cache():
-        """Read cached IslDeviceInfo dict from disk, if file exists.
-        Returns dict[printer_id → IslDeviceInfo]. Empty on first run
+    def _load_icp_info_cache():
+        """Read cached IcpDeviceInfo dict from disk, if file exists.
+        Returns dict[printer_id → IcpDeviceInfo]. Empty on first run
         or unreadable file (corrupted, permission, etc.).
         """
         try:
-            from ..drivers.fiscal.datecs_isl.protocol import IslDeviceInfo
-            if not _ISL_INFO_CACHE_FILE.exists():
+            from ..drivers.fiscal.datecs_icp.protocol import IcpDeviceInfo
+            if not _ICP_INFO_CACHE_FILE.exists():
                 return {}
-            raw = json.loads(_ISL_INFO_CACHE_FILE.read_text())
+            raw = json.loads(_ICP_INFO_CACHE_FILE.read_text())
             out = {}
             for pid, d in (raw or {}).items():
                 try:
-                    out[pid] = IslDeviceInfo(**d)
+                    out[pid] = IcpDeviceInfo(**d)
                 except Exception:
                     pass
-            _logger.info("Loaded ISL info cache for %d printer(s) from %s",
-                         len(out), _ISL_INFO_CACHE_FILE)
+            _logger.info("Loaded ICP info cache for %d printer(s) from %s",
+                         len(out), _ICP_INFO_CACHE_FILE)
             return out
         except Exception as exc:
-            _logger.warning("ISL info cache load failed: %s", exc)
+            _logger.warning("ICP info cache load failed: %s", exc)
             return {}
 
-    def persist_isl_info_cache(self):
-        """Write current cached IslDeviceInfo entries back to disk."""
+    def persist_icp_info_cache(self):
+        """Write current cached IcpDeviceInfo entries back to disk."""
         try:
             from dataclasses import asdict
             payload = {}
             for pid, entry in self.printers.items():
-                info = getattr(entry, "_isl_info_cache", None)
+                info = getattr(entry, "_icp_info_cache", None)
                 if info is not None:
                     payload[pid] = asdict(info)
-            _ISL_INFO_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _ISL_INFO_CACHE_FILE.write_text(json.dumps(payload, indent=2))
+            _ICP_INFO_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _ICP_INFO_CACHE_FILE.write_text(json.dumps(payload, indent=2))
         except Exception as exc:
-            _logger.warning("ISL info cache persist failed: %s", exc)
+            _logger.warning("ICP info cache persist failed: %s", exc)
 
     # ─── Driver factories ─────────────────────────────────────
 
@@ -239,18 +237,18 @@ class PrinterRegistry:
             till_number=cfg.till_number,
         )
 
-    def _make_isl(self, cfg: PrinterConfig) -> IslDevice:
+    def _make_icp(self, cfg: PrinterConfig) -> IcpDevice:
         if cfg.transport == "serial":
             if not cfg.port:
                 raise ValueError(f"Serial printer {cfg.id} has no port")
-            transport = IslSerialTransport(port=cfg.port, baudrate=cfg.baudrate)
+            transport = IcpSerialTransport(port=cfg.port, baudrate=cfg.baudrate)
         elif cfg.transport == "tcp":
             if not cfg.tcp_host or not cfg.tcp_port:
                 raise ValueError(f"TCP printer {cfg.id} needs tcp_host + tcp_port")
-            transport = IslTcpTransport(host=cfg.tcp_host, port=cfg.tcp_port)
+            transport = IcpTcpTransport(host=cfg.tcp_host, port=cfg.tcp_port)
         else:
-            raise NotImplementedError(f"Transport {cfg.transport!r} not supported for ISL")
-        device_cls = _ISL_DRIVERS.get(cfg.driver, DatecsIslDevice)
+            raise NotImplementedError(f"Transport {cfg.transport!r} not supported for ICP")
+        device_cls = _ICP_DRIVERS.get(cfg.driver, DatecsIcpDevice)
         return device_cls(
             transport=transport,
             operator_id=cfg.operator,
@@ -261,8 +259,8 @@ class PrinterRegistry:
         entry = self.get(printer_id)
         if entry.config.driver == "datecs.pm":
             return self._make_pm(entry.config)
-        if entry.config.driver in _ISL_DRIVERS:
-            return self._make_isl(entry.config)
+        if entry.config.driver in _ICP_DRIVERS:
+            return self._make_icp(entry.config)
         raise ValueError(f"Unknown driver: {entry.config.driver!r}")
 
     # ─── Public access ────────────────────────────────────────
@@ -276,12 +274,12 @@ class PrinterRegistry:
         return printer_id in self.printers
 
     def driver_kind(self, printer_id: str) -> str:
-        """Return the configured driver string ('datecs.pm' / 'datecs.isl' / ...)."""
+        """Return the configured driver string ('datecs.pm' / 'datecs.icp' / ...)."""
         return self.get(printer_id).config.driver
 
-    def is_isl(self, printer_id: str) -> bool:
-        """True if the printer uses any ISL-family driver."""
-        return self.driver_kind(printer_id) in _ISL_DRIVERS
+    def is_icp(self, printer_id: str) -> bool:
+        """True if the printer uses any ICP-family driver."""
+        return self.driver_kind(printer_id) in _ICP_DRIVERS
 
     def is_pm(self, printer_id: str) -> bool:
         return self.driver_kind(printer_id) == "datecs.pm"
@@ -290,8 +288,8 @@ class PrinterRegistry:
     async def with_driver(self, printer_id: str):
         """Serialised, opened driver context for a printer.
 
-        Yields PmDevice or IslDevice depending on configured driver,
-        always inside the entry's asyncio.Lock. For ISL drivers, lazy-
+        Yields PmDevice or IcpDevice depending on configured driver,
+        always inside the entry's asyncio.Lock. For ICP drivers, lazy-
         runs `detect()` on the entry's first use so `driver.info`
         (firmware, model, capability flags) is populated for every
         subsequent caller.
@@ -301,14 +299,14 @@ class PrinterRegistry:
             driver = self.make_driver(printer_id)
             driver.open()
             try:
-                # Restore previously cached IslDeviceInfo if we have it.
+                # Restore previously cached IcpDeviceInfo if we have it.
                 # We do NOT auto-run detect() here — that would fire 2+
-                # ISL commands that take up to 5s × retries on an
+                # ICP commands that take up to 5s × retries on an
                 # unresponsive device, dragging /status checks to 30+s
                 # and freezing the calling browser. Routes that genuinely
                 # need capability info (e.g. invoice) call ensure_detect()
                 # explicitly with their own timeout budget.
-                cached = getattr(entry, "_isl_info_cache", None)
+                cached = getattr(entry, "_icp_info_cache", None)
                 if cached is not None and hasattr(driver, "info"):
                     driver.info = cached
                 yield driver

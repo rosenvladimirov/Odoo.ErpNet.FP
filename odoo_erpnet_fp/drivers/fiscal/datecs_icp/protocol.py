@@ -1,5 +1,5 @@
 """
-High-level Datecs ISL fiscal-printer driver.
+High-level Datecs ICP fiscal-printer driver.
 
 Wraps the bare frame layer (`frame.py`) with a stateful command-level
 API: open/close fiscal receipt, add item, add payment, X/Z reports,
@@ -27,7 +27,7 @@ from .transport import Transport, TransportError, TransportTimeout
 _logger = logging.getLogger(__name__)
 
 
-# ─── Public enums (mirror IslFiscalPrinterBase) ──────────────────
+# ─── Public enums (mirror IcpFiscalPrinterBase) ──────────────────
 
 
 class TaxGroup(str, Enum):
@@ -65,7 +65,7 @@ class ReversalReason(str, Enum):
 
 
 @dataclass
-class IslDeviceInfo:
+class IcpDeviceInfo:
     """Static device info populated after `detect()`."""
 
     manufacturer: str = ""
@@ -73,7 +73,7 @@ class IslDeviceInfo:
     firmware_version: str = ""
     serial_number: str = ""
     fiscal_memory_serial_number: str = ""
-    protocol: str = ""  # 'datecs.p.isl' / 'datecs.x.isl' / 'datecs.fp.isl' / 'datecs.fmp.isl'
+    protocol: str = ""  # 'datecs.p.icp' / 'datecs.x.icp' / 'datecs.fp.icp' / 'datecs.fmp.icp'
     item_text_max_length: int = 34
     comment_text_max_length: int = 46
     operator_password_max_length: int = 8
@@ -81,7 +81,7 @@ class IslDeviceInfo:
 
     @property
     def supports_native_invoice(self) -> bool:
-        """Datecs ISL invoice support landed in the BG Naredba H-18
+        """Datecs ICP invoice support landed in the BG Naredba H-18
         firmware family (FW 3.00+, 2024+). Older firmware can still
         produce a 'looks-like-an-invoice' fiscal receipt by injecting
         free-text comments before the sale lines (CMD 0x36).
@@ -111,10 +111,10 @@ class IslDeviceInfo:
         }
 
 
-# ─── Tax group / payment type mapping (Datecs ISL default) ──────
+# ─── Tax group / payment type mapping (Datecs ICP default) ──────
 #
-# Datecs ISL uses Cyrillic А..З for VAT slots and P/C/N/D for payments.
-# Other vendors override these via class attributes on `IslDevice`
+# Datecs ICP uses Cyrillic А..З for VAT slots and P/C/N/D for payments.
+# Other vendors override these via class attributes on `IcpDevice`
 # subclasses — see `vendors.py`.
 
 
@@ -128,51 +128,51 @@ _REVERSAL_CODES = {
 # ─── Auto-detection (4 sub-protocol parsers) ─────────────────────
 
 
-def _parse_pc_info(data_bytes: bytes) -> Optional[IslDeviceInfo]:
+def _parse_pc_info(data_bytes: bytes) -> Optional[IcpDeviceInfo]:
     """Datecs P/C: 6 comma-separated fields (DP-25/DP-05/WP-50/DP-35)."""
     text = data_bytes.decode("cp1251", errors="ignore")
     fields = text.split(",")
     if len(fields) < 6:
         return None
-    return IslDeviceInfo(
+    return IcpDeviceInfo(
         manufacturer="Datecs",
         model=fields[0].strip(),
         firmware_version=fields[1].strip(),
         serial_number=fields[4].strip(),
         fiscal_memory_serial_number=fields[5].strip(),
-        protocol="datecs.p.isl",
+        protocol="datecs.p.icp",
     )
 
 
-def _parse_x_info(data_bytes: bytes) -> Optional[IslDeviceInfo]:
+def _parse_x_info(data_bytes: bytes) -> Optional[IcpDeviceInfo]:
     """Datecs X: 8 TAB-separated fields (FP-700X / WP-500X / **DP-150X**)."""
     text = data_bytes.decode("cp1251", errors="ignore")
     fields = text.split("\t")
     if len(fields) < 8:
         return None
-    return IslDeviceInfo(
+    return IcpDeviceInfo(
         manufacturer="Datecs",
         model=fields[0].strip(),
         firmware_version=f"{fields[1].strip()} {fields[2].strip()} {fields[3].strip()}".strip(),
         serial_number=fields[6].strip(),
         fiscal_memory_serial_number=fields[7].strip(),
-        protocol="datecs.x.isl",
+        protocol="datecs.x.icp",
     )
 
 
-def _parse_fp_info(data_bytes: bytes) -> Optional[IslDeviceInfo]:
+def _parse_fp_info(data_bytes: bytes) -> Optional[IcpDeviceInfo]:
     """Datecs FP: comma-separated, 3+ fields (FP-800/FP-2000/FP-650)."""
     text = data_bytes.decode("cp1251", errors="ignore")
     fields = text.split(",")
     if len(fields) < 3:
         return None
-    return IslDeviceInfo(
+    return IcpDeviceInfo(
         manufacturer="Datecs",
         model=fields[0].strip(),
         firmware_version=fields[1].strip(),
         serial_number=fields[2].strip() if len(fields) > 2 else "",
         fiscal_memory_serial_number=fields[-1].strip() if fields else "",
-        protocol="datecs.fp.isl",
+        protocol="datecs.fp.icp",
         comment_text_max_length=70,
         item_text_max_length=72,
     )
@@ -197,15 +197,15 @@ DEFAULT_BAUDRATES = [115200, 57600, 38400, 19200, 9600]
 # ─── Driver ──────────────────────────────────────────────────────
 
 
-class IslDevice:
-    """High-level ISL fiscal-printer driver.
+class IcpDevice:
+    """High-level ICP fiscal-printer driver.
 
-    Default mappings target Datecs ISL (Cyrillic А..З + P/C/N/D). Other
+    Default mappings target Datecs ICP (Cyrillic А..З + P/C/N/D). Other
     vendors override `_TAX_LETTERS` / `_PAYMENT_LETTERS` via subclasses
     in `vendors.py`.
 
-    `transport.open()` is called by `IslDevice.open()`. Commands are
-    sent via `_isl_request(cmd, data)` which handles SEQ increment,
+    `transport.open()` is called by `IcpDevice.open()`. Commands are
+    sent via `_icp_request(cmd, data)` which handles SEQ increment,
     BCC, and NAK/SYN retries.
     """
 
@@ -237,7 +237,7 @@ class IslDevice:
     ) -> None:
         self._t = transport
         self._seq = 0
-        self.info = IslDeviceInfo()
+        self.info = IcpDeviceInfo()
         self.operator_id = operator_id
         self.operator_password = operator_password
         self.admin_id = admin_id
@@ -262,7 +262,7 @@ class IslDevice:
     def close(self) -> None:
         self._t.close()
 
-    def __enter__(self) -> "IslDevice":
+    def __enter__(self) -> "IcpDevice":
         self.open()
         return self
 
@@ -276,10 +276,10 @@ class IslDevice:
         self._seq = 0 if self._seq >= fr.MAX_SEQUENCE_NUMBER else self._seq + 1
         return seq
 
-    def _isl_request(
+    def _icp_request(
         self, command: int, data: str = "", timeout: float = 5.0
     ) -> Tuple[str, DeviceStatus, bytes]:
-        """Send one ISL command, return (response_text, status, raw_status_bytes).
+        """Send one ICP command, return (response_text, status, raw_status_bytes).
 
         Retries on NAK; waits through SYN (slave still working).
         """
@@ -287,7 +287,7 @@ class IslDevice:
         seq = self._next_seq()
         request = fr.encode_request(seq, command, encoded)
         _logger.debug(
-            "ISL >>> cmd=0x%02X seq=%d data=%r raw=%s",
+            "ICP >>> cmd=0x%02X seq=%d data=%r raw=%s",
             command, seq, data, request.hex(" "),
         )
 
@@ -308,7 +308,7 @@ class IslDevice:
             status = parse_status_bytes(status_bytes)
             log_fn = _logger.warning if status.errors else _logger.debug
             log_fn(
-                "ISL <<< cmd=0x%02X seq=%d data=%r status_bytes=%s errors=%s",
+                "ICP <<< cmd=0x%02X seq=%d data=%r status_bytes=%s errors=%s",
                 command, seq, text, status_bytes.hex(" "),
                 [(e.code, e.text) for e in status.errors],
             )
@@ -374,21 +374,21 @@ class IslDevice:
 
     # ─── auto-detection ──────────────────────────────────────
 
-    def detect(self, baudrates: Optional[List[int]] = None) -> Optional[IslDeviceInfo]:
-        """Probe for a Datecs ISL device on the open transport.
+    def detect(self, baudrates: Optional[List[int]] = None) -> Optional[IcpDeviceInfo]:
+        """Probe for a Datecs ICP device on the open transport.
 
         Note: baudrate probing is the transport's responsibility. This
         method only sends `CMD_GET_STATUS` followed by `CMD_GET_DEVICE_INFO`
         and parses the result. Caller can swap transports if multi-baudrate
         scanning is needed.
         """
-        # 1. STATUS — confirms we have an ISL responder
-        text, status, _raw = self._isl_request(cmd.CMD_GET_STATUS, "")
+        # 1. STATUS — confirms we have an ICP responder
+        text, status, _raw = self._icp_request(cmd.CMD_GET_STATUS, "")
         if not status.ok or status.errors:
             _logger.debug("Detection: STATUS errors: %s", status.errors)
 
         # 2. DEVICE INFO with param "1"
-        text, status, _raw = self._isl_request(cmd.CMD_GET_DEVICE_INFO, "1")
+        text, status, _raw = self._icp_request(cmd.CMD_GET_DEVICE_INFO, "1")
         if not text:
             _logger.debug("Detection: empty device info")
             return None
@@ -411,15 +411,15 @@ class IslDevice:
     # ─── high-level commands ────────────────────────────────
 
     def get_status(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_GET_STATUS, "")
+        _t, status, _r = self._icp_request(cmd.CMD_GET_STATUS, "")
         return status
 
     def get_tax_identification_number(self) -> Tuple[str, DeviceStatus]:
-        text, status, _r = self._isl_request(cmd.CMD_GET_TAX_ID_NUMBER)
+        text, status, _r = self._icp_request(cmd.CMD_GET_TAX_ID_NUMBER)
         return text.strip(), status
 
     def get_date_time(self) -> Tuple[Optional[datetime], DeviceStatus]:
-        text, status, _r = self._isl_request(cmd.CMD_GET_DATE_TIME)
+        text, status, _r = self._icp_request(cmd.CMD_GET_DATE_TIME)
         if not status.ok:
             return None, status
         for fmt in ("%d-%m-%y %H:%M:%S", "%d.%m.%y %H:%M:%S", "%d-%m-%Y %H:%M:%S"):
@@ -432,7 +432,7 @@ class IslDevice:
 
     def set_date_time(self, dt: datetime) -> DeviceStatus:
         payload = dt.strftime("%d-%m-%y %H:%M:%S")
-        _t, status, _r = self._isl_request(cmd.CMD_SET_DATE_TIME, payload)
+        _t, status, _r = self._icp_request(cmd.CMD_SET_DATE_TIME, payload)
         return status
 
     # ─── fiscal receipt lifecycle ────────────────────────────
@@ -445,16 +445,16 @@ class IslDevice:
     ) -> DeviceStatus:
         op = operator_id or self.operator_id
         pw = operator_password or self.operator_password
-        # OpenReceipt header format differs across Datecs ISL variants:
+        # OpenReceipt header format differs across Datecs ICP variants:
         #   - C variant (DP-150 base, FW 3.00 BG): `op,pw,UNS,1` —
         #     COMMA-separated, 4 fields, password default "1"
         #   - X variant (DP-150X, FP-700X, FMP-350X): `op\tpw\tUNS\t1\t\t\t` —
         #     TAB-separated, 6 fields, password default "0000"
         # Default to C-style here (matches the original ErpNet.FP
-        # BgDatecsCIslFiscalPrinter); subclasses (vendors.py) override
+        # BgDatecsCIcpFiscalPrinter); subclasses (vendors.py) override
         # for X-style devices.
         header = ",".join([op, pw, unique_sale_number, "1"])
-        _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
+        _t, status, _r = self._icp_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
     def open_invoice_receipt(
@@ -493,7 +493,7 @@ class IslDevice:
             recipient_eik_type,
             recipient_vat[:13],
         ])
-        _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
+        _t, status, _r = self._icp_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
     def open_reversal_receipt(
@@ -515,12 +515,12 @@ class IslDevice:
             f"R{reason_code},{receipt_number},{dt_str}\t"
             f"{fm_serial}"
         )
-        _t, status, _r = self._isl_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
+        _t, status, _r = self._icp_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
         return status
 
     def add_comment(self, text: str) -> DeviceStatus:
         text = text[: self.info.comment_text_max_length or 40]
-        _t, status, _r = self._isl_request(cmd.CMD_FISCAL_RECEIPT_COMMENT, text)
+        _t, status, _r = self._icp_request(cmd.CMD_FISCAL_RECEIPT_COMMENT, text)
         return status
 
     def add_item(
@@ -564,53 +564,53 @@ class IslDevice:
                 value = -value
             payload += f"{sep}{value:.2f}"
 
-        _t, status, _r = self._isl_request(cmd.CMD_FISCAL_RECEIPT_SALE, payload)
+        _t, status, _r = self._icp_request(cmd.CMD_FISCAL_RECEIPT_SALE, payload)
         return status
 
     def add_payment(self, amount: Decimal | float, payment_type: PaymentType) -> DeviceStatus:
         amount = Decimal(str(amount))
         payload = f"\t{self.payment_type_letter(payment_type)}{amount:.2f}"
-        _t, status, _r = self._isl_request(cmd.CMD_FISCAL_RECEIPT_TOTAL, payload)
+        _t, status, _r = self._icp_request(cmd.CMD_FISCAL_RECEIPT_TOTAL, payload)
         return status
 
     def full_payment(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_FISCAL_RECEIPT_TOTAL, "\t")
+        _t, status, _r = self._icp_request(cmd.CMD_FISCAL_RECEIPT_TOTAL, "\t")
         return status
 
     def subtotal(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_SUBTOTAL, "")
+        _t, status, _r = self._icp_request(cmd.CMD_SUBTOTAL, "")
         return status
 
     def close_receipt(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_CLOSE_FISCAL_RECEIPT)
+        _t, status, _r = self._icp_request(cmd.CMD_CLOSE_FISCAL_RECEIPT)
         return status
 
     def abort_receipt(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_ABORT_FISCAL_RECEIPT)
+        _t, status, _r = self._icp_request(cmd.CMD_ABORT_FISCAL_RECEIPT)
         return status
 
     # ─── reports / cash ─────────────────────────────────────
 
     def print_x_report(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_PRINT_DAILY_REPORT, "2", timeout=120.0)
+        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "2", timeout=120.0)
         return status
 
     def print_z_report(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_PRINT_DAILY_REPORT, "", timeout=120.0)
+        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "", timeout=120.0)
         return status
 
     def print_duplicate(self) -> DeviceStatus:
-        _t, status, _r = self._isl_request(cmd.CMD_PRINT_LAST_RECEIPT_DUPLICATE, "1")
+        _t, status, _r = self._icp_request(cmd.CMD_PRINT_LAST_RECEIPT_DUPLICATE, "1")
         return status
 
     def cash_in(self, amount: Decimal | float) -> DeviceStatus:
         amount = Decimal(str(amount))
-        _t, status, _r = self._isl_request(cmd.CMD_MONEY_TRANSFER, f"{amount:.2f}")
+        _t, status, _r = self._icp_request(cmd.CMD_MONEY_TRANSFER, f"{amount:.2f}")
         return status
 
     def cash_out(self, amount: Decimal | float) -> DeviceStatus:
         amount = Decimal(str(amount))
-        _t, status, _r = self._isl_request(cmd.CMD_MONEY_TRANSFER, f"-{amount:.2f}")
+        _t, status, _r = self._icp_request(cmd.CMD_MONEY_TRANSFER, f"-{amount:.2f}")
         return status
 
     def program_plu(
@@ -676,5 +676,5 @@ class IslDevice:
             str(int(measurement_unit)),
             "",                       # foreign-currency price
         ])
-        _t, status, _r = self._isl_request(cmd.CMD_PROGRAM_PLU, payload)
+        _t, status, _r = self._icp_request(cmd.CMD_PROGRAM_PLU, payload)
         return status

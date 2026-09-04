@@ -1,5 +1,5 @@
 """
-Datecs ISL frame envelope encode/decode.
+Datecs ICP frame envelope encode/decode.
 
 Wire format::
 
@@ -65,7 +65,7 @@ def _bcc_bytes(payload: bytes) -> bytes:
 
 
 def encode_request(seq: int, cmd: int, data: bytes = b"") -> bytes:
-    """Build a host→device ISL frame.
+    """Build a host→device ICP frame.
 
     `seq` must be in [0, MAX_SEQUENCE_NUMBER]; the caller manages
     increment + wrap.
@@ -108,7 +108,7 @@ def validate_checksum(raw: bytes) -> bool:
 
 
 def parse_response(raw: bytes) -> tuple[bytes, bytes]:
-    """Split a wrapped ISL response into (DATA, STATUS).
+    """Split a wrapped ICP response into (DATA, STATUS).
 
     Returns the raw DATA (CP-1251 bytes — caller decodes) and the raw
     status payload (6 or 8 bytes depending on firmware).

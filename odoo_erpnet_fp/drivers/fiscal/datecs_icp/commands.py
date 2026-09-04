@@ -1,8 +1,8 @@
 """
-Datecs ISL command opcodes.
+Datecs ICP command opcodes.
 
 All `CMD_*` constants are 1-byte values (0x00..0xFF). The frame layer
-encodes them as a single byte after `<SEQ>` in the ISL frame.
+encodes them as a single byte after `<SEQ>` in the ICP frame.
 """
 
 # ─── Display / paper ─────────────────────────────────────────────

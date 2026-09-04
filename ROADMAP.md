@@ -13,7 +13,7 @@ After 18 versions and 12 months of compounding work, the proxy is
 
 | Capability | Status |
 |---|:-:|
-| Datecs PM + ISL fiscal drivers (FP-700MX, BC-50MX, DP-150, DP-150X, FP-700X, FMP-350X, ...) | ✅ |
+| Datecs PM + ICP fiscal drivers (FP-700MX, BC-50MX, DP-150, DP-150X, FP-700X, FMP-350X, ...) | ✅ |
 | 6-slot payment mapping empirically verified on real hardware | ✅ |
 | PLU programming, X/Z reports, VAT programming | ✅ |
 | Customer displays, scales, barcode readers (HID/BLE), pinpads | ✅ |
@@ -205,7 +205,7 @@ A compressed log of what landed already.
 | **0.15.0** | 2026-05-26 | Proxy-side offline ZEN access decisions (Phase 3) — `access_decision` package, GraphStore, `/access/evaluate`, graph sync |
 | **0.13.6** | 2026-05-25 | BlueCash shift_close + shift_signal contracts; bilingual README |
 | 0.13.0 | 2026-05-22 | BluePad-55 BLE bridge (NDA-safe GATT↔PTY) |
-| 0.12.0 | 2026-05-18 | DP-150 ISL payment-letter mapping verified empirically |
+| 0.12.0 | 2026-05-18 | DP-150 ICP payment-letter mapping verified empirically |
 | 0.11.0 | 2026-05-17 | Camera + access-control add-on (Phases A+B): Polimex iCON / Hikvision / Dahua actuators |
 | 0.10.0 | 2026-05-15 | MQTT generic bridge route group |
 | 0.9.0  | 2026-05-13 | Multi-device proxy (multiple printers per config) |
@@ -217,7 +217,7 @@ A compressed log of what landed already.
 | 0.3.0  | 2026-05-07 | Fleet remote management (HMAC heartbeat + pairing + Fernet admin token) |
 | 0.2.5  | 2026-05-06 | Prometheus `/metrics` + Grafana stack + iframe embed in Odoo |
 | 0.2.0  | 2026-05-06 | HID barcode scanner via `hid2serial` sister daemon (Linux .deb + Windows installer) |
-| 0.1.0  | 2026-04-x  | Initial fork — Datecs PM/ISL drivers + customer displays + scales + Datecs Pay pinpad |
+| 0.1.0  | 2026-04-x  | Initial fork — Datecs PM/ICP drivers + customer displays + scales + Datecs Pay pinpad |
 
 ## Schedule (revised 2026-05-25)
 

@@ -104,8 +104,8 @@ _DATECS_PM_BY_FAMILY: dict[str, dict[PaymentType, int]] = {
 }
 
 
-_DATECS_ISL_DEFAULT: dict[PaymentType, int] = {
-    # ISL drivers use letter codes (P=cash, C=card, N=check, D=reserved1).
+_DATECS_ICP_DEFAULT: dict[PaymentType, int] = {
+    # ICP drivers use letter codes (P=cash, C=card, N=check, D=reserved1).
     # The integer here is informational — only `supported_for` reads it.
     PaymentType.cash: 0,
     PaymentType.card: 1,
@@ -130,16 +130,15 @@ _ELTRADE_DEFAULT: dict[PaymentType, int] = {
 }
 
 
-# Top-level dispatch — driver string → either a flat map (ISL, Eltrade)
+# Top-level dispatch — driver string → either a flat map (ICP, Eltrade)
 # or a family-keyed dict (Datecs PM). `_resolve_map` picks the right
 # leaf based on driver + optional `model_name`.
 _VENDOR_OVERRIDES: dict[str, object] = {
     "datecs.pm": _DATECS_PM_BY_FAMILY,   # nested by family
-    "datecs.isl": _DATECS_ISL_DEFAULT,
-    "daisy.isl": _DATECS_ISL_DEFAULT,
-    "tremol.isl": _DATECS_ISL_DEFAULT,
-    "incotex.isl": _DATECS_ISL_DEFAULT,
-    "eltrade.isl": _ELTRADE_DEFAULT,
+    "datecs.icp": _DATECS_ICP_DEFAULT,
+    "daisy.icp": _DATECS_ICP_DEFAULT,
+    "incotex.icp": _DATECS_ICP_DEFAULT,
+    "eltrade.icp": _ELTRADE_DEFAULT,
 }
 
 
@@ -151,7 +150,7 @@ def _resolve_map(driver: str,
         # Family-keyed (datecs.pm). Pick by model.
         family = detect_family(model_name)
         return table.get(family) or table.get("FP_700") or _DATECS_PM_DEFAULT
-    return table   # flat map (ISL, Eltrade)
+    return table   # flat map (ICP, Eltrade)
 
 
 def to_code(payment_type: PaymentType, driver: str = "datecs.pm",

@@ -70,7 +70,7 @@ services:
       - /run/pcscd:/run/pcscd
       - ./config:/app/config:ro
       - ./certs:/app/certs:ro
-      # Writable cache (persistent ISL device-info between restarts).
+      # Writable cache (persistent ICP device-info between restarts).
       - ./data:/app/data:rw
       # Traefik dynamic config — RW so the fleet-driven CORS writer can
       # rewrite accessControlAllowOriginList in place. Traefik's file

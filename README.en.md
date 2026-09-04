@@ -31,7 +31,7 @@ The Bulgarian fiscal-device market is fragmented: every major
 vendor (Datecs, Daisy, Tremol, Eltrade, Incotex) ships its own protocol
 dialect, its own utility, and its own Windows-only driver. The original
 **[ErpNet.FP](https://github.com/erpnetbg/ErpNet.FP)** C# project gave
-the market a uniform HTTP front-end across most ISL-family devices —
+the market a uniform HTTP front-end across most ICP-family devices —
 but the PM-family (Datecs FP-700MX, BC-50MX) was never covered there,
 non-fiscal peripherals were out of scope, and Linux deployment was
 clumsy.
@@ -62,12 +62,11 @@ clumsy.
 | Family | Devices | Driver | Notes |
 |---|---|---|---|
 | **Datecs PM** | FP-700MX, BC-50MX | `datecs_pm/pm_v2_11_4.py` | PLU-only mode supported; 6-slot payment table verified |
-| **Datecs ISL — C variant** | DP-25, DP-150 | `datecs_isl/vendors.py:DatecsIslDevice` | Empirically verified payment-letter map on fw 3.00 |
-| **Datecs ISL — X variant** | DP-150X, FP-700X, FMP-350X, FP-2000, FP-800, FMP-55X | `datecs_isl/vendors.py:DatecsIslXDevice` | Header is TAB-separated 6 fields; password `0000` |
-| **Daisy** | (ISL-family) | `DaisyIslDevice` | Same letters as Datecs ISL |
-| **Eltrade** | (ISL-family) | `EltradeIslDevice` | 8 VAT letters A–H + 11-letter payment alphabet |
-| **Incotex** | (ISL-family) | `IncotexIslDevice` | Only 4 VAT slots (A–D); rejects E–H |
-| **Tremol** | ISL profile only | `TremolIslDevice` | Master/slave framing on legacy devices NOT covered |
+| **Datecs ICP — C variant** | DP-25, DP-150 | `datecs_icp/vendors.py:DatecsIcpDevice` | Empirically verified payment-letter map on fw 3.00 |
+| **Datecs ICP — X variant** | DP-150X, FP-700X, FMP-350X, FP-2000, FP-800, FMP-55X | `datecs_icp/vendors.py:DatecsIcpXDevice` | Header is TAB-separated 6 fields; password `0000` |
+| **Daisy** | (ICP-family) | `DaisyIcpDevice` | Same letters as Datecs ICP |
+| **Eltrade** | (ICP-family) | `EltradeIcpDevice` | 8 VAT letters A–H + 11-letter payment alphabet |
+| **Incotex** | (ICP-family) | `IncotexIcpDevice` | Only 4 VAT slots (A–D); rejects E–H |
 
 ### Non-fiscal POS peripherals
 
@@ -175,7 +174,7 @@ A systemd unit lives at `packaging/systemd/odoo-erpnet-fp.service`.
 ### Windows
 
 A pre-built installer is in `build/win-server/`. The Windows binary
-ships with the same FastAPI server, Datecs PM/ISL drivers, and a
+ships with the same FastAPI server, Datecs PM/ICP drivers, and a
 USBSerial-friendly udev replacement.
 
 ## Configuration
@@ -205,7 +204,7 @@ server:
 
 printers:
   - id: dp150
-    driver: datecs.isl
+    driver: datecs.icp
     transport: serial
     device: /dev/ttyACM0
     baudrate: 115200
@@ -515,7 +514,7 @@ odoo_erpnet_fp/
     odoo_forwarder.py     — HMAC-signed POST helper
   drivers/                — device-class drivers
     fiscal/datecs_pm/     — PM v2.11.4 protocol
-    fiscal/datecs_isl/    — ISL family (Datecs + Daisy + Eltrade etc.)
+    fiscal/datecs_icp/    — ICP family (Datecs + Daisy + Eltrade etc.)
     scales/               — CAS, Toledo, generic, OHAUS, etc.
     displays/             — Datecs, ESC/POS
     pinpad/               — Datecs Pay (NDA shims)
@@ -564,7 +563,7 @@ repo will gracefully no-op if the `.so` is missing.
 
 - Original [ErpNet.FP](https://github.com/erpnetbg/ErpNet.FP) project
   by ERP.NET — for the HTTP protocol design.
-- Odoo IoT Box drivers — for the ISL-family base implementations
-  that this project's `datecs_isl/` package ports to Python.
+- Odoo IoT Box drivers — for the ICP-family base implementations
+  that this project's `datecs_icp/` package ports to Python.
 - The Bulgarian fiscal-printer manufacturers (Datecs, Daisy, Tremol,
   Eltrade, Incotex) — for tolerating my reverse-engineering.

@@ -32,7 +32,7 @@
 протоколен диалект, своя утилита и своя Windows-only драйвер.
 Оригиналният **[ErpNet.FP](https://github.com/erpnetbg/ErpNet.FP)**
 проект на C# даде на пазара унифициран HTTP front-end за повечето
-устройства от ISL семейството — но PM-семейството (Datecs FP-700MX,
+устройства от ICP семейството — но PM-семейството (Datecs FP-700MX,
 BC-50MX) така и не беше покрито там, периферията извън фискалното не
 влизаше в обхвата, а Linux deployment-ът беше тромав.
 
@@ -63,12 +63,11 @@ BC-50MX) така и не беше покрито там, периферията
 | Семейство | Устройства | Driver | Бележки |
 |---|---|---|---|
 | **Datecs PM** | FP-700MX, BC-50MX | `datecs_pm/pm_v2_11_4.py` | PLU-only режим поддържан; 6-слот таблица за плащания верифицирана |
-| **Datecs ISL — C variant** | DP-25, DP-150 | `datecs_isl/vendors.py:DatecsIslDevice` | Емпирично проверена payment-letter карта на fw 3.00 |
-| **Datecs ISL — X variant** | DP-150X, FP-700X, FMP-350X, FP-2000, FP-800, FMP-55X | `datecs_isl/vendors.py:DatecsIslXDevice` | Header е TAB-separated 6 полета; парола `0000` |
-| **Daisy** | (ISL-семейство) | `DaisyIslDevice` | Същите букви като Datecs ISL |
-| **Eltrade** | (ISL-семейство) | `EltradeIslDevice` | 8 ДДС букви A–H + 11-буквена payment азбука |
-| **Incotex** | (ISL-семейство) | `IncotexIslDevice` | Само 4 ДДС слота (A–D); отхвърля E–H |
-| **Tremol** | само ISL profile | `TremolIslDevice` | Master/slave framing на legacy устройствата НЕ е покрит |
+| **Datecs ICP — C variant** | DP-25, DP-150 | `datecs_icp/vendors.py:DatecsIcpDevice` | Емпирично проверена payment-letter карта на fw 3.00 |
+| **Datecs ICP — X variant** | DP-150X, FP-700X, FMP-350X, FP-2000, FP-800, FMP-55X | `datecs_icp/vendors.py:DatecsIcpXDevice` | Header е TAB-separated 6 полета; парола `0000` |
+| **Daisy** | (ICP-семейство) | `DaisyIcpDevice` | Същите букви като Datecs ICP |
+| **Eltrade** | (ICP-семейство) | `EltradeIcpDevice` | 8 ДДС букви A–H + 11-буквена payment азбука |
+| **Incotex** | (ICP-семейство) | `IncotexIcpDevice` | Само 4 ДДС слота (A–D); отхвърля E–H |
 
 ### POS периферия извън фискалното
 
@@ -176,7 +175,7 @@ odoo-erpnet-fp --config /etc/odoo-erpnet-fp/config.yaml
 ### Windows
 
 Предварително-компилиран installer е в `build/win-server/`.
-Windows бинарникът съдържа същия FastAPI сървър, Datecs PM/ISL
+Windows бинарникът съдържа същия FastAPI сървър, Datecs PM/ICP
 драйвери и USBSerial-friendly udev заместител.
 
 ## Конфигурация
@@ -207,7 +206,7 @@ server:
 
 printers:
   - id: dp150
-    driver: datecs.isl
+    driver: datecs.icp
     transport: serial
     device: /dev/ttyACM0
     baudrate: 115200
@@ -521,7 +520,7 @@ odoo_erpnet_fp/
     odoo_forwarder.py     — HMAC-signed POST helper
   drivers/                — драйвери на клас устройства
     fiscal/datecs_pm/     — PM v2.11.4 протокол
-    fiscal/datecs_isl/    — ISL семейство (Datecs + Daisy + Eltrade и др.)
+    fiscal/datecs_icp/    — ICP семейство (Datecs + Daisy + Eltrade и др.)
     scales/               — CAS, Toledo, generic, OHAUS и т.н.
     displays/             — Datecs, ESC/POS
     pinpad/               — Datecs Pay (NDA shim-ове)
@@ -571,8 +570,8 @@ no-op-ват gracefully ако `.so`-то липсва.
 
 - Оригиналният [ErpNet.FP](https://github.com/erpnetbg/ErpNet.FP)
   проект на ERP.NET — за HTTP протоколния дизайн.
-- Odoo IoT Box драйверите — за ISL-семейство имплементациите,
-  които `datecs_isl/` пакетът на този проект пренася към Python.
+- Odoo IoT Box драйверите — за ICP-семейство имплементациите,
+  които `datecs_icp/` пакетът на този проект пренася към Python.
 - Българските производители на фискални устройства (Datecs,
   Daisy, Tremol, Eltrade, Incotex) — за това, че толерират
   моите reverse-engineering усилия.

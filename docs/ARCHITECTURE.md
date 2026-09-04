@@ -194,7 +194,7 @@ Phase 7-8 = compliance closing.
 ## Какво НЕ е в scope
 
 - Други Datecs модели от X-серията (DP-25X, FMP-350X и т.н.) — те
-  имат различен протокол (ISL), този модул е само PM
+  имат различен протокол (ICP), този модул е само PM
 - Други vendor-и (Tremol, Daisy, Eltrade) — отделни sibling addons
 - Generic POS hardware периферия — Odoo IoT base покрива тези
 - WebSerial/WebUSB direct browser driver — POS винаги минава през
