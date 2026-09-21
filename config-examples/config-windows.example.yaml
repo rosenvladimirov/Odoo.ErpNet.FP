@@ -19,10 +19,13 @@ server:
     enabled: false
     # certfile: "C:\\ProgramData\\Odoo.ErpNet.FP\\certs\\server.crt"
     # keyfile:  "C:\\ProgramData\\Odoo.ErpNet.FP\\certs\\server.key"
-  cors:
-    allow_origins:
-      - "http://localhost"
-      - "https://localhost"
+  # CORS + Private Network Access — needed when the POS in the browser
+  # (Odoo on HTTPS, e.g. odoo.sh) calls this proxy directly. Exact origins
+  # and/or a regex; leave both unset to keep CORS off.
+  # (The old `cors: allow_origins` block was never read by the loader.)
+  # cors_origins:
+  #   - "https://example.odoo.com"
+  # cors_origin_regex: '^https://example(-[a-z0-9-]+)?\.(dev\.)?odoo\.com$'
 
 # ─── Fiscal printers — one entry per device ───────────────────────
 printers:

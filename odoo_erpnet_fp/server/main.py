@@ -346,9 +346,10 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     # промяна за класическия фискален deploy.
     _srv = config.server
     if _srv.cors_origins or _srv.cors_origin_regex:
+        import inspect
+
         from starlette.middleware.cors import CORSMiddleware
-        app.add_middleware(
-            CORSMiddleware,
+        cors_kwargs = dict(
             allow_origins=_srv.cors_origins,
             allow_origin_regex=_srv.cors_origin_regex,
             allow_credentials=True,
@@ -356,10 +357,21 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             allow_headers=["*"],
             max_age=1728000,
         )
+        # 🚨 Новият Starlette сам обработва PNA preflight и го ОТКАЗВА с 400
+        # „Disallowed CORS private-network“, ако не получи
+        # allow_private_network=True — `_pna_header` по-долу не спасява
+        # статуса. Хванато на касата на Баръмски (Starlette 1.6.0, 21.09.2026).
+        # Старият Starlette няма параметъра и пропуска PNA мълчаливо —
+        # за него заглавката я слага `_pna_header`.
+        if "allow_private_network" in inspect.signature(
+                CORSMiddleware.__init__).parameters:
+            cors_kwargs["allow_private_network"] = True
+        app.add_middleware(CORSMiddleware, **cors_kwargs)
 
         @app.middleware("http")
         async def _pna_header(request: Request, call_next):
-            # Private Network Access (Chrome) — CORSMiddleware не го добавя.
+            # Private Network Access (Chrome) — за стар Starlette, който не
+            # познава allow_private_network. При новия е безвреден дубъл.
             response = await call_next(request)
             if request.method == "OPTIONS":
                 response.headers["Access-Control-Allow-Private-Network"] = "true"
