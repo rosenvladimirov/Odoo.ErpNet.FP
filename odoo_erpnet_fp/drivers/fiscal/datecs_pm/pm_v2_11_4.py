@@ -242,8 +242,149 @@ class PmDevice:
     # Slots 5..8 are device-programmable but rarely used in BG retail.
     _VAT_LETTERS = ("А", "Б", "В", "Г", "Д", "Е", "Ж", "З")
 
+    # ⚠️ ДВЕ азбуки за ЕДНИ И СЪЩИ осем слота, и това е капан:
+    # „A" (латинско) и „А" (кирилско) изглеждат ЕДНАКВО в кода.
+    #
+    #   ОТГОВОРИТЕ на апарата (TotA..TotH, SumA..SumH, TaxA..TaxH) са
+    #   с ЛАТИНСКИ имена — така са и в ръководството.
+    #   ЗАЯВКИТЕ към апарата (0x31, 0x6B) искат кирилско А..З.
+    #
+    # Затова четенето връща латински ключове, а `slot_to_cyrillic`
+    # прави прехода към страната на Odoo, където
+    # `l10n_bg_fiscal_tax_group` пази кирилицата.
+    REPORT_LETTERS = ("A", "B", "C", "D", "E", "F", "G", "H")
+
+    @classmethod
+    def slot_to_cyrillic(cls, letter: str) -> str:
+        """Латинско име на слот от отговор → кирилското за Odoo."""
+        try:
+            return cls._VAT_LETTERS[cls.REPORT_LETTERS.index(letter)]
+        except ValueError:
+            raise ValueError(
+                f"{letter!r} не е име на слот от отговор; чакани "
+                f"{cls.REPORT_LETTERS}"
+            ) from None
+
+    # Четирите разреза на дневната таксация (0x41) и на последния
+    # фискален запис (0x40) — по ръководството, параметър `Type`.
+    TAX_TURNOVER = 0        # оборот
+    TAX_AMOUNT = 1          # начислен данък
+    TAX_STORNO_TURNOVER = 2
+    TAX_STORNO_AMOUNT = 3
+
+    def read_active_vat_rates(self) -> dict:
+        """0x32 (команда 50) — активните ДДС ставки, БЕЗ да се пипа денят.
+
+        Отговор по ръководството:
+          {ErrorCode}{nZreport}{TaxA}..{TaxH}{EntDate}
+
+        `TaxX` е стойност 0.00–99.99 при включен слот и точно **100.00**
+        при ИЗКЛЮЧЕН. Тоест изключеният слот НЕ е „0%" — той не
+        съществува, и разликата е съществена: слот с 0.00 носи оборот
+        по нулева ставка, изключеният не носи нищо.
+
+        Връща:
+          {"z_number": int,          # от кой Z отчет важат
+           "entry_date": "DD-MM-YY", # от коя дата
+           "rates": {"А": 20.0, ..., "Д": None, ...}}   None = изключен
+
+        🚨 Не бъркай с `read_vat_rates`, която удря 0x53 — командата за
+        ПИСАНЕ. Тя законно отказва с -104000 ERR_NEED_Z_REPORT, докато
+        денят не е нулиран, и точно това създаваше впечатлението, че
+        четенето иска Z отчет. Не иска.
+        """
+        resp = self._exchange(commands.CMD_READ_VAT_RATES)
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+        fields = list(rest) if rest else []
+        while len(fields) < 10:
+            fields.append("")
+
+        rates: dict[str, float | None] = {}
+        for idx, letter in enumerate(self.REPORT_LETTERS):
+            raw = (fields[idx + 1] or "").strip()
+            if not raw:
+                rates[letter] = None
+                continue
+            try:
+                value = float(raw.replace(",", "."))
+            except ValueError:
+                rates[letter] = None
+                continue
+            # 100.00 е признакът „изключен слот", не ставка.
+            rates[letter] = None if value >= 100.0 else value
+
+        try:
+            z_number = int((fields[0] or "0").strip() or 0)
+        except ValueError:
+            z_number = 0
+        return {
+            "z_number": z_number,
+            "entry_date": (fields[9] or "").strip(),
+            "rates": rates,
+        }
+
+    def read_daily_taxation(self, kind: int = TAX_TURNOVER) -> dict:
+        """0x41 (команда 65) — натрупаното ЗА ДЕНЯ по данъчен слот.
+
+        Не печата, не нулира — за разлика от Z отчета. Това е командата
+        за сверка: дава същите числа, които Z-ът ще отпечата, но без да
+        затваря деня.
+
+        `kind` е един от `TAX_TURNOVER` / `TAX_AMOUNT` /
+        `TAX_STORNO_TURNOVER` / `TAX_STORNO_AMOUNT`.
+
+        Отговор: {ErrorCode}{nRep}{SumA}..{SumH}
+
+        Връща `{"report_number": int, "sums": {"А": float, ...}}`.
+        """
+        if kind not in (0, 1, 2, 3):
+            raise ValueError(f"kind must be 0..3, got {kind!r}")
+        resp = self._exchange(
+            commands.CMD_DAILY_TAXATION, codec.encode_data(kind)
+        )
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+        fields = list(rest) if rest else []
+        try:
+            report_number = int((fields[0] or "0").strip() or 0)
+        except (ValueError, IndexError):
+            report_number = 0
+        sums: dict[str, float] = {}
+        for idx, letter in enumerate(self.REPORT_LETTERS, start=1):
+            raw = (fields[idx] or "").strip() if idx < len(fields) else ""
+            try:
+                sums[letter] = float(raw.replace(",", ".")) if raw else 0.0
+            except ValueError:
+                sums[letter] = 0.0
+        return {"report_number": report_number, "sums": sums}
+
+    def read_daily_totals(self) -> dict:
+        """Пълната картина за деня — четирите разреза наведнъж.
+
+        Четири обмена, нула печат, нула нулиране. Това е входът на
+        сверката: `turnover` минус `storno_turnover` по слот трябва да
+        е това, което Odoo очаква да е минало през апарата.
+        """
+        out = {}
+        for name, kind in (
+            ("turnover", self.TAX_TURNOVER),
+            ("tax", self.TAX_AMOUNT),
+            ("storno_turnover", self.TAX_STORNO_TURNOVER),
+            ("storno_tax", self.TAX_STORNO_AMOUNT),
+        ):
+            out[name] = self.read_daily_taxation(kind)["sums"]
+        return out
+
     def read_vat_rates(self) -> dict:
         """0x53 'I' — Read currently programmed VAT rates.
+
+        ⚠️ **Ползвай `read_active_vat_rates` (0x32) за четене.** 0x53 е
+        командата за ПИСАНЕ на ставките и ръководството не документира
+        опция 'I' за нея; на PM фърмуер тя отказва с -104000
+        ERR_NEED_Z_REPORT, докато денят не е нулиран. Идиомът 'I' е
+        наследен от по-стария ICP протокол. Методът остава заради
+        заварени повиквания.
 
         Returns: dict like {'А': 2000, 'Б': 900, 'В': 0, 'Г': None,
                             'decimal_point': 2}
@@ -721,14 +862,20 @@ class PmDevice:
         )
         code, rest = self._parse_error_code(resp.data)
         errors.raise_for_code(code)
-        # rest = [nRep, TotA, TotB, ..., TotH, StorA, ..., StorH]
-        # 1 + 8 + 8 = 17 fields total
+        # rest = [nRep, TotA..TotH, StorA..StorH] — 1 + 8 + 8 = 17
         n_rep = int(rest[0]) if rest else 0
-        groups = "ABCDEFGH"
         per_group: dict[str, float] = {}
-        for i, letter in enumerate(groups, start=1):
+        storno: dict[str, float] = {}
+        for i, letter in enumerate(self.REPORT_LETTERS, start=1):
             if i < len(rest):
                 per_group[letter] = float(rest[i] or 0)
+            # Сторната стоят веднага след осемте продажбени тотала.
+            # Дотук се четяха само продажбите — ден с връщания НЕ можеше
+            # да се сведе, защото едната страна липсваше.
+            j = i + 8
+            if j < len(rest):
+                storno[letter] = float(rest[j] or 0)
+        self.last_report_storno = storno
         return n_rep, per_group
 
     def print_department_report(self) -> None:

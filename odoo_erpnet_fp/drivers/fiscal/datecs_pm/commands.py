@@ -35,7 +35,8 @@ CMD_SALE_PROGRAMMED = 0x3A  # 58  — sale of PLU item
 CMD_PLU = 0x6B  # 107  — item DB management
 
 # ---- Phase 4 — admin / maintenance --------------------------------------
-CMD_VAT_PROGRAMMING = 0x53  # 83
+CMD_VAT_PROGRAMMING = 0x53  # 83  — ПИСАНЕ на ставките (иска нулиран ден)
+CMD_READ_VAT_RATES = 0x32  # 50  — ЧЕТЕНЕ на активните ставки (без условия)
 CMD_TAX_NUMBER_SET = 0x62  # 98
 CMD_TAX_NUMBER_READ = 0x63  # 99
 CMD_FISCAL_MEMORY_INFO = 0x7E  # 126
