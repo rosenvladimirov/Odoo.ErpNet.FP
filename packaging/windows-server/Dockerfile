@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-pip \
         python3-venv \
         python3-wheel \
+        python3-packaging \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 ships pip 24.x which already handles the --platform /

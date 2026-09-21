@@ -44,14 +44,21 @@ UninstPage instfiles
 
 ; ─── Sections ────────────────────────────────────────────────────────
 
-Section "Core (Python + server + wheels)" SEC_CORE
+Section "Core (Python + server)" SEC_CORE
     SectionIn RO   ; required, can't deselect
+
+    ; Преинсталация върху жива инсталация: NSIS копира ОТГОРЕ и не трие.
+    ; Оставените стари *.dist-info правеха /healthz да съобщава чужда
+    ; версия (видяно живо: код 3.0.6, отчетено 3.0.3). Затова спираме
+    ; услугата и разчистваме рънтайма, преди да сложим новия.
+    DetailPrint "Stopping the service and clearing the previous runtime..."
+    nsExec::ExecToLog '"$SYSDIR\sc.exe" stop ${SERVICE_NAME}'
+    Sleep 3000
+    RMDir /r "$INSTDIR\python\Lib\site-packages"
+    RMDir /r "$INSTDIR\server"
 
     SetOutPath "$INSTDIR\python"
     File /r "python\*.*"
-
-    SetOutPath "$INSTDIR\wheels"
-    File /r "wheels\*.*"
 
     SetOutPath "$INSTDIR\server"
     File /r "server\*.*"
@@ -59,12 +66,9 @@ Section "Core (Python + server + wheels)" SEC_CORE
     SetOutPath "$INSTDIR"
     File "installer.nsi"   ; bundled for diagnostics; harmless
 
-    DetailPrint "Installing wheels into the embedded Python..."
-    nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m pip install --no-index --find-links "$INSTDIR\wheels" --target "$INSTDIR\python\Lib\site-packages" --upgrade pip'
-    nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m pip install --no-index --find-links "$INSTDIR\wheels" --target "$INSTDIR\python\Lib\site-packages" pyserial fastapi uvicorn pydantic PyYAML httpx prometheus_client pywin32'
-
-    DetailPrint "Installing server source..."
-    nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m pip install --no-deps --target "$INSTDIR\python\Lib\site-packages" "$INSTDIR\server"'
+    ; Зависимостите и самият пакет вече са вътре в
+    ; python\Lib\site-packages — сглобени при билда. Вграденият Python
+    ; няма pip, затова на тази машина не се инсталира нищо.
 
     ; pywin32 has a postinstall step that copies pythoncom312.dll +
     ; pywintypes312.dll to a location where the SCM can find them when
@@ -72,7 +76,7 @@ Section "Core (Python + server + wheels)" SEC_CORE
     ; odoo_erpnet_fp.server.win_service install` succeeds but `start`
     ; fails with "service did not respond in a timely fashion".
     DetailPrint "Running pywin32 post-install (copies pythoncom DLLs)..."
-    nsExec::ExecToLog '"$INSTDIR\python\python.exe" "$INSTDIR\python\Lib\site-packages\pywin32_postinstall.py" -install'
+    nsExec::ExecToLog '"$INSTDIR\python\python.exe" "$INSTDIR\python\Lib\site-packages\bin\pywin32_postinstall.py" -install'
 SectionEnd
 
 Section "Default config (preserves existing)" SEC_CONFIG

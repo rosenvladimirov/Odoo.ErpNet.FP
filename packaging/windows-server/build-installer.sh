@@ -71,38 +71,79 @@ docker run --rm \
             sed -i "s|^#import site|import site|" "${PTHFILE}"
         fi
 
-        echo "  ▸ download Windows wheels for all server dependencies"
-        rm -rf wheels
-        mkdir -p wheels
-        # We deliberately list each runtime dep + transitive ones we
-        # know are required. pip resolves the rest from each wheel’s
-        # METADATA. --platform / --python-version / --only-binary
-        # ensure we get pure-Windows wheels with no compilation.
-        python3 -m pip download \
-            --dest wheels \
-            --platform win_amd64 \
-            --python-version 3.12 \
-            --only-binary=:all: \
-            --no-deps \
-            pyserial fastapi uvicorn pydantic pydantic-core PyYAML \
-            httpx prometheus_client \
-            pywin32 \
-            anyio sniffio idna h11 click colorama \
-            starlette typing_extensions annotated-types \
-            httpcore certifi \
-            watchfiles websockets python-dotenv \
-            httptools \
-            charset-normalizer urllib3
-        # uvloop is Linux/macOS only; uvicorn falls back to asyncio
-        # event loop on Windows automatically. We deliberately do not
-        # download its wheel.
-
         echo "  ▸ copy ErpNet.FP source tree"
         rm -rf server
         mkdir -p server
         cp -r /work/odoo_erpnet_fp server/
         cp /work/pyproject.toml server/
         cp /work/README.md server/
+
+        echo "  ▸ build the ErpNet.FP wheel"
+        rm -rf wheels
+        mkdir -p wheels
+        python3 -m pip wheel --no-deps -w wheels ./server
+
+        echo "  ▸ download Windows wheels — resolved from our own metadata"
+        # Никакъв ръчен списък. pip оценява маркерите спрямо СВОЯ
+        # интерпретатор, затова затварянето се смята от помощния скрипт
+        # за целевата среда (win32/3.12) — иначе `evdev ; linux` събаря
+        # свалянето, а изпуснат annotated_doc гърми чак в магазина.
+        python3 /work/packaging/windows-server/fetch_win_wheels.py \
+            wheels wheels/odoo_erpnet_fp-*.whl pywin32
+
+        echo "  ▸ install everything into the embedded site-packages"
+        # Вграденият Python НЯМА pip — затова машината-цел не може да
+        # инсталира нищо при setup. Слагаме готово site-packages тук.
+        SP=python/Lib/site-packages
+        mkdir -p ${SP}
+        python3 -m pip install \
+            --no-index --no-deps \
+            --platform win_amd64 --python-version 3.12 --only-binary=:all: \
+            --target ${SP} wheels/*.whl
+
+        echo "  ▸ pythoncom/pywintypes DLLs next to python.exe"
+        # Без тях SCM-ът не зарежда служебния модул и `sc start` пада с
+        # "service did not respond in a timely fashion". Копираме ги тук,
+        # за да не зависи стартът единствено от pywin32_postinstall.
+        cp ${SP}/pywin32_system32/*.dll python/
+
+        echo "  ▸ verify the dependency closure is complete"
+        # Тестът МОЖЕ да падне: чете Requires-Dist на всяка инсталирана
+        # дистрибуция, оценява маркерите за Windows/py3.12 и иска всяка
+        # останала да е налична. Точно това хваща липсващ annotated_doc
+        # ПРЕДИ да стигне до машината-цел.
+        python3 - <<'"'"'PYCHECK'"'"'
+import sys, pathlib
+from packaging.requirements import Requirement
+
+ENV = {
+    "python_version": "3.12", "python_full_version": "3.12.7",
+    "sys_platform": "win32", "platform_system": "Windows",
+    "platform_machine": "AMD64", "os_name": "nt",
+    "implementation_name": "cpython",
+    "platform_python_implementation": "CPython",
+    "extra": "",
+}
+sp = pathlib.Path("python/Lib/site-packages")
+have = {d.name.split("-")[0].lower().replace("_", "-") for d in sp.glob("*.dist-info")}
+missing = set()
+for meta in sp.glob("*.dist-info/METADATA"):
+    owner = meta.parent.name.split("-")[0]
+    for line in meta.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.startswith("Requires-Dist:"):
+            continue
+        req = Requirement(line.split(":", 1)[1].strip())
+        if req.marker is not None and not req.marker.evaluate(ENV):
+            continue
+        name = req.name.lower().replace("_", "-")
+        if name not in have:
+            missing.add((owner, name))
+if missing:
+    for owner, dep in sorted(missing):
+        print("  x %s wants %s - MISSING" % (owner, dep))
+    sys.exit(1)
+print("  ok dependency closure complete: %d distributions" % len(have))
+PYCHECK
 
         echo "  ▸ stage default config"
         rm -rf config

@@ -36,6 +36,7 @@ module directly.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -142,8 +143,15 @@ class ErpNetFpService(win32serviceutil.ServiceFramework):
 
     def _serve_forever(self) -> None:
         """Load config, build app, run uvicorn in this same thread."""
-        from ..config.loader import load_config
-        from .main import create_app
+        # АБСОЛЮТНИ импорти нарочно: SCM пуска този модул през
+        # pythonservice.exe, който го зарежда САМОСТОЯТЕЛНО по път —
+        # без пакетен контекст (`__package__` е празен), защото
+        # услугата е регистрирана от модул, изпълнен като __main__.
+        # Относителен импорт там е невъзможен и услугата пада с
+        # "attempted relative import with no known parent package",
+        # докато същият код в преден план работи.
+        from odoo_erpnet_fp.config.loader import load_config
+        from odoo_erpnet_fp.server.main import create_app
 
         cfg_path = _config_path()
         if not cfg_path.exists():
@@ -174,10 +182,32 @@ class ErpNetFpService(win32serviceutil.ServiceFramework):
             config.server.host, config.server.port,
             config.server.tls.enabled, cfg_path,
         )
-        # Run uvicorn synchronously in this thread — SvcDoRun blocks
-        # until this returns. SvcStop flips should_exit which causes
-        # uvicorn.serve() to unwind cleanly.
-        self._server.run()
+        # SvcDoRun тече в РАБОТНА нишка на SCM, не в главната. Два
+        # капана оттам, и двата видими само като услуга:
+        #
+        #  1. `asyncio.run()` вдига ProactorEventLoop, чийто __init__
+        #     вика signal.set_wakeup_fd — разрешено само в главната
+        #     нишка ⇒ ValueError и услугата пада веднага след старт.
+        #     Selector цикълът не пипа сигнали (проверено в самата
+        #     stdlib на вградения Python) и затова е изборът тук.
+        #  2. uvicorn сам си слага обработчици на сигнали — също само
+        #     за главната нишка. Спирането идва от SvcStop, не от
+        #     сигнал, така че ги изключваме.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        # uvicorn ИМА пазач за „не съм в главната нишка" (server.py,
+        # capture_signals), но при ВГРАДЕН интерпретатор той се лъже:
+        # `threading` се инициализира в работната нишка и я смята за
+        # главна, докато CPython знае истината и signal.signal отказва.
+        # Затова махаме сигналите изцяло, а не разчитаме на пазача.
+        self._server.capture_signals = contextlib.nullcontext
+        # по-старите uvicorn държат същото в метод — безвредно е и за тях
+        self._server.install_signal_handlers = lambda: None
+        try:
+            loop.run_until_complete(self._server.serve())
+        finally:
+            loop.close()
         logging.info("ErpNet.FP service exited cleanly")
 
 
