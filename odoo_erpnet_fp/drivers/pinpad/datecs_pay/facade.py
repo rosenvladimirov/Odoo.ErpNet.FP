@@ -257,11 +257,20 @@ class DatecsPayPinpad:
             parsed.get("rrn"), parsed.get("auth_id"),
         )
 
+        # При отказ POS-ът трябва да види какво е казал пинпадът: кода на
+        # грешката (DF06), иначе резултата (DF05), иначе че резултат няма.
+        if ok:
+            error = None
+        elif trans_error and any(trans_error):
+            error = trans_error.hex()
+        elif trans_result is not None:
+            error = f"result_{trans_result.hex()}"
+        else:
+            error = "no_result"
+
         return TransactionResult(
             ok=ok,
-            error=(
-                trans_error.hex() if (trans_error and any(trans_error)) else None
-            ),
+            error=error,
             amount_cents=parsed.get("amount_cents"),
             rrn=parsed.get("rrn"),
             auth_id=parsed.get("auth_id"),

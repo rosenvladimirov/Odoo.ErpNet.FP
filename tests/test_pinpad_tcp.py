@@ -81,9 +81,12 @@ class ScriptedPinpad:
     `receipt`; END (0x03) → ACK. Подкомандите се записват по ред.
     """
 
-    def __init__(self, refuse_status: int = 0, receipt: bytes = b""):
+    def __init__(self, refuse_status: int = 0, receipt: bytes = b"",
+                 complete: bytes | None = None):
         self.refuse_status = refuse_status
         self.receipt = receipt
+        # TLV-то на TRANSACTION COMPLETE; по подразбиране — същото като бележката.
+        self.complete = receipt if complete is None else complete
         self.subcmds: list[int] = []
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -122,7 +125,7 @@ class ScriptedPinpad:
                 return
             conn.sendall(_frame(status=0))
             time.sleep(0.1)
-            conn.sendall(_frame(data=b"\x01" + self.receipt, cmd=0x0E))
+            conn.sendall(_frame(data=b"\x01" + self.complete, cmd=0x0E))
         elif sub == 0x02:
             conn.sendall(_frame(data=self.receipt))
         else:
@@ -134,6 +137,8 @@ class ScriptedPinpad:
 
 # DF05 резултат = 0 (одобрено), DF06 грешка = 0, 81 сума = 42.94.
 APPROVED_RECEIPT = bytes.fromhex("DF050400000000" "DF060400000000" "8104000010C6")
+# Само номерът на терминала — толкова върна GET RECEIPT TAGS на Баръмски.
+TERMINAL_ONLY = bytes.fromhex("9F1C08") + b"P8000021"
 
 
 def _driver(port: int) -> _native.DatecsPinpadDriver:
@@ -251,3 +256,47 @@ def test_failed_free_does_not_turn_an_approval_into_a_decline(monkeypatch, caplo
         fake.close()
     assert res.ok is True, res.error
     assert "not freed" in caplog.text
+
+
+def test_result_comes_from_the_complete_event():
+    # Баръмски, 22.09.2026: GET RECEIPT TAGS върна само 9F1C, а DF05 от
+    # TRANSACTION COMPLETE се изхвърляше ⇒ всяко плащане — „без резултат“.
+    complete = APPROVED_RECEIPT + bytes.fromhex("DF070C") + b"012345678912"
+    fake = ScriptedPinpad(receipt=TERMINAL_ONLY, complete=complete)
+    pp = _facade(fake.port)
+    try:
+        res = pp.purchase(amount_cents=4294, timeout=10)
+    finally:
+        pp.close()
+        fake.close()
+    assert res.ok is True, res.error
+    assert res.host_rrn == "012345678912"
+    assert res.terminal_id == "P8000021"
+
+
+def test_a_stale_receipt_cannot_approve_a_failed_transaction():
+    # GET RECEIPT TAGS е за „последната извършена“ транзакция — при неуспешна
+    # може да е предишната, одобрена. Решава TRANSACTION COMPLETE.
+    declined = bytes.fromhex("DF050400000001" "DF060400000033")
+    fake = ScriptedPinpad(receipt=APPROVED_RECEIPT, complete=declined)
+    pp = _facade(fake.port)
+    try:
+        res = pp.purchase(amount_cents=4294, timeout=10)
+    finally:
+        pp.close()
+        fake.close()
+    assert res.ok is False
+    assert res.error == "00000033"
+
+
+def test_decline_without_error_code_shows_the_result():
+    fake = ScriptedPinpad(receipt=TERMINAL_ONLY,
+                          complete=bytes.fromhex("DF050400000002"))
+    pp = _facade(fake.port)
+    try:
+        res = pp.purchase(amount_cents=4294, timeout=10)
+    finally:
+        pp.close()
+        fake.close()
+    assert res.ok is False
+    assert res.error == "result_00000002"
