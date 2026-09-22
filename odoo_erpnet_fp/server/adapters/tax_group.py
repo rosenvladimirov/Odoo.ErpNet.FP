@@ -8,11 +8,12 @@ Datecs PM v2.11.4 (PDF §4.55.1) takes a single character — Latin
 'A'..'H' or Cyrillic 'А'..'З' — corresponding to `valVat[0..7]`
 (parameter cmd 0xFF).
 
-Bulgarian convention (per `l10n_bg_erp_net_fp.account_tax_group`):
-  1 → А (or A) — VAT 0%        (rate index 0)
-  2 → Б (or B) — VAT 20%       (rate index 1, standard)
-  3 → В (or C) — VAT 9%        (rate index 2, reduced)
-  4 → Г (or D) — VAT exempt    (rate index 3)
+Bulgarian convention (Наредба Н-18; same as
+`l10n_bg_erp_net_fp.account_tax_group`):
+  1 → А (or A) — VAT 0% / exempt (rate index 0)
+  2 → Б (or B) — VAT 20%         (rate index 1, standard)
+  3 → В (or C) — VAT 20%, fuels  (rate index 2)
+  4 → Г (or D) — VAT 9%          (rate index 3, reduced)
 
 Slots 5..8 are device-programmable; defaults below match common BG
 configurations and can be overridden via `_VENDOR_OVERRIDES`.
