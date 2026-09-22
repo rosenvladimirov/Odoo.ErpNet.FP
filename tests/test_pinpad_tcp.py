@@ -202,8 +202,9 @@ def _facade(port: int) -> DatecsPayPinpad:
 
 def test_refused_start_returns_at_once_with_the_device_status():
     # Баръмски, 22.09.2026: пинпадът отказва старта (иска приключване на
-    # деня), а касата чакаше целия бюджет и четеше „timeout“.
-    fake = ScriptedPinpad(refuse_status=7)
+    # деня — errEndDay 52 по спецификацията), а касата чакаше целия бюджет
+    # и четеше „timeout“.
+    fake = ScriptedPinpad(refuse_status=52)
     pp = _facade(fake.port)
     t = time.time()
     try:
@@ -213,7 +214,7 @@ def test_refused_start_returns_at_once_with_the_device_status():
         fake.close()
     assert time.time() - t < 5
     assert res.ok is False
-    assert res.error == "refused_7 (Operation not permitted)"
+    assert res.error == "refused_52 (End of day required)"
     assert fake.subcmds == [0x01, 0x03]  # START, после END — без чакане
 
 
