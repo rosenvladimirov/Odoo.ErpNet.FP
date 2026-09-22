@@ -228,9 +228,15 @@ class DatecsPayPinpad:
         )
 
         if ret != 0:
-            err = {9: "timeout", 18: "cancel", 50: "no_host_connection"}.get(
-                ret, f"error_{ret}"
-            )
+            err = {9: "timeout", 18: "cancel", 50: "no_host_connection"}.get(ret)
+            if err is None:
+                # Положителен код = статусът, с който пинпадът е отказал
+                # самия старт (напр. иска приключване на деня) — към POS-а
+                # отива с текста си, а не като безлико error_N.
+                err = (
+                    f"refused_{ret} ({DatecsPinpadDriver._error_string(ret)})"
+                    if ret > 0 else f"error_{ret}"
+                )
             _logger.warning("DatecsPay run_transaction non-zero ret=%s → %s", ret, err)
             return TransactionResult(ok=False, error=err, raw_tlv=result_tlv)
 

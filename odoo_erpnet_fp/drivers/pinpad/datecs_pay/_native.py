@@ -5,10 +5,14 @@ Uses ctypes to interface with the C library
 """
 
 import ctypes
+import logging
 import os
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from datetime import datetime
+
+_logger = logging.getLogger(__name__)
+
 
 def library_filename(os_name: str = os.name) -> str:
     """Името на родната библиотека за платформата.
@@ -181,6 +185,33 @@ if _lib is not None:
 
     _lib.datecs_error_string.argtypes = [ctypes.c_int]
     _lib.datecs_error_string.restype = ctypes.c_char_p
+
+    # Паметта от библиотеката се връща на НЕЯ — виж _free_lib_buffer.
+    if hasattr(_lib, 'datecs_free'):
+        _lib.datecs_free.argtypes = [ctypes.c_void_p]
+        _lib.datecs_free.restype = None
+
+
+def _free_lib_buffer(ptr) -> None:
+    """Освобождава буфер, заделен от родната библиотека.
+
+    С нейния datecs_free: на Windows ctypes.pythonapi няма free (DLL-ът и
+    Python са с различни C runtime-и) и всяка успешна транзакция излизаше
+    като грешка „function 'free' not found“ — Баръмски, 22.09.2026, при
+    приключването на деня. При плащане това е платено с карта, а POS-ът
+    вижда отказ. Стари сборки без datecs_free — само POSIX, където libc
+    free е общ за процеса.
+
+    Данните вече са копирани, затова провал тук е изтичане на памет, не
+    провал на транзакцията — одобреното остава одобрено.
+    """
+    try:
+        if hasattr(_lib, 'datecs_free'):
+            _lib.datecs_free(ptr)
+        else:
+            ctypes.pythonapi.free(ptr)
+    except Exception:  # noqa: BLE001
+        _logger.warning("DatecsPay: native buffer not freed (leaked)", exc_info=True)
 
 
 @dataclass
@@ -397,7 +428,7 @@ class DatecsPinpadDriver:
         data = bytes(response_ptr[:response_len.value])
         
         # Free the C buffer
-        ctypes.pythonapi.free(response_ptr)
+        _free_lib_buffer(response_ptr)
         
         return data
     
@@ -438,7 +469,7 @@ class DatecsPinpadDriver:
         data = b""
         if receipt_ptr and receipt_len.value:
             data = bytes(receipt_ptr[:receipt_len.value])
-            ctypes.pythonapi.free(receipt_ptr)
+            _free_lib_buffer(receipt_ptr)
 
         return ret, data
 
