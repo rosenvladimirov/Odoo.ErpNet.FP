@@ -67,3 +67,44 @@ docker compose up -d --build
 
 `*.so` is in `.gitignore`, so the file stays on your deployment host
 without risk of accidental publication.
+
+## TCP transport — the BlueCash pinpad bridge
+
+The library also opens `tcp://host:port` directly — the
+`PinpadBridgeService` of the BlueCash client app (port 9101). No socat
+PTY is needed any more:
+
+```yaml
+pinpads:
+  - id: bluepad
+    driver: datecs_pay
+    port: "tcp://192.168.0.101:9101"
+```
+
+The bridge forwards the pinpad bytes 1:1, so the protocol is the same as
+over a serial port. `get_info` / `get_status` time out while the DatecsPay
+app on the device is not on its idle ECR screen — that is the device,
+not the transport.
+
+## Windows
+
+The Windows build is `datecs_pinpad.dll`, **TCP only** (a serial path
+returns an error). Build it from the same source tree with mingw-w64:
+
+```bash
+make windows          # local x86_64-w64-mingw32-gcc
+make windows-docker   # same, inside a Debian container
+```
+
+and drop it next to the .so:
+
+    odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/datecs_pinpad.dll
+
+`_native.py` loads the .dll on Windows and the .so elsewhere; the
+Windows installer picks it up through `package-data` like the .so.
+`*.dll` is in `.gitignore` too.
+
+⚠️ **Smart App Control.** Windows 11 with Smart App Control on blocks an
+unsigned DLL that has no reputation with Microsoft:
+`WinError 4551: An Application Control policy has blocked this file`.
+The DLL has to be Authenticode-signed for such machines.

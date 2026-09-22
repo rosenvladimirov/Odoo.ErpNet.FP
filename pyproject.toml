@@ -126,7 +126,8 @@ exclude = ["tests*", "docs*", "docker*"]
 # bundles it into site-packages (it is .gitignored, so VCS-based inclusion
 # would skip it). Without this the installed package has no .so and the
 # driver fails to load at runtime even though the source tree has it.
-"odoo_erpnet_fp.drivers.pinpad.datecs_pay" = ["lib/*.so"]
+# The .dll is the Windows build (TCP-only) — same rule.
+"odoo_erpnet_fp.drivers.pinpad.datecs_pay" = ["lib/*.so", "lib/*.dll"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

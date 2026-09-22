@@ -10,17 +10,28 @@ from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from datetime import datetime
 
-# Load the shared library — bundled at lib/libdatecs_pinpad.so inside
-# the package, with system-paths fallback. We defer hard failure until
-# the lib is actually used so that simply importing the package (e.g.
-# during CI / pure-Python tests) does not require the .so.
-_lib_path = os.path.join(os.path.dirname(__file__), 'lib', 'libdatecs_pinpad.so')
+def library_filename(os_name: str = os.name) -> str:
+    """Името на родната библиотека за платформата.
+
+    На Windows е `datecs_pinpad.dll` — билдът там говори САМО по TCP
+    (`tcp://host:port` към моста на BlueCash); другаде е
+    `libdatecs_pinpad.so` със сериен порт и TCP.
+    """
+    return 'datecs_pinpad.dll' if os_name == 'nt' else 'libdatecs_pinpad.so'
+
+
+# Load the shared library — bundled under lib/ inside the package, with
+# system-paths fallback. We defer hard failure until the lib is actually
+# used so that simply importing the package (e.g. during CI / pure-Python
+# tests) does not require the native library.
+_LIB_NAME = library_filename()
+_lib_path = os.path.join(os.path.dirname(__file__), 'lib', _LIB_NAME)
 _LIB_LOAD_ERROR = None
 try:
     _lib = ctypes.CDLL(_lib_path)
 except OSError as _err1:
     try:
-        _lib = ctypes.CDLL('libdatecs_pinpad.so')
+        _lib = ctypes.CDLL(_LIB_NAME)
     except OSError as _err2:
         _lib = None
         _LIB_LOAD_ERROR = _err2
@@ -29,7 +40,7 @@ except OSError as _err1:
 def _require_lib():
     if _lib is None:
         raise RuntimeError(
-            f"libdatecs_pinpad.so could not be loaded: {_LIB_LOAD_ERROR}. "
+            f"{_LIB_NAME} could not be loaded: {_LIB_LOAD_ERROR}. "
             "Bundle it under datecs_pay/lib/ or install on the system."
         )
 
@@ -205,7 +216,9 @@ class DatecsPinpadDriver:
         Initialize pinpad driver
         
         Args:
-            port: Serial port path (e.g., '/dev/ttyUSB0')
+            port: Serial port path (e.g., '/dev/ttyUSB0') or
+                  'tcp://host:port' for the BlueCash pinpad bridge
+                  (the only transport on Windows)
             baudrate: Serial baudrate (default: 115200)
         """
         self.port = port
