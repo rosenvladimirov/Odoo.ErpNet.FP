@@ -64,7 +64,11 @@ class PurchaseBody(_CamelModel):
 class VoidBody(_CamelModel):
     amount: float
     rrn: str
-    auth_id: str = Field(..., alias="authId")
+    # Кодът може да липсва: при host relay пинпадът връща само hostRrn/hostAuthId,
+    # а ред, възстановен в касата след презареждане, може да е без него — тогава
+    # 422 блокира сторното изцяло (Баръмски, 04.10.2026). Пинпадът търси
+    # транзакцията по сума + RRN (+ код, ако е подаден).
+    auth_id: Optional[str] = Field("", alias="authId")
     tip: Optional[float] = None
     cashback: Optional[float] = None
 
@@ -215,6 +219,8 @@ async def pinpad_purchase(id: str, body: PurchaseBody, request: Request):
 
 @router.post("/{id}/void", response_model=TransactionResp)
 async def pinpad_void(id: str, body: VoidBody, request: Request):
+    # заявката за сторно в лога — за да се види какво праща касата (04.10.2026)
+    _logger.info("pinpad void request %s: %s", id, body.model_dump(by_alias=True))
     reg = _require(request, id)
     try:
         async with reg.with_pinpad(id) as pp:
@@ -222,7 +228,7 @@ async def pinpad_void(id: str, body: VoidBody, request: Request):
                 pp.void_purchase,
                 amount_cents=_to_cents(body.amount),
                 rrn=body.rrn,
-                auth_id=body.auth_id,
+                auth_id=body.auth_id or "",
                 tip_cents=_to_cents(body.tip) if body.tip else None,
                 cashback_cents=_to_cents(body.cashback) if body.cashback else None,
             )
