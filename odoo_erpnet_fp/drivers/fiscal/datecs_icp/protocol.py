@@ -596,6 +596,14 @@ class IcpDevice:
         _t, status, _r = self._icp_request(cmd.CMD_ABORT_FISCAL_RECEIPT)
         return status
 
+    def last_document_number(self) -> str:
+        """Номерът на последния документ (0x71) — отговорът на затварянето
+        носи само дневните броячи, не номера на бона."""
+        text, status, _r = self._icp_request(cmd.CMD_GET_LAST_DOCUMENT_NUMBER)
+        if not status.ok:
+            return ""
+        return (text or "").split(",")[0].strip()
+
     # ─── reports / cash ─────────────────────────────────────
 
     def print_x_report(self) -> DeviceStatus:

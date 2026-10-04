@@ -411,8 +411,17 @@ async def _icp_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                 if not st.ok:
                     raise RuntimeError("; ".join(e.text for e in st.errors))
 
+                # бонът е затворен — номерът му се чете отделно (0x71);
+                # грешка тук не отменя вече отпечатания бон
+                try:
+                    receipt_number = await asyncio.to_thread(icp.last_document_number)
+                except Exception:
+                    _logger.exception("ICP last document number failed on %s", id)
+                    receipt_number = ""
+
                 return PrintReceiptResult(
                     ok=True,
+                    receipt_number=receipt_number or None,
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
                     fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",
@@ -711,8 +720,17 @@ async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                 if not st.ok:
                     raise RuntimeError("; ".join(e.text for e in st.errors))
 
+                # бонът е затворен — номерът му се чете отделно (0x71);
+                # грешка тук не отменя вече отпечатания бон
+                try:
+                    receipt_number = await asyncio.to_thread(icp.last_document_number)
+                except Exception:
+                    _logger.exception("ICP last document number failed on %s", id)
+                    receipt_number = ""
+
                 return PrintReceiptResult(
                     ok=True,
+                    receipt_number=receipt_number or None,
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
                     fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",

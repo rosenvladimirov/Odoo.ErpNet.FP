@@ -99,3 +99,11 @@ def test_daily_report_waits_longer_on_daisy():
     device.print_x_report()
     assert calls == [300.0, 300.0]
     assert DatecsIcpDevice.REPORT_TIMEOUT == 120.0
+
+
+def test_last_document_number():
+    # реалният отговор на PerfectS DY591358 на 0x71 (04.10.2026)
+    device = _make(DaisyIcpDevice)
+    rec = _recorder(device, text="000008")
+    assert device.last_document_number() == "000008"
+    assert rec.calls == [(cmd.CMD_GET_LAST_DOCUMENT_NUMBER, "")]
