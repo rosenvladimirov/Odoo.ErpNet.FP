@@ -937,6 +937,35 @@ async def print_x_report(
     return await _dispatch_simple(registry, id, "print_x_report", "print_x_report")
 
 
+@router.post("/{id}/fmreport", response_model=GenericResult)
+async def print_fm_report(
+    id: str,
+    request: Request,
+    fromDate: Annotated[str, Query()],
+    toDate: Annotated[str, Query()],
+    detailed: Annotated[bool, Query()] = True,
+    asyncTimeout: Annotated[int, Query()] = 300000,
+):
+    """Отчет от фискалната памет за период (Datecs PM, команда 94).
+
+    Query: `fromDate`/`toDate` — ISO `YYYY-MM-DD`; `detailed` (по подразбиране
+    true) — подробен, по един Z отчет на ден. Печата се на апарата.
+    """
+    registry = _require_printer(request, id)
+    try:
+        start = datetime.strptime(fromDate[:10], "%Y-%m-%d").strftime("%d-%m-%y")
+        end = datetime.strptime(toDate[:10], "%Y-%m-%d").strftime("%d-%m-%y")
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="fromDate/toDate must be YYYY-MM-DD",
+        )
+    return await _dispatch_simple(
+        registry, id, "print_fiscal_memory_report_by_date",
+        "print_fiscal_memory_report_by_date", detailed, start, end,
+    )
+
+
 # ─── 12. POST /{id}/duplicate ─────────────────────────────────────
 
 

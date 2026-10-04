@@ -915,6 +915,27 @@ class PmDevice:
         code, _ = self._parse_error_code(resp.data)
         errors.raise_for_code(code)
 
+    def print_fiscal_memory_report_by_date(
+        self,
+        detailed: bool,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> None:
+        """0x5E (команда 94) — отчет от фискалната памет за период по дати.
+
+        detailed=True — ПОДРОБЕН: всеки Z отчет (всеки ден) поотделно; това е
+        отчетът „ден по ден“, който менюто на BlueCash-50 не предлага (там е
+        само съкратеният). Дати 'DD-MM-YY'. Апаратът го печата; нищо не пише
+        във фискалната памет. Проверено на тестов BlueCash-50, 04.10.2026.
+        """
+        resp = self._exchange(
+            commands.CMD_FM_REPORT_BY_DATE,
+            codec.encode_data(1 if detailed else 0, start_date, end_date),
+            timeout=300.0,
+        )
+        code, _ = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+
     # ---- Phase 2 — Cash in / out (cmd 0x46) ----------------------------
 
     def cash_in(self, amount: float) -> tuple[float, float, float]:
