@@ -210,6 +210,9 @@ class IcpDevice:
     """
 
     # Vendor-specific letter mappings — subclasses override.
+    # колко чакаме дневния отчет (X/Z) — апаратът печата и пише във ФП
+    REPORT_TIMEOUT = 120.0
+
     _TAX_LETTERS: dict[TaxGroup, str] = {
         TaxGroup.G1: "А",
         TaxGroup.G2: "Б",
@@ -596,11 +599,11 @@ class IcpDevice:
     # ─── reports / cash ─────────────────────────────────────
 
     def print_x_report(self) -> DeviceStatus:
-        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "2", timeout=120.0)
+        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "2", timeout=self.REPORT_TIMEOUT)
         return status
 
     def print_z_report(self) -> DeviceStatus:
-        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "", timeout=120.0)
+        _t, status, _r = self._icp_request(cmd.CMD_PRINT_DAILY_REPORT, "", timeout=self.REPORT_TIMEOUT)
         return status
 
     def print_duplicate(self) -> DeviceStatus:

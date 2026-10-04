@@ -269,6 +269,8 @@ class DaisyIcpDevice(IcpDevice):
     # _TAX_LETTERS, _PAYMENT_LETTERS inherited from IcpDevice (Datecs default)
 
     CMD_DAISY_ABORT_FISCAL_RECEIPT = 0x82
+    # Z отчетът на PerfectS (DY591358) трае ~120 с — точно на стария лимит
+    REPORT_TIMEOUT = 300.0
 
     def open_receipt(
         self,

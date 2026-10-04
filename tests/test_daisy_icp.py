@@ -88,3 +88,14 @@ def test_detect_daisy_info():
     assert info.serial_number == "DY585202"
     assert info.fiscal_memory_serial_number == "36774375"
     assert info.protocol == "daisy.icp"
+
+
+def test_daily_report_waits_longer_on_daisy():
+    # PerfectS печата Z отчета ~120 с; 120 с лимит гърми на ръба
+    calls = []
+    device = _make(DaisyIcpDevice)
+    device._icp_request = lambda command, data="", timeout=5.0: calls.append(timeout) or ("", device._parse_status(OK_STATUS), OK_STATUS)
+    device.print_z_report()
+    device.print_x_report()
+    assert calls == [300.0, 300.0]
+    assert DatecsIcpDevice.REPORT_TIMEOUT == 120.0
