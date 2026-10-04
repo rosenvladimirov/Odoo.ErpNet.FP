@@ -253,6 +253,10 @@ class IcpDevice:
             raise ValueError(f"Payment type {pt} not supported by {type(self).__name__}")
         return self._PAYMENT_LETTERS[pt]
 
+    def _parse_status(self, status_bytes: bytes) -> DeviceStatus:
+        """Статус байтовете → DeviceStatus; доставчиците с друго значение на битовете го заменят."""
+        return parse_status_bytes(status_bytes)
+
     # ─── connection lifecycle ────────────────────────────────
 
     def open(self) -> None:
@@ -305,7 +309,7 @@ class IcpDevice:
                 last_exc = exc
                 continue
             text = data_bytes.decode("cp1251", errors="ignore")
-            status = parse_status_bytes(status_bytes)
+            status = self._parse_status(status_bytes)
             log_fn = _logger.warning if status.errors else _logger.debug
             log_fn(
                 "ICP <<< cmd=0x%02X seq=%d data=%r status_bytes=%s errors=%s",

@@ -83,15 +83,17 @@ Laboratory", София (www.isl.bg), която прави свои фиска�
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 from . import commands as cmd
 from .protocol import (
     DeviceStatus,
     IcpDevice,
+    IcpDeviceInfo,
     PaymentType,
     TaxGroup,
 )
+from .status import parse_status_bytes
 
 
 class DatecsIcpDevice(IcpDevice):
@@ -251,11 +253,58 @@ class DatecsIcpXDevice(DatecsIcpDevice):
 class DaisyIcpDevice(IcpDevice):
     """Daisy fiscal printers (ICP family).
 
-    Tax group / payment letters identical to Datecs ICP.
+    Tax group / payment letters identical to Datecs ICP. Разлики с Datecs
+    (по оригиналния ErpNet.FP, BgDaisyIslFiscalPrinter; проверено на
+    eXpert SX-01, ФП 36774375, 04.10.2026):
+
+      * отваряне на бон — `оператор,парола,УНП` (3 полета; 4-то поле с
+        касата дава грешка 21, а апаратът оставя отворен празен бон);
+      * анулиране на бон — командата на Daisy 0x82, не 0x3C;
+      * статус байт 3 — код на грешка (битове 0–6), не битове;
+      * диагностиката (0x5A) — „модел фърмуер дата час,контролна сума,…,
+        сериен №,№ на ФП“.
     """
 
     URI_PREFIX = "bg.dy.icp"
     # _TAX_LETTERS, _PAYMENT_LETTERS inherited from IcpDevice (Datecs default)
+
+    CMD_DAISY_ABORT_FISCAL_RECEIPT = 0x82
+
+    def open_receipt(
+        self,
+        unique_sale_number: str,
+        operator_id: Optional[str] = None,
+        operator_password: Optional[str] = None,
+    ) -> DeviceStatus:
+        op = operator_id or self.operator_id
+        pw = operator_password or self.operator_password
+        header = ",".join([op, pw, unique_sale_number])
+        _t, status, _r = self._icp_request(cmd.CMD_OPEN_FISCAL_RECEIPT, header)
+        return status
+
+    def abort_receipt(self) -> DeviceStatus:
+        _t, status, _r = self._icp_request(self.CMD_DAISY_ABORT_FISCAL_RECEIPT)
+        return status
+
+    def _parse_status(self, status_bytes: bytes) -> DeviceStatus:
+        status = parse_status_bytes(status_bytes)
+        if status_bytes and len(status_bytes) > 3:
+            code = status_bytes[3] & 0x7F
+            if code:
+                status.add_error("E999", f"Daisy error code {code} (see the Daisy manual)")
+        return status
+
+    def detect(self, baudrates: Optional[List[int]] = None) -> Optional[IcpDeviceInfo]:
+        info = super().detect(baudrates)
+        if info:
+            # „eXpert ONL01AZ_EUR-2.0BG 15-07-2019 11:26“ → модел + фърмуер
+            model, _sep, firmware = info.model.partition(" ")
+            info.manufacturer = "Daisy"
+            info.model = model
+            info.firmware_version = firmware
+            info.protocol = "daisy.icp"
+            self.info = info
+        return info
 
 
 class EltradeIcpDevice(IcpDevice):
