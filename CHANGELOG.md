@@ -1,4 +1,24 @@
 
+## [3.0.14] — 2026-10-10
+
+### Fixed — `/printers/{id}/invoice` no longer prints a comment receipt instead of an invoice
+
+- New config setting `invoice.allow_comment_fallback` (YAML section
+  `invoice:`), **default `false`**.
+- ICP device without native invoice (Datecs ICP firmware < 3.00, or no
+  detect cache yet): `ok=False`, code **`E412`** "Native fiscal invoice not
+  supported by this device/firmware" — no receipt is opened, no comment
+  lines are printed.
+- Native invoice rejected with `E401`: the half-opened document is aborted
+  (`abort_receipt`), then the same `E412` (device errors appended) — **no
+  second (fallback) receipt**.
+- `invoice.allow_comment_fallback: true` keeps the legacy behaviour (regular
+  fiscal receipt with a "ФАКТУРА" comment header — NOT a Naredba H-18
+  invoice) and logs a warning on every use.
+- Datecs PM unchanged (`E501`).
+- Tests: `tests/test_server.py` P1–P4 (+ native happy path, E401 legacy
+  path, setting default).
+
 ## [0.21.0] — 2026-07-24
 
 ### Added — Europlacer live file-system dashboard tab

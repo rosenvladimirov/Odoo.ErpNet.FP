@@ -381,3 +381,175 @@ def test_datetime_returns_not_implemented(client):
     r = client.post("/printers/fp1/datetime", json={"deviceDateTime": "2026-05-01T12:00:00"})
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+# ─── POST /printers/{id}/invoice — без бон с коментари вместо фактура ──
+#
+# P1–P4 от котвата pos-invoice-double-fix §6.3. ICP апаратът е истинският
+# DatecsIcpDevice; подменен е само `_icp_request` със сценарий по команда,
+# който записва всяка изпратена команда (MockDevice говори PM рамки, не ICP).
+
+from odoo_erpnet_fp.config.loader import InvoiceConfig
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp import commands as icp_cmd
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp.protocol import (
+    IcpDeviceInfo,
+)
+from odoo_erpnet_fp.drivers.fiscal.datecs_icp.vendors import (
+    DatecsIcpDevice,
+)
+
+_ICP_OK = b"\x80" * 6
+_ICP_E401 = b"\x81" + b"\x80" * 5  # байт 0, бит 0 = синтактична грешка
+
+
+class _IcpTransport:
+    def is_open(self):
+        return True
+
+    def open(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _ScriptedIcp(DatecsIcpDevice):
+    """ICP апарат със сценарий: команда → статус байтове; пази историята."""
+
+    def __init__(self, script, history):
+        super().__init__(_IcpTransport())
+        self._script = script
+        self._history = history
+
+    def _icp_request(self, command, data="", timeout=5.0):
+        self._history.append((command, data))
+        # 0x30 с флаг „2“ (4-то поле) = отваряне на фактура
+        fields = data.split(",")
+        is_invoice = (command == icp_cmd.CMD_OPEN_FISCAL_RECEIPT
+                      and len(fields) > 3 and fields[3] == "2")
+        key = (command, "invoice") if is_invoice else command
+        status_bytes = self._script.get(key, _ICP_OK)
+        text = "472" if command == icp_cmd.CMD_GET_LAST_DOCUMENT_NUMBER else ""
+        return text, self._parse_status(status_bytes), status_bytes
+
+
+def _icp_app(firmware: str, allow_fallback: bool, script: dict):
+    config = AppConfig(
+        server=ServerConfig(),
+        invoice=InvoiceConfig(allow_comment_fallback=allow_fallback),
+        printers=[PrinterConfig(id="icp1", driver="datecs.icp",
+                                transport="serial", port="/dev/null")],
+    )
+    app = create_app(config)
+    registry = app.state.registry
+    registry.get("icp1")._icp_info_cache = IcpDeviceInfo(
+        firmware_version=firmware)
+    history: list = []
+    registry.make_driver = lambda pid: _ScriptedIcp(script, history)
+    return TestClient(app), history
+
+
+_INVOICE_PAYLOAD = {
+    "uniqueSaleNumber": "DT636533-0020-0010110",
+    "customerName": "ACME OOD",
+    "customerEik": "123456789",
+    "items": [{"type": "sale", "text": "Хляб", "quantity": 1,
+               "unitPrice": 1.50, "taxGroup": 1}],
+    "payments": [{"amount": 1.50, "paymentType": "cash"}],
+}
+
+
+def _cmds(history):
+    return [c for c, _d in history]
+
+
+def test_invoice_old_firmware_refused_without_any_receipt():
+    """P1: FW < 3.00, fallback изключен → E412, нищо не е отворено/печатано."""
+    client, history = _icp_app("2.01 01Jan20 1200", False, {})
+    r = client.post("/printers/icp1/invoice", json=_INVOICE_PAYLOAD)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["messages"][0]["code"] == "E412"
+    assert body["messages"][0]["text"] == (
+        "Native fiscal invoice not supported by this device/firmware")
+    assert icp_cmd.CMD_OPEN_FISCAL_RECEIPT not in _cmds(history)
+    assert icp_cmd.CMD_FISCAL_RECEIPT_COMMENT not in _cmds(history)
+    assert history == []
+
+
+def test_invoice_native_e401_aborts_without_second_receipt():
+    """P2: native, апаратът отхвърля с E401 → abort, E412, без втори бон."""
+    client, history = _icp_app(
+        "3.00 22Jul25 1109", False,
+        {(icp_cmd.CMD_OPEN_FISCAL_RECEIPT, "invoice"): _ICP_E401})
+    r = client.post("/printers/icp1/invoice", json=_INVOICE_PAYLOAD)
+    body = r.json()
+    assert body["ok"] is False
+    assert body["messages"][0]["code"] == "E412"
+    assert "E401" in [m["code"] for m in body["messages"]]
+    # точно: отваряне на фактура → анулиране; нищо след това
+    assert _cmds(history) == [icp_cmd.CMD_OPEN_FISCAL_RECEIPT,
+                              icp_cmd.CMD_ABORT_FISCAL_RECEIPT]
+    assert history[0][1].split(",")[3] == "2"  # флаг „фактура“
+
+
+def test_invoice_native_happy_path_unchanged():
+    """Native фактура без грешка — печата се, както досега."""
+    client, history = _icp_app("3.00 22Jul25 1109", False, {})
+    r = client.post("/printers/icp1/invoice", json=_INVOICE_PAYLOAD)
+    body = r.json()
+    assert body["ok"] is True
+    assert body["receiptNumber"] == "472"
+    assert icp_cmd.CMD_FISCAL_RECEIPT_COMMENT not in _cmds(history)
+    assert icp_cmd.CMD_CLOSE_FISCAL_RECEIPT in _cmds(history)
+
+
+def test_invoice_comment_fallback_when_explicitly_allowed(caplog):
+    """P3: allow_comment_fallback=true → старият път + предупреждение в лога."""
+    client, history = _icp_app("2.01 01Jan20 1200", True, {})
+    with caplog.at_level("WARNING"):
+        r = client.post("/printers/icp1/invoice", json=_INVOICE_PAYLOAD)
+    body = r.json()
+    assert body["ok"] is True
+    cmds = _cmds(history)
+    assert cmds[0] == icp_cmd.CMD_OPEN_FISCAL_RECEIPT
+    assert history[0][1].split(",")[3] == "1"  # обикновен бон
+    comments = [d for c, d in history if c == icp_cmd.CMD_FISCAL_RECEIPT_COMMENT]
+    assert comments[0] == "===== ФАКТУРА ====="
+    assert any("allow_comment_fallback=true" in rec.getMessage()
+               for rec in caplog.records if rec.levelname == "WARNING")
+
+
+def test_invoice_e401_fallback_when_explicitly_allowed():
+    """P3: при разрешен fallback E401 → abort и бон с коментари (наследено)."""
+    client, history = _icp_app(
+        "3.00 22Jul25 1109", True,
+        {(icp_cmd.CMD_OPEN_FISCAL_RECEIPT, "invoice"): _ICP_E401})
+    r = client.post("/printers/icp1/invoice", json=_INVOICE_PAYLOAD)
+    assert r.json()["ok"] is True
+    cmds = _cmds(history)
+    assert cmds[:3] == [icp_cmd.CMD_OPEN_FISCAL_RECEIPT,
+                        icp_cmd.CMD_ABORT_FISCAL_RECEIPT,
+                        icp_cmd.CMD_OPEN_FISCAL_RECEIPT]
+    assert icp_cmd.CMD_FISCAL_RECEIPT_COMMENT in cmds
+
+
+def test_invoice_setting_defaults_to_false():
+    """Настройката е изключена по подразбиране — в кода и в YAML."""
+    from odoo_erpnet_fp.config.loader import _yaml_to_app_config
+    assert AppConfig().invoice.allow_comment_fallback is False
+    assert _yaml_to_app_config({}).invoice.allow_comment_fallback is False
+    assert _yaml_to_app_config(
+        {"invoice": {"allow_comment_fallback": True}}
+    ).invoice.allow_comment_fallback is True
+
+
+def test_invoice_on_datecs_pm_is_e501(client, mock_device):
+    """P4: Datecs PM → E501, без команда към апарата (непроменено)."""
+    r = client.post("/printers/fp1/invoice", json=_INVOICE_PAYLOAD)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["messages"][0]["code"] == "E501"
+    assert mock_device.history == []

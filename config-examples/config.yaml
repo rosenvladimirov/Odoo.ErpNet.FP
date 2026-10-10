@@ -488,6 +488,15 @@ printers:
 # standalone units are covered only if networked via a Polimex LAN
 # converter (then they're normal WebSDK bus devices).
 
+# ─── Invoice (POST /printers/{id}/invoice) ──────────────────────────
+# allow_comment_fallback: false (по подразбиране) — апарат без native
+# фактура (Datecs ICP FW < 3.00) или отказ на native фактурата (E401) →
+# ok=False, E412, без отпечатан документ. true връща стария резервен
+# вариант: обикновен бон с коментари „ФАКТУРА“ — той НЕ е фактура по
+# Наредба Н-18; включвай само съзнателно.
+invoice:
+  allow_comment_fallback: false
+
 # ─── KEP (qualified e-signature token) ──────────────────────────────
 # Хардуерният КЕП токен като устройство — за НОИ ЕРБЛ mutual-TLS
 # (дърпане/качване болнични) + PKCS7 detached подпис (заменя StampIT).

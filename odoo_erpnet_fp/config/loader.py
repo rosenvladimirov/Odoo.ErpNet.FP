@@ -824,9 +824,25 @@ class KepConfig:
 
 
 @dataclass
+class InvoiceConfig:
+    """Поведение на `/printers/{id}/invoice` (секция `invoice:` в YAML).
+
+    `allow_comment_fallback` — разрешава стария резервен вариант: обикновен
+    фискален бон с коментари „ФАКТУРА“ отгоре, когато апаратът няма native
+    фактура (FW < 3.00) или я отхвърли с E401. Такъв бон НЕ е фактура по
+    Наредба Н-18, затова по подразбиране е изключено → ok=False, E412,
+    без отпечатан документ. Включва се само съзнателно, за обратна
+    съвместимост.
+    """
+
+    allow_comment_fallback: bool = False
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     kep: KepConfig = field(default_factory=KepConfig)
+    invoice: InvoiceConfig = field(default_factory=InvoiceConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
     pinpads: list[PinpadConfig] = field(default_factory=list)
     scales: list[ScaleConfig] = field(default_factory=list)
@@ -1451,9 +1467,16 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
         pkcs11_module=kep_data.get("pkcs11_module"),
     )
 
+    invoice_data = data.get("invoice", {}) or {}
+    invoice = InvoiceConfig(
+        allow_comment_fallback=bool(
+            invoice_data.get("allow_comment_fallback", False)),
+    )
+
     return AppConfig(
         server=server,
         kep=kep,
+        invoice=invoice,
         printers=printers,
         pinpads=pinpads,
         scales=scales,

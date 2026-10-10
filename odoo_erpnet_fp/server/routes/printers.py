@@ -582,8 +582,39 @@ async def print_receipt(
 # ─── 5b. POST /{id}/invoice ───────────────────────────────────────
 
 
-async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptResult:
-    """ICP invoice path — native (FW 3.00+) OR free-text fallback."""
+_E412_NO_NATIVE_INVOICE = "Native fiscal invoice not supported by this device/firmware"
+
+
+def _invoice_comment_fallback_allowed(request: Request) -> bool:
+    """Настройката `invoice.allow_comment_fallback` (по подразбиране False)."""
+    cfg = getattr(request.app.state, "config", None)
+    inv_cfg = getattr(cfg, "invoice", None)
+    return bool(getattr(inv_cfg, "allow_comment_fallback", False))
+
+
+def _no_native_invoice_result(extra=()) -> PrintReceiptResult:
+    """ok=False с E412 — апаратът не издаде истинска фактура и нищо не е
+    отпечатано вместо нея. `extra` носи грешките на апарата за диагностика."""
+    return PrintReceiptResult(
+        ok=False,
+        messages=[StatusMessage(
+            type="error", code="E412", text=_E412_NO_NATIVE_INVOICE,
+        )] + [
+            StatusMessage(type=m.type.value, code=m.code, text=m.text)
+            for m in extra
+        ],
+    )
+
+
+async def _icp_print_invoice(
+    registry, id: str, inv: Invoice, allow_comment_fallback: bool = False,
+) -> PrintReceiptResult:
+    """ICP фактура — само native (FW 3.00+).
+
+    Резервният вариант (обикновен бон с коментари „ФАКТУРА“) се ползва
+    единствено при `allow_comment_fallback=True`; иначе апарат без native
+    фактура или отказ с E401 дават ok=False, E412, без отпечатан документ.
+    """
     from ...drivers.fiscal.datecs_icp.protocol import (
         PaymentType as IcpPT,
         TaxGroup as IcpTG,
@@ -600,6 +631,17 @@ async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                     id, inv.unique_sale_number, native,
                     inv.customer_name, inv.customer_eik, len(inv.items),
                 )
+
+                # Без native фактура и без изрично разрешен резервен
+                # вариант — отказ ПРЕДИ да се отвори какъвто и да е бон.
+                if not native and not allow_comment_fallback:
+                    _logger.warning(
+                        "INVOICE id=%s UNS=%r refused (E412): no native "
+                        "invoice (firmware %r), comment fallback disabled",
+                        id, inv.unique_sale_number,
+                        icp.info.firmware_version,
+                    )
+                    return _no_native_invoice_result()
 
                 if native:
                     st = await asyncio.to_thread(
@@ -623,10 +665,27 @@ async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                     # different EIK-type encoding, or vendor-locked).
                     if not st.ok and any(
                             "E401" in (e.code or "") for e in st.errors):
+                        if not allow_comment_fallback:
+                            # Отказ при E401: анулираме евентуално
+                            # полуотворения документ и НЕ печатаме втори бон.
+                            _logger.warning(
+                                "Native invoice rejected (E401) — aborting "
+                                "any half-opened receipt, comment fallback "
+                                "disabled → E412. Errors: %s",
+                                [(e.code, e.text) for e in st.errors],
+                            )
+                            try:
+                                await asyncio.to_thread(icp.abort_receipt)
+                            except Exception:
+                                _logger.debug("abort_receipt after E401 raised — likely no open receipt")
+                            return _no_native_invoice_result(
+                                st.messages + st.errors)
                         _logger.warning(
                             "Native invoice rejected (E401) — "
                             "aborting any half-opened receipt and "
-                            "falling back to free-text comment header. "
+                            "falling back to free-text comment header "
+                            "(invoice.allow_comment_fallback=true; the "
+                            "result is NOT a Naredba H-18 invoice). "
                             "Errors: %s",
                             [(e.code, e.text) for e in st.errors],
                         )
@@ -649,8 +708,16 @@ async def _icp_print_invoice(registry, id: str, inv: Invoice) -> PrintReceiptRes
                             inv.operator_password,
                         )
                 else:
-                    # Fallback: open normal fiscal receipt, then prefix
-                    # with comment lines (CMD_FISCAL_RECEIPT_COMMENT).
+                    # Fallback (само при invoice.allow_comment_fallback=true):
+                    # open normal fiscal receipt, then prefix with comment
+                    # lines (CMD_FISCAL_RECEIPT_COMMENT).
+                    _logger.warning(
+                        "INVOICE id=%s UNS=%r: no native invoice — printing "
+                        "a fiscal receipt with comment header "
+                        "(invoice.allow_comment_fallback=true; NOT a "
+                        "Naredba H-18 invoice)",
+                        id, inv.unique_sale_number,
+                    )
                     st = await asyncio.to_thread(
                         icp.open_receipt,
                         inv.unique_sale_number,
@@ -758,13 +825,23 @@ async def print_invoice(
     On firmware that supports native invoice opcode (Datecs ICP FW 3.00+):
       header includes recipient + EIK + address + МОЛ + ИН по ЗДДС;
       device assigns invoice number from EEPROM auto-increment.
-    On older firmware: regular fiscal receipt prefixed with comment
-      lines containing the same data — visually similar but NOT a
-      Naredba H-18 fiscal invoice.
+    On older firmware, or when the device rejects the native invoice
+      with E401: ok=False, code E412 ("Native fiscal invoice not
+      supported by this device/firmware") — nothing is printed; after
+      E401 the half-opened document is aborted and NO second receipt
+      follows.
+    Legacy behaviour only with `invoice.allow_comment_fallback: true`
+      in the config (default false): a regular fiscal receipt prefixed
+      with comment lines containing the same data — visually similar
+      but NOT a Naredba H-18 fiscal invoice (logged as a warning).
+    Datecs PM driver: E501 (not implemented).
     """
     registry = _require_printer(request, id)
     if registry.is_icp(id):
-        return await _icp_print_invoice(registry, id, invoice)
+        return await _icp_print_invoice(
+            registry, id, invoice,
+            allow_comment_fallback=_invoice_comment_fallback_allowed(request),
+        )
     return PrintReceiptResult(
         ok=False,
         messages=[StatusMessage(

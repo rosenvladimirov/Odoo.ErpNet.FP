@@ -203,8 +203,9 @@ class Invoice(Receipt):
 
     On firmware that supports native invoice (Datecs ICP FW 3.00+),
     these fields are passed verbatim to `open_invoice_receipt`.
-    On older firmware, the proxy falls back to a regular fiscal
-    receipt prefixed with comment lines containing the same data.
+    On older firmware (or E401 rejection) the proxy answers ok=False,
+    E412 and prints nothing; the legacy comment-header receipt is used
+    only with `invoice.allow_comment_fallback: true` in the config.
     """
 
     customer_name: str = Field(..., alias="customerName")
