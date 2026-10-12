@@ -1,4 +1,16 @@
 
+## [3.0.15] — 2026-10-12
+
+### Fixed — Datecs PM: a line discount was printed as a SURCHARGE
+
+- `register_sale` (0x31) and `sale_programmed` (0x3A) sent `DiscountType`
+  **`1`** for `discount-percent`. In the PM protocol `1` is *surcharge by
+  percentage*; *discount by percentage* is **`2`** (the C# ErpNet.FP maps it
+  the same way). A 25 % discount on 79.00 came out as "Надбавка 25% +19.75",
+  total 98.74 (BlueCash-50, 12.10.2026; the receipt was voided).
+- Tests: `tests/test_pm_facade.py` — the discount type for both commands, and
+  no discount type when there is no discount.
+
 ## [3.0.14] — 2026-10-10
 
 ### Fixed — `/printers/{id}/invoice` no longer prints a comment receipt instead of an invoice

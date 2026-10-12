@@ -552,7 +552,7 @@ class PmDevice:
             vat_group,
             f"{price:.2f}",
             f"{quantity:.3f}",
-            None if discount_percent is None else "1",  # DiscountType: %
+            None if discount_percent is None else "2",  # DiscountType: 2 = отстъпка в % (1 е НАДБАВКА)
             None if discount_percent is None else f"{discount_percent:.2f}",
             department,
         )
@@ -585,7 +585,7 @@ class PmDevice:
             str(plu_number),
             f"{quantity:.3f}",
             None if price is None else f"{price:.2f}",
-            None if discount_percent is None else "1",
+            None if discount_percent is None else "2",  # DiscountType: 2 = отстъпка в % (1 е НАДБАВКА)
             None if discount_percent is None else f"{discount_percent:.2f}",
         )
         resp = self._exchange(commands.CMD_SALE_PROGRAMMED, data)

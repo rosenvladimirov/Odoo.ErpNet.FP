@@ -165,3 +165,38 @@ def test_three_consecutive_naks_raises():
     pm.open()
     with pytest.raises(Exception):  # TransportError (re-raised after retries)
         pm.read_status()
+
+
+# ---- Отстъпка на ред (Баръмски, 12.10.2026: бонът излезе с „Надбавка 25%“) ----
+# PDF §4.12 / §4.27: DiscountType 1 = надбавка %, 2 = отстъпка %, 3 = надбавка сума,
+# 4 = отстъпка сума. Отстъпката от Odoo е отстъпка — трябва "2", не "1".
+
+
+def test_register_sale_discount_is_discount_not_surcharge():
+    mock = MockDevice()
+    mock.expect_static(0x31, data=codec.encode_data(0, "59.25"), status=b"\x80" * 8)
+    pm = PmDevice(mock)
+    pm.open()
+    pm.register_sale("Shoe", 79.00, 1.0, vat_group="Б", discount_percent=25.0)
+    fields = codec.decode_data(mock.history[-1].data)
+    assert fields[4:6] == ["2", "25.00"]
+
+
+def test_sale_programmed_discount_is_discount_not_surcharge():
+    mock = MockDevice()
+    mock.expect_static(0x3A, data=codec.encode_data(0, "59.25"), status=b"\x80" * 8)
+    pm = PmDevice(mock)
+    pm.open()
+    pm.sale_programmed(7, 1.0, price=79.00, discount_percent=25.0)
+    fields = codec.decode_data(mock.history[-1].data)
+    assert fields[3:5] == ["2", "25.00"]
+
+
+def test_sale_without_discount_sends_no_discount_type():
+    mock = MockDevice()
+    mock.expect_static(0x3A, data=codec.encode_data(0, "79.00"), status=b"\x80" * 8)
+    pm = PmDevice(mock)
+    pm.open()
+    pm.sale_programmed(7, 1.0, price=79.00)
+    fields = codec.decode_data(mock.history[-1].data)
+    assert fields[3:5] == ["", ""]
