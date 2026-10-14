@@ -71,13 +71,22 @@ def app_with_mock(mock_device):
         )
 
     registry._make_pm = _fake_pm  # type: ignore[method-assign]
-
     return app
 
 
 @pytest.fixture
 def client(app_with_mock):
     return TestClient(app_with_mock)
+
+
+def _known_device(client):
+    """Познат апарат (както след първия /status) — бонът не пита за ФП."""
+    from odoo_erpnet_fp.drivers.fiscal.datecs_icp.protocol import IcpDeviceInfo
+    client.app.state.registry.get("fp1")._icp_info_cache = IcpDeviceInfo(
+        manufacturer="Datecs", model="PM (v2.11.4)", firmware_version="",
+        serial_number="DA056718", fiscal_memory_serial_number="79056718",
+        tax_identification_number="",
+    )
 
 
 # ─── 404 + healthz ────────────────────────────────────────────────
@@ -142,6 +151,7 @@ def test_status_returns_ok_envelope(client):
 
 def test_print_receipt_happy_path(client, mock_device):
     """End-to-end receipt: open + sale + subtotal + payment + close."""
+    _known_device(client)
     # Pre-canned responses for each command
     mock_device.expect_static(
         0x30, data=codec.encode_data(0, 472), status=b"\x80" * 8  # open → slip 472
@@ -179,6 +189,8 @@ def test_print_receipt_happy_path(client, mock_device):
     assert body["ok"] is True
     assert body["receiptNumber"] == "472"
     assert body["receiptAmount"] == 1.50
+    assert body["fiscalMemorySerialNumber"] == "79056718"
+    assert body["uniqueSaleNumber"] == "DT636533-0020-0010110"
     assert "receiptDateTime" in body
 
     # Verify the wire calls
@@ -188,6 +200,7 @@ def test_print_receipt_happy_path(client, mock_device):
 
 def test_print_receipt_with_card_payment(client, mock_device):
     """Card payment maps to Datecs PM payment_type=1."""
+    _known_device(client)
     mock_device.expect_static(0x30, data=codec.encode_data(0, 100), status=b"\x80" * 8)
     mock_device.expect_static(
         0x31, data=codec.encode_data(0, "10.00"), status=b"\x80" * 8
@@ -229,6 +242,7 @@ def test_print_receipt_with_card_payment(client, mock_device):
 
 def test_print_receipt_device_error_returns_ok_false(client, mock_device):
     """Driver FiscalError → ok:false envelope, not HTTP 500."""
+    _known_device(client)
     mock_device.expect_static(
         0x30,
         data=codec.encode_data(-100008),  # ERR_NOT_READY
@@ -369,7 +383,7 @@ def _storno_payload(**over):
         "items": [{"type": "sale", "text": "ADIDAS ALTA SPORT G27128 (22)",
                    "quantity": 1, "unitPrice": 30.67, "taxGroup": 2,
                    "pluNumber": 1169}],
-        "payments": [{"amount": 30.67, "paymentType": "card"}],
+        "payments": [{"amount": 30.67, "paymentType": "cash"}],
     }
     payload.update(over)
     return payload
@@ -377,6 +391,7 @@ def _storno_payload(**over):
 
 def test_reversal_opens_storno_then_prints_like_a_receipt(client, mock_device):
     """Сторно бон: 0x2B вместо 0x30, после продажба, плащане, затваряне."""
+    _known_device(client)
     for cmd, data in ((0x2B, codec.encode_data(0, 111)),
                       (0x3A, codec.encode_data(0, "30.67")),
                       (0x33, codec.encode_data(0, "30.67")),
@@ -397,10 +412,25 @@ def test_reversal_opens_storno_then_prints_like_a_receipt(client, mock_device):
     assert fields[3:] == ["0", "109", "14-10-26 18:49:29", "79056718",
                           "", "", "", "DA056718-0006-0000046"]
     pay = codec.decode_data([q for q in mock_device.history if q.cmd == 0x35][0].data)
-    assert pay[0] == "1"  # карта, като в оригинала
+    assert pay[0] == "0"  # в брой
+    assert body["fiscalMemorySerialNumber"] == "79056718"
+    assert body["uniqueSaleNumber"] == "DA056718-0006-0000046"
+
+
+def test_reversal_by_card_refused_before_any_document(client, mock_device):
+    """Сторно с карта без пинпад: апаратът би го отказал при плащането и
+    документът ще се анулира (14.10.2026: № 112, 113) — отказ преди 0x2B."""
+    for pay_type in ("card", "bank"):
+        r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload(
+            payments=[{"amount": 30.67, "paymentType": pay_type}]))
+        body = r.json()
+        assert body["ok"] is False
+        assert body["messages"][0]["code"] == "E_STORNO_CARD_NEEDS_PINPAD"
+    assert mock_device.history == []
 
 
 def test_reversal_reason_maps_to_device_code(client, mock_device):
+    _known_device(client)
     for cmd in (0x2B, 0x3A, 0x33, 0x35, 0x38):
         mock_device.expect_static(cmd, data=codec.encode_data(0, 5), status=b"\x80" * 8)
     r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload(reason="refund"))
@@ -419,6 +449,7 @@ def test_reversal_bad_original_data_sends_nothing(client, mock_device):
 
 
 def test_reversal_device_refusal_is_ok_false(client, mock_device):
+    _known_device(client)
     mock_device.expect_static(0x2B, data=codec.encode_data(-111024), status=b"\x80" * 8)
     r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload())
     body = r.json()
@@ -603,3 +634,32 @@ def test_invoice_on_datecs_pm_is_e501(client, mock_device):
     assert body["ok"] is False
     assert body["messages"][0]["code"] == "E501"
     assert mock_device.history == []
+
+
+def test_receipt_reads_fm_serial_when_cache_is_empty(client, mock_device, monkeypatch):
+    """Празен кеш (нов апарат) — ФП се чете от апарата веднъж и се пази.
+    Досега отговорът при Datecs PM винаги носеше празен ФП."""
+    from odoo_erpnet_fp.drivers.fiscal.datecs_pm import PmDevice
+    registry = client.app.state.registry
+    registry.get("fp1")._icp_info_cache = None
+    calls = []
+
+    def fake_detect(self):
+        calls.append(1)
+        return {"model": "BC-50MX", "serial_number": "DA056718",
+                "fiscal_memory_serial_number": "79056718"}
+
+    monkeypatch.setattr(PmDevice, "detect", fake_detect)
+    monkeypatch.setattr(registry, "persist_icp_info_cache", lambda: None)
+    for cmd, data in ((0x30, codec.encode_data(0, 5)), (0x31, codec.encode_data(0, "1.00")),
+                      (0x33, codec.encode_data(0, "1.00")), (0x35, codec.encode_data(0, "0.00")),
+                      (0x38, codec.encode_data(0, 5))):
+        mock_device.expect_static(cmd, data=data, status=b"\x80" * 8)
+    payload = {"uniqueSaleNumber": "DA056718-0001-0000005",
+               "items": [{"type": "sale", "text": "x", "unitPrice": 1.0, "taxGroup": 2}],
+               "payments": [{"amount": 1.0, "paymentType": "cash"}]}
+    first = client.post("/printers/fp1/receipt", json=payload).json()
+    assert first["fiscalMemorySerialNumber"] == "79056718"
+    second = client.post("/printers/fp1/receipt", json=payload).json()
+    assert second["fiscalMemorySerialNumber"] == "79056718"
+    assert len(calls) == 1, "ФП трябва да се чете само веднъж"

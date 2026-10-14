@@ -265,6 +265,10 @@ class PrintReceiptResult(_CamelModel):
     fiscal_memory_serial_number: Optional[str] = Field(
         None, alias="fiscalMemorySerialNumber"
     )
+    unique_sale_number: Optional[str] = Field(
+        None, alias="uniqueSaleNumber",
+        description="УНП, с който е издаден бонът — Odoo го пази за сторно",
+    )
 
 
 class CashAmountResult(_CamelModel):

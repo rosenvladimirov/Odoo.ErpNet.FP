@@ -1,3 +1,21 @@
+## [3.0.17] — 2026-10-14
+
+### Fixed — Datecs PM: the receipt answer carries the FM serial and the UNS
+
+- `fiscalMemorySerialNumber` was always empty on Datecs PM: the route read
+  `PrinterEntry.info`, which is never set for PM. It now comes from the device
+  info cache; with an empty cache the device is asked once (the connection is
+  already open) and the answer is kept. Without it Odoo could not storno.
+- The answer now also returns `uniqueSaleNumber` (the UNS the receipt was
+  printed with), so Odoo can store it for a later storno.
+
+### Changed — a storno paid by card is refused before any document is opened
+
+- `E_STORNO_CARD_NEEDS_PINPAD` when a storno pays with card/bank on Datecs PM:
+  the device refuses it at payment time (-112201) and the half-printed
+  document has to be cancelled (14.10.2026: documents 112, 113). Pay the
+  storno in cash or void the card payment first.
+
 ## [3.0.16] — 2026-10-14
 
 ### Added — Datecs PM: storno receipt (`/printers/{id}/reversalreceipt`)

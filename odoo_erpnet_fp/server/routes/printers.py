@@ -455,6 +455,20 @@ async def _print_receipt_impl(
         return PrintReceiptResult(ok=False, messages=[StatusMessage(
             type=MessageType.error, code="E_INVALID_STORNO", text=str(exc),
         )])
+    if storno:
+        # Сторно с карта без пинпад транзакция апаратът го отказва едва при
+        # плащането (0x35, -112201) — тогава документът вече е отворен и се
+        # анулира. Отказ тук, преди да се отвори каквото и да е.
+        card_codes = {
+            pt_adapter.to_code(pay.payment_type, cfg.driver)
+            for pay in receipt.payments
+        } & _PM_CARD_CODES
+        if card_codes:
+            return PrintReceiptResult(ok=False, messages=[StatusMessage(
+                type=MessageType.error, code="E_STORNO_CARD_NEEDS_PINPAD",
+                text="Storno paid by card needs a pinpad refund/void first; "
+                     "the device refuses it otherwise. Use cash or void the card payment.",
+            )])
 
     try:
         async with registry.with_pm(id) as pm:
@@ -576,9 +590,8 @@ async def _print_receipt_impl(
                 receipt_number=str(closed_slip or slip_number),
                 receipt_date_time=_now_iso(),
                 receipt_amount=round(receipt_amount, 2),
-                fiscal_memory_serial_number=registry.get(id).info.fiscal_memory_serial_number
-                if registry.get(id).info
-                else "",
+                fiscal_memory_serial_number=await _pm_fm_serial(registry, id, pm),
+                unique_sale_number=receipt.unique_sale_number,
             )
     except FiscalError as exc:
         _logger.warning("Fiscal error printing on %s: %s", id, exc)
@@ -891,6 +904,47 @@ async def print_reversal(
     проксито върна при печата му), `receiptDateTime` — часът на оригинала.
     """
     return await _print_receipt_impl(request, id, reversal, is_reversal=True)
+
+
+# Кодовете на плащане „КРЕДИТ“ (1) и „ДЕБ.КАРТА“ (2) при Datecs PM (адаптерът)
+_PM_CARD_CODES = {1, 2}
+
+
+async def _pm_fm_serial(registry, id: str, pm) -> str:
+    """Номерът на фискалната памет за отговора на бона.
+
+    Досега се четеше `PrinterEntry.info`, което при Datecs PM никога не се
+    попълва ⇒ отговорът винаги носеше празен ФП и Odoo не можеше да пусне
+    сторно. Вземаме го от кеша на устройството, а при празен кеш питаме
+    апарата веднъж (връзката вече е отворена) и пазим резултата.
+    """
+    entry = registry.get(id)
+    cached = getattr(entry, "_icp_info_cache", None)
+    fm = getattr(cached, "fiscal_memory_serial_number", "") if cached else ""
+    if not fm and entry.info is not None:
+        fm = getattr(entry.info, "fiscal_memory_serial_number", "") or ""
+    if fm or not hasattr(pm, "detect"):
+        return fm
+    try:
+        info = await asyncio.to_thread(pm.detect)
+    except Exception as exc:  # бонът вече е отпечатан — не го проваляме
+        _logger.warning("%s: FM serial lookup after receipt failed: %s", id, exc)
+        return ""
+    fm = (info or {}).get("fiscal_memory_serial_number", "") or ""
+    if fm:
+        entry._icp_info_cache = IcpDeviceInfo(
+            manufacturer=info.get("manufacturer", "Datecs"),
+            model=info.get("model", "PM (v2.11.4)"),
+            firmware_version=info.get("firmware_version", ""),
+            serial_number=info.get("serial_number", ""),
+            fiscal_memory_serial_number=fm,
+            tax_identification_number=info.get("tax_identification_number", ""),
+        )
+        try:
+            registry.persist_icp_info_cache()
+        except Exception:
+            pass
+    return fm
 
 
 # Основанието в заявката → кодът на апарата (протокол група C, §4.6)
