@@ -1,3 +1,23 @@
+## [3.0.16] — 2026-10-14
+
+### Added — Datecs PM: storno receipt (`/printers/{id}/reversalreceipt`)
+
+- `PmDevice.open_storno_receipt()` — cmd **0x2B** (protocol group C §4.6):
+  OpCode, OpPwd, TillNmb, Storno (0 operator error / 1 refund / 2 tax base
+  reduction), DocNum, DateTime (`DD-MM-YY hh:mm:ss`), FMNumber, NSale.
+  Sale lines, payment and close are the same commands as for a receipt.
+- The route no longer answers `E_NOT_IMPLEMENTED` on Datecs PM. Bad original
+  data (date, document number, FM number) → `E_INVALID_STORNO` before any
+  document is opened. Datecs ICP still answers `E_NOT_IMPLEMENTED`.
+- BlueCash-50MX (DA056718, 14.10.2026): the storno of receipt 109 printed as
+  document 114. ⚠️ The device refuses a storno paid with payment types 1
+  (КРЕДИТ) and 2 (ДЕБ.КАРТА) without a pinpad transaction — `-112201 Bad value
+  of parameter 1` at 0x35; the document is then cancelled (112, 113). Paid in
+  cash it passes.
+- Tests: `tests/test_pm_facade.py` (the protocol example, validation),
+  `tests/test_server.py` (full path, reason codes, bad data sends nothing,
+  device refusal).
+
 
 ## [3.0.15] — 2026-10-12
 

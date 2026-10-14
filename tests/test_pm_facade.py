@@ -61,6 +61,35 @@ def test_open_fiscal_receipt_with_nsale_uses_syntax_2():
     assert fields[2] == "DT636533-0020-0010110"
 
 
+def test_open_storno_receipt_sends_protocol_fields():
+    mock = MockDevice()
+    mock.expect_static(0x2B, data=codec.encode_data(0, 470), status=b"\x80" * 8)
+    pm = PmDevice(mock, op_code=21, op_password="21", till_number=9876)
+    pm.open()
+
+    slip = pm.open_storno_receipt(
+        storno_type=PmDevice.STORNO_OPERATOR_ERROR, doc_number=428,
+        doc_datetime="24-04-19 08:36:27", fm_number="02636571",
+        nsale="DT636497-0021-0010001",
+    )
+    assert slip == 470
+    sent = mock.history[-1]
+    assert sent.cmd == 0x2B
+    # примерът от протокола група C, §4.6
+    assert codec.decode_data(sent.data) == [
+        "21", "21", "9876", "0", "428", "24-04-19 08:36:27", "02636571",
+        "", "", "", "DT636497-0021-0010001",
+    ]
+
+
+def test_open_storno_receipt_rejects_bad_type_and_number():
+    pm = PmDevice(MockDevice())
+    with pytest.raises(ValueError):
+        pm.open_storno_receipt(3, 1, "01-01-26 00:00:00", "1")
+    with pytest.raises(ValueError):
+        pm.open_storno_receipt(0, 0, "01-01-26 00:00:00", "1")
+
+
 def test_open_fiscal_receipt_propagates_error_code():
     mock = MockDevice()
     # Error code -100001 in DATA → FiscalError

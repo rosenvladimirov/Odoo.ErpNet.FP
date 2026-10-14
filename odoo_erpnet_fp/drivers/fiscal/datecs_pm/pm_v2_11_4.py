@@ -528,6 +528,62 @@ class PmDevice:
             )
         return int(rest[0])
 
+    # Сторно основания по Наредба Н-18 → кодът на апарата (cmd 0x2B, Storno)
+    STORNO_OPERATOR_ERROR = 0
+    STORNO_REFUND = 1
+    STORNO_TAX_BASE_REDUCTION = 2
+
+    def open_storno_receipt(
+        self,
+        storno_type: int,
+        doc_number: int,
+        doc_datetime: str,
+        fm_number: str,
+        nsale: str | None = None,
+        op_code: int | None = None,
+        op_password: str | None = None,
+        till_number: int | None = None,
+    ) -> int:
+        """0x2B — Отваря сторно бон към издаден фискален бон. Връща SlipNumber.
+
+        Протокол група C, §4.6: OpCode, OpPwd, TillNmb, Storno, DocNum,
+        DateTime, FMNumber, Invoice, ToInvoice, Reason, NSale. Сторно към
+        фактура (Invoice='I') не се ползва — трите полета за фактура остават
+        празни. След отварянето редовете, плащането и затварянето са същите
+        команди като при обикновен бон (0x31/0x3A, 0x35, 0x38).
+
+        doc_number — глобалният номер на оригиналния документ (SlipNumber,
+        който апаратът върна при затварянето му). doc_datetime — във формата
+        на апарата „DD-MM-YY hh:mm:ss“. NSale — УНП на оригиналната продажба;
+        задължително, когато оригиналът е издаден от програма, а не от касиер.
+        """
+        if storno_type not in (
+            self.STORNO_OPERATOR_ERROR,
+            self.STORNO_REFUND,
+            self.STORNO_TAX_BASE_REDUCTION,
+        ):
+            raise ValueError(f"Storno type {storno_type} out of 0..2")
+        if not 1 <= int(doc_number) <= 9999999:
+            raise ValueError(f"Document number {doc_number} out of 1..9999999")
+        op = op_code if op_code is not None else self.op_code
+        pw = op_password if op_password is not None else self.op_password
+        till = till_number if till_number is not None else self.till_number
+
+        data = codec.encode_data(
+            op, pw, till, storno_type, int(doc_number), doc_datetime,
+            fm_number,
+            None,  # Invoice — не е сторно към фактура
+            None,  # ToInvoice
+            None,  # Reason — само при сторно към фактура
+            nsale,
+        )
+        resp = self._exchange(commands.CMD_OPEN_STORNO, data)
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+        if not rest:
+            raise frame.FormatError("Open storno response missing SlipNumber")
+        return int(rest[0])
+
     def register_sale(
         self,
         text: str,

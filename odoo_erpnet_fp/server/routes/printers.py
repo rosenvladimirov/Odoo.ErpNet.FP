@@ -445,19 +445,40 @@ async def _print_receipt_impl(
     cfg = registry.get(id).config
 
     if registry.is_icp(id):
+        if is_reversal:
+            return _storno_not_implemented("Datecs ICP")
         return await _icp_print_receipt(registry, id, receipt)
+
+    try:
+        storno = _storno_args(receipt) if is_reversal else None
+    except ValueError as exc:
+        return PrintReceiptResult(ok=False, messages=[StatusMessage(
+            type=MessageType.error, code="E_INVALID_STORNO", text=str(exc),
+        )])
 
     try:
         async with registry.with_pm(id) as pm:
             opened = False
             try:
-                slip_number = await asyncio.to_thread(
-                    pm.open_fiscal_receipt,
-                    nsale=receipt.unique_sale_number,
-                    invoice=False,
-                    op_code=int(receipt.operator) if receipt.operator else None,
-                    op_password=receipt.operator_password,
-                )
+                op_code = int(receipt.operator) if receipt.operator else None
+                if storno:
+                    # 0x2B — сторно бон; редовете, плащането и затварянето
+                    # по-долу са същите като при обикновения бон
+                    slip_number = await asyncio.to_thread(
+                        pm.open_storno_receipt,
+                        nsale=receipt.unique_sale_number,
+                        op_code=op_code,
+                        op_password=receipt.operator_password,
+                        **storno,
+                    )
+                else:
+                    slip_number = await asyncio.to_thread(
+                        pm.open_fiscal_receipt,
+                        nsale=receipt.unique_sale_number,
+                        invoice=False,
+                        op_code=op_code,
+                        op_password=receipt.operator_password,
+                    )
                 opened = True
 
                 receipt_amount = 0.0
@@ -863,15 +884,55 @@ async def print_reversal(
     timeout: Annotated[str | None, Query()] = None,
     asyncTimeout: Annotated[int, Query()] = 30000,
 ):
-    # cmd 0x2B (open storno document) is not yet exposed in pm_v2_11_4 —
-    # Phase 3 backlog. Return a structured error for now.
+    """Сторно бон към издаден бон (Datecs PM: cmd 0x2B, после като бон).
+
+    Редовете и плащанията идват с положителни стойности, както при бон.
+    `receiptNumber` е глобалният номер на оригиналния документ (същият, който
+    проксито върна при печата му), `receiptDateTime` — часът на оригинала.
+    """
+    return await _print_receipt_impl(request, id, reversal, is_reversal=True)
+
+
+# Основанието в заявката → кодът на апарата (протокол група C, §4.6)
+_STORNO_TYPE = {"operator-error": 0, "refund": 1, "tax-base-reduction": 2}
+
+
+def _storno_args(reversal: ReversalReceipt) -> dict:
+    """Полетата на оригиналния документ във формата на cmd 0x2B.
+
+    ValueError при данни, които апаратът така или иначе би отказал — по-добре
+    отказ тук, отколкото отворен и после отменен сторно документ.
+    """
+    digits = "".join(ch for ch in (reversal.receipt_number or "") if ch.isdigit())
+    if not digits or not 1 <= int(digits) <= 9999999:
+        raise ValueError(f"receiptNumber {reversal.receipt_number!r} is not 1..9999999")
+    raw = (reversal.receipt_date_time or "").strip().replace(" ", "T")
+    try:
+        # ISO от Odoo/ErpNet.FP: „2026-10-14T18:49:29“ (без зона и части от секундата)
+        when = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        raise ValueError(
+            f"receiptDateTime {reversal.receipt_date_time!r} is not YYYY-MM-DDTHH:MM:SS"
+        ) from None
+    fm_number = "".join(ch for ch in (reversal.fiscal_memory_serial_number or "") if ch.isdigit())
+    if not fm_number:
+        raise ValueError("fiscalMemorySerialNumber is required for a storno")
+    return {
+        "storno_type": _STORNO_TYPE[reversal.reason],
+        "doc_number": int(digits),
+        "doc_datetime": when.strftime("%d-%m-%y %H:%M:%S"),
+        "fm_number": fm_number,
+    }
+
+
+def _storno_not_implemented(driver: str) -> PrintReceiptResult:
     return PrintReceiptResult(
         ok=False,
         messages=[
             StatusMessage(
                 type=MessageType.error,
                 code="E_NOT_IMPLEMENTED",
-                text="Storno (cmd 0x2B) not yet implemented in Datecs PM facade",
+                text=f"Storno not yet implemented on {driver}",
             )
         ],
     )

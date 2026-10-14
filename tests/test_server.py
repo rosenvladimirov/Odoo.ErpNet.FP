@@ -359,22 +359,72 @@ def test_reset_endpoint_idempotent(client, mock_device):
 # ─── Not-yet-implemented stubs return ok:false (not 500) ──────────
 
 
-def test_reversal_returns_not_implemented(client):
+def _storno_payload(**over):
     payload = {
-        "uniqueSaleNumber": "DT000001-0001-0000001",
-        "receiptNumber": "0000100",
-        "receiptDateTime": "2026-05-01T12:00:00",
-        "fiscalMemorySerialNumber": "02517985",
-        "reason": "refund",
-        "items": [
-            {"type": "sale", "text": "x", "unitPrice": 1, "taxGroup": 1}
-        ],
+        "uniqueSaleNumber": "DA056718-0006-0000046",
+        "receiptNumber": "109",
+        "receiptDateTime": "2026-10-14T18:49:29",
+        "fiscalMemorySerialNumber": "79056718",
+        "reason": "operator-error",
+        "items": [{"type": "sale", "text": "ADIDAS ALTA SPORT G27128 (22)",
+                   "quantity": 1, "unitPrice": 30.67, "taxGroup": 2,
+                   "pluNumber": 1169}],
+        "payments": [{"amount": 30.67, "paymentType": "card"}],
     }
-    r = client.post("/printers/fp1/reversalreceipt", json=payload)
+    payload.update(over)
+    return payload
+
+
+def test_reversal_opens_storno_then_prints_like_a_receipt(client, mock_device):
+    """Сторно бон: 0x2B вместо 0x30, после продажба, плащане, затваряне."""
+    for cmd, data in ((0x2B, codec.encode_data(0, 111)),
+                      (0x3A, codec.encode_data(0, "30.67")),
+                      (0x33, codec.encode_data(0, "30.67")),
+                      (0x35, codec.encode_data(0, "0.00")),
+                      (0x38, codec.encode_data(0, 111))):
+        mock_device.expect_static(cmd, data=data, status=b"\x80" * 8)
+
+    r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload())
     assert r.status_code == 200
     body = r.json()
+    assert body["ok"] is True, body
+    assert body["receiptNumber"] == "111"
+
+    assert [req.cmd for req in mock_device.history] == [0x2B, 0x3A, 0x33, 0x35, 0x38]
+    fields = codec.decode_data(mock_device.history[0].data)
+    # OpCode, OpPwd, TillNmb, Storno, DocNum, DateTime, FMNumber,
+    # Invoice, ToInvoice, Reason, NSale
+    assert fields[3:] == ["0", "109", "14-10-26 18:49:29", "79056718",
+                          "", "", "", "DA056718-0006-0000046"]
+    pay = codec.decode_data([q for q in mock_device.history if q.cmd == 0x35][0].data)
+    assert pay[0] == "1"  # карта, като в оригинала
+
+
+def test_reversal_reason_maps_to_device_code(client, mock_device):
+    for cmd in (0x2B, 0x3A, 0x33, 0x35, 0x38):
+        mock_device.expect_static(cmd, data=codec.encode_data(0, 5), status=b"\x80" * 8)
+    r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload(reason="refund"))
+    assert r.json()["ok"] is True
+    assert codec.decode_data(mock_device.history[0].data)[3] == "1"
+
+
+def test_reversal_bad_original_data_sends_nothing(client, mock_device):
+    """Грешна дата на оригинала → отказ ПРЕДИ да се отвори документ."""
+    r = client.post("/printers/fp1/reversalreceipt",
+                    json=_storno_payload(receiptDateTime="14.10.2026 18:49"))
+    body = r.json()
     assert body["ok"] is False
-    assert body["messages"][0]["code"] == "E_NOT_IMPLEMENTED"
+    assert body["messages"][0]["code"] == "E_INVALID_STORNO"
+    assert mock_device.history == []
+
+
+def test_reversal_device_refusal_is_ok_false(client, mock_device):
+    mock_device.expect_static(0x2B, data=codec.encode_data(-111024), status=b"\x80" * 8)
+    r = client.post("/printers/fp1/reversalreceipt", json=_storno_payload())
+    body = r.json()
+    assert body["ok"] is False
+    # отказано отваряне ⇒ няма какво да се отменя
+    assert [req.cmd for req in mock_device.history] == [0x2B]
 
 
 def test_datetime_returns_not_implemented(client):
