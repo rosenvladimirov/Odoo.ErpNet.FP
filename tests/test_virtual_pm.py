@@ -153,6 +153,14 @@ def test_receipt_over_http(client):
     assert len(docs) == 1 and docs[0]["lines"][0]["group"] == "B"
 
 
+def test_info_reads_the_serial_before_any_status(client):
+    # Odoo иска ИН на апарата за УНП още преди първия /status (прясно прокси)
+    body = client.get("/printers/vfp").json()
+    assert body["serialNumber"] == "VT000001", body
+    assert body["fiscalMemorySerialNumber"] == "VF000001"
+    assert body["uri"].startswith("bg.dt.pm."), body  # адресът от конфигурацията остава
+
+
 def test_control_endpoints(client):
     r = client.put("/printers/vfp/virtual/faults", json={"faults": ["no_paper"]})
     assert r.status_code == 200 and r.json()["faults"] == ["no_paper"]

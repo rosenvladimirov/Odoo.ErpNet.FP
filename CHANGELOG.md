@@ -1,3 +1,15 @@
+## [3.0.20] — 2026-10-24
+
+### Fixed — Datecs PM: the device serial right after start
+
+- `GET /printers/{id}` of a Datecs PM device returned an empty
+  `serialNumber` until the first `/status`. Odoo needs the serial to hand the
+  till a batch of unique sale numbers (UNS), so a till that sold before any
+  status check could not print at all. On an empty cache the route now asks
+  the device once (8 s cap, skipped while it is printing) and keeps the answer.
+- The device info built from that cache kept an empty `uri` (also after the
+  first `/status`); it now falls back to the address from the configuration.
+
 ## [3.0.19] — 2026-10-24
 
 ### Added — reconcile interrupted receipts with the device; busy status; cash drawer

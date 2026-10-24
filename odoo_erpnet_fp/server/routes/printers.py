@@ -90,13 +90,18 @@ def _device_info(entry) -> DeviceInfo:
     cfg = entry.config
     if entry.info is not None:
         return entry.info
+    addr = cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}"
+    transport_token = {"serial": "com", "tcp": "tcp"}.get(cfg.transport, "com")
+    uri_prefix = _DRIVER_TO_URI.get(cfg.driver, "bg.unknown")
+    uri = f"{uri_prefix}.{transport_token}://{addr}"
     # Втори източник на info — cached IcpDeviceInfo от opportunistic
     # detect (status route го попълва при първи успешен probe и го
     # persist-ва на диск). Map-ваме към ErpNet.FP-style DeviceInfo.
     icp_cache = getattr(entry, "_icp_info_cache", None)
     if icp_cache is not None:
         return DeviceInfo(
-            uri=getattr(icp_cache, "uri", "") or "",
+            # кешът от detect не носи адреса — тогава е този от конфигурацията
+            uri=getattr(icp_cache, "uri", "") or uri,
             manufacturer=getattr(icp_cache, "manufacturer", "") or "Datecs",
             model=getattr(icp_cache, "model", "") or "?",
             firmware_version=getattr(icp_cache, "firmware_version", "") or "",
@@ -114,10 +119,6 @@ def _device_info(entry) -> DeviceInfo:
                 model_name=getattr(icp_cache, "model", "") or "",
             ),
         )
-    addr = cfg.port or f"{cfg.tcp_host}:{cfg.tcp_port}"
-    transport_token = {"serial": "com", "tcp": "tcp"}.get(cfg.transport, "com")
-    uri_prefix = _DRIVER_TO_URI.get(cfg.driver, "bg.unknown")
-    uri = f"{uri_prefix}.{transport_token}://{addr}"
     driver_to_model = {
         "datecs.pm": "PM (v2.11.4)",
         "datecs.icp": "Datecs ICP (auto-detect)",
@@ -159,7 +160,40 @@ async def list_printers(request: Request):
 @router.get("/{id}", response_model=DeviceInfo)
 async def printer_info(id: str, request: Request):
     registry = _require_printer(request, id)
-    return _device_info(registry.get(id))
+    entry = registry.get(id)
+    # Datecs PM: ИН на апарата иначе идва едва след първия /status, а Odoo
+    # го иска ВЕДНАГА — без него не дава УНП и касата не продава. При празен
+    # кеш питаме апарата веднъж; ако печата (заключен), не чакаме.
+    if (registry.is_pm(id) and entry.info is None
+            and getattr(entry, "_icp_info_cache", None) is None
+            and not entry.lock.locked()):
+        try:
+            async def _detect():
+                async with registry.with_driver(id) as drv:
+                    if hasattr(drv, "detect"):
+                        _cache_pm_info(registry, entry, await asyncio.to_thread(drv.detect))
+            await asyncio.wait_for(_detect(), timeout=8)
+        except Exception as exc:  # noqa: BLE001 — информацията е best-effort
+            _logger.debug("%s: PM detect on info failed: %s", id, exc)
+    return _device_info(entry)
+
+
+def _cache_pm_info(registry, entry, info) -> None:
+    """Запомня отговора на `detect` на PM апарат (и на диска)."""
+    if not info:
+        return
+    entry._icp_info_cache = IcpDeviceInfo(
+        manufacturer=info.get("manufacturer", "Datecs"),
+        model=info.get("model", "PM (v2.11.4)"),
+        firmware_version=info.get("firmware_version", ""),
+        serial_number=info.get("serial_number", ""),
+        fiscal_memory_serial_number=info.get("fiscal_memory_serial_number", ""),
+        tax_identification_number=info.get("tax_identification_number", ""),
+    )
+    try:
+        registry.persist_icp_info_cache()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ─── 3. GET /{id}/status ──────────────────────────────────────────
