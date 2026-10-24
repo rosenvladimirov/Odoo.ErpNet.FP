@@ -228,6 +228,14 @@ class PrinterRegistry:
             if not cfg.tcp_host or not cfg.tcp_port:
                 raise ValueError(f"TCP printer {cfg.id} needs tcp_host + tcp_port")
             transport = TcpTransport(host=cfg.tcp_host, port=cfg.tcp_port)
+        elif cfg.transport == "virtual":
+            # виртуален апарат за тестове и пясъчник — без хардуер (transport_virtual.py)
+            from ..drivers.fiscal.datecs_pm.transport_virtual import VirtualPmTransport
+            transport = VirtualPmTransport(
+                printer_id=cfg.id,
+                journal_path=cfg.extras.get("virtual_journal"),
+                faults=cfg.extras.get("virtual_faults"),
+            )
         else:
             raise NotImplementedError(f"Transport {cfg.transport!r} not supported for PM")
         return PmDevice(

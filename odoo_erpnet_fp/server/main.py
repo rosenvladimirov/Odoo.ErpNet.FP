@@ -386,6 +386,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     )
     from .routes.pinpads import router as pinpads_router
     from .routes.printers import router as printers_router
+    from .routes.virtual import router as virtual_router
     from .routes.readers import router as readers_router
     from .routes.scales import router as scales_router
     from .routes.cameras import router as cameras_router
@@ -407,6 +408,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.nssi import router as nssi_router
     from .routes.kep import router as kep_router
     app.include_router(printers_router)
+    app.include_router(virtual_router)
     app.include_router(pinpads_router)
     app.include_router(scales_router)
     app.include_router(readers_router)

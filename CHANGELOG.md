@@ -1,3 +1,21 @@
+## [3.0.18] — 2026-10-24
+
+### Added — a virtual Datecs PM device (`transport: virtual`) for tests and sandboxes
+
+- A printer with `driver: datecs.pm` and `transport: virtual` needs no hardware:
+  the device is simulated at the frame level (`transport_virtual.py`), so the PM
+  facade, the routes and the answer parsing run their real code. It keeps a
+  journal of the "printed" documents (receipts, stornos, Z, cash in/out) per
+  printer, optionally as JSON (`extras.virtual_journal`).
+- Faults can be injected (`extras.virtual_faults` or
+  `PUT /printers/{id}/virtual/faults`): `no_paper`, `error_on_open`,
+  `error_on_close`, `timeout_on_close` — the last one records the receipt but
+  never answers, the dangerous case an idempotent print has to survive.
+- `GET /printers/{id}/virtual` (journal and state), `POST /printers/{id}/virtual/reset`.
+  These routes answer only for virtual printers (404 for real devices).
+- A repeated SEQ inside one connection gets the same answer without running the
+  command again, as the device does — so the facade's retries never print twice.
+
 ## [3.0.17] — 2026-10-14
 
 ### Fixed — Datecs PM: the receipt answer carries the FM serial and the UNS

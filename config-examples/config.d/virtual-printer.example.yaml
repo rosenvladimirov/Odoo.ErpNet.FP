@@ -1,0 +1,13 @@
+# Виртуален апарат Datecs PM — за тестове и пясъчник, без хардуер.
+# Документите се пишат в дневник (по желание и в JSON файл); грешки се
+# включват от extras.virtual_faults или с PUT /printers/vfp/virtual/faults.
+printers:
+  - id: vfp
+    driver: datecs.pm
+    transport: virtual
+    operator: "1"
+    operator_password: "0000"
+    till_number: 1
+    extras:
+      virtual_journal: data/virtual_vfp.json
+      # virtual_faults: [no_paper]   # no_paper | error_on_open | error_on_close | timeout_on_close
