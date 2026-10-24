@@ -407,6 +407,9 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.zen_sync import router as zen_sync_router
     from .routes.nssi import router as nssi_router
     from .routes.kep import router as kep_router
+    # дневникът по УНП: най-много един бон на (принтер, вид, УНП) — Ф2
+    from .receipt_journal import ReceiptJournal
+    app.state.receipt_journal = ReceiptJournal()
     app.include_router(printers_router)
     app.include_router(virtual_router)
     app.include_router(pinpads_router)
@@ -526,6 +529,9 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "version": _read_version(),
             **_inventory(request),
             "shifts": shift_registry.all_serials(),
+            # функционални флагове (не номер на версия): Odoo ги чете, за да
+            # знае дали проксито пази от двоен бон по УНП (receipt_journal.py)
+            "features": {"idempotentReceipt": True, "receiptByUns": True},
         }
 
     @app.get("/server/info")

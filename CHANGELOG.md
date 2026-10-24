@@ -1,5 +1,22 @@
 ## [3.0.18] — 2026-10-24
 
+### Added — one receipt per UNS, even when interrupted (receipt journal)
+
+- Every receipt and storno with a `uniqueSaleNumber` goes through a journal
+  keyed by (printer, kind, UNS) in SQLite (`ODOO_ERPNET_FP_RECEIPT_JOURNAL`,
+  default `/app/data/receipt_journal.sqlite`; in memory when the disk is not
+  writable). A repeated POST for a printed receipt returns the stored result
+  (`I_ALREADY_PRINTED`) and prints nothing; a POST while the same receipt is
+  still printing waits for it.
+- A failure while paying or closing leaves the receipt `pending` — it may be
+  printed. Any further POST answers `E_RECEIPT_UNKNOWN` and does NOT print
+  until the state is resolved: `GET /printers/{id}/receipt/{uns}`, then
+  `POST /printers/{id}/receipt/{uns}/resolve?state=done|failed` (admin token).
+  A failure before payment (no paper, open error) is `failed` and may be retried.
+- A storno carries the original sale's UNS and one sale may have several
+  partial returns: its key adds a fingerprint of the items and payments.
+- `/healthz` announces `features: {idempotentReceipt, receiptByUns}`.
+
 ### Added — a virtual Datecs PM device (`transport: virtual`) for tests and sandboxes
 
 - A printer with `driver: datecs.pm` and `transport: virtual` needs no hardware:

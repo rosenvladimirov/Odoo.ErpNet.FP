@@ -8,12 +8,14 @@ so existing clients (e.g. `l10n_bg_erp_net_fp`) work unchanged.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
+from .. import receipt_journal as rj
 from ...drivers.fiscal.datecs_pm.errors import FiscalError
 from ...drivers.fiscal.datecs_icp.protocol import IcpDeviceInfo
 from ..adapters import messages as msg_adapter
@@ -393,7 +395,9 @@ async def _icp_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                             )
                         receipt_amount += float(item.quantity) * float(item.unit_price)
 
+                rj.mark("paying")
                 if not receipt.payments:
+                    rj.mark("closing")  # пълното плащане затваря бона
                     st = await asyncio.to_thread(icp.full_payment)
                 else:
                     for pay in receipt.payments:
@@ -406,6 +410,7 @@ async def _icp_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                             raise RuntimeError(
                                 "; ".join(e.text for e in st.errors)
                             )
+                    rj.mark("closing")
                     st = await asyncio.to_thread(icp.close_receipt)
 
                 if not st.ok:
@@ -557,6 +562,8 @@ async def _print_receipt_impl(
                         "skipping, payment_total will compute total", id, _exc,
                     )
 
+                # оттук нататък неуспехът значи „може би е отпечатан“ (дневникът по УНП)
+                rj.mark("paying")
                 if not receipt.payments:
                     await asyncio.to_thread(pm.payment_total, payment_type=0)
                 else:
@@ -576,6 +583,7 @@ async def _print_receipt_impl(
                             amount=pay.amount,
                         )
 
+                rj.mark("closing")
                 closed_slip = await asyncio.to_thread(pm.close_fiscal_receipt)
             except Exception:
                 if opened:
@@ -610,7 +618,59 @@ async def print_receipt(
     timeout: Annotated[str | None, Query()] = None,
     asyncTimeout: Annotated[int, Query()] = 30000,
 ):
-    return await _print_receipt_impl(request, id, receipt)
+    return await _idempotent(request, id, "sale", receipt,
+                             lambda: _print_receipt_impl(request, id, receipt))
+
+
+def _idempotent(request: Request, id: str, kind: str, receipt, run):
+    """Най-много един бон на (принтер, вид, УНП) — receipt_journal.py (Ф2)."""
+    _require_printer(request, id)
+    return rj.idempotent_print(
+        getattr(request.app.state, "receipt_journal", None), id, kind,
+        getattr(receipt, "unique_sale_number", None), run,
+        to_dict=lambda r: r.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        from_dict=PrintReceiptResult.model_validate,
+    )
+
+
+@router.get("/{id}/receipt/{uns}")
+async def receipt_by_uns(id: str, uns: str, request: Request, kind: str = "sale") -> dict:
+    """Какво знае проксито за бона с този УНП: done / failed / pending (неизвестно)."""
+    _require_printer(request, id)
+    journal = getattr(request.app.state, "receipt_journal", None)
+    row = journal.get(id, kind, uns) if journal else None
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No receipt with UNS {uns!r}")
+    return row
+
+
+@router.post("/{id}/receipt/{uns}/resolve")
+async def resolve_receipt(
+    id: str, uns: str, request: Request,
+    state_: Annotated[str, Query(alias="state")],
+    kind: str = "sale",
+    receipt_number: Annotated[str | None, Query(alias="receiptNumber")] = None,
+    x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
+) -> dict:
+    """Ръчно решение за прекъснат бон (pending) след проверка на апарата:
+    done — бонът е отпечатан (повторна заявка вече връща този резултат),
+    failed — не е отпечатан (повторна заявка ще печата). Иска администратор."""
+    from .admin import _check_token
+    _check_token(x_admin_token)
+    _require_printer(request, id)
+    if state_ not in ("done", "failed"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "state must be done or failed")
+    journal = request.app.state.receipt_journal
+    row = journal.get(id, kind, uns)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No receipt with UNS {uns!r}")
+    result = row["result"] or {}
+    if state_ == "done":
+        result = {"ok": True, "receiptNumber": receipt_number, "uniqueSaleNumber": uns,
+                  "messages": [{"type": "info", "code": "I_RESOLVED",
+                                "text": "Resolved by an administrator after checking the device."}]}
+    journal.put(id, kind, uns, state=state_, stage="resolved", result=result)
+    return journal.get(id, kind, uns)
 
 
 # ─── 5b. POST /{id}/invoice ───────────────────────────────────────
@@ -903,7 +963,18 @@ async def print_reversal(
     `receiptNumber` е глобалният номер на оригиналния документ (същият, който
     проксито върна при печата му), `receiptDateTime` — часът на оригинала.
     """
-    return await _print_receipt_impl(request, id, reversal, is_reversal=True)
+    # Сторното носи УНП-то на ОРИГИНАЛА, а един бон може да има няколко
+    # частични връщания — ключът включва отпечатък на редовете и плащанията:
+    # повтореният опит се спира, различното връщане минава.
+    return await _idempotent(request, id, _storno_kind(reversal), reversal,
+                             lambda: _print_receipt_impl(request, id, reversal, is_reversal=True))
+
+
+def _storno_kind(reversal) -> str:
+    import hashlib
+    body = reversal.model_dump(by_alias=True, mode="json", include={"items", "payments"})
+    digest = hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()[:12]
+    return f"storno:{digest}"
 
 
 # Кодовете на плащане „КРЕДИТ“ (1) и „ДЕБ.КАРТА“ (2) при Datecs PM (адаптерът)
