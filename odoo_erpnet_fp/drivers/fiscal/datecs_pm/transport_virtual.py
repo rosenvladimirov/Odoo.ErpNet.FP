@@ -20,6 +20,8 @@
   error_on_close    — затварянето отказва; бонът остава отворен
   timeout_on_close  — бонът СЕ ЗАПИСВА, но отговор не идва (най-опасният
                       случай: печатът е станал, касата не знае)
+  no_status         — апаратът отказва 0x4C (състоянието на бона): сверката
+                      не може да реши и прекъснатият бон остава pending
 """
 
 from __future__ import annotations
@@ -46,7 +48,7 @@ ERR_FP_NO_PAPER = -112006
 ERR_R_OPEN_BON = -111015
 ERR_R_PAY_NOT_STARTED = -111050
 
-KNOWN_FAULTS = {"no_paper", "error_on_open", "error_on_close", "timeout_on_close"}
+KNOWN_FAULTS = {"no_paper", "error_on_open", "error_on_close", "timeout_on_close", "no_status"}
 
 
 @dataclass
@@ -277,6 +279,8 @@ class VirtualPmState:
 
     def cmd_transaction_status(self, _f):
         # ErrorCode, IsOpen, Number, Items, Amount, Payed (протокол FP-700 §4.34)
+        if "no_status" in self.faults:
+            return self._err(ERR_FP_INVALID_COMMAND)
         if self.open:
             o = self.open
             return self._ok(1, o["slip"], len(o["lines"]), f"{o['total']:.2f}", f"{o['paid']:.2f}")

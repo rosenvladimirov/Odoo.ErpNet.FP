@@ -1,3 +1,11 @@
+## [3.0.21] — 2026-10-24
+
+### Added — virtual device: `no_status` fault
+
+- `no_status`: the virtual Datecs PM refuses 0x4C (state of the receipt), so
+  the reconcile cannot decide and an interrupted receipt stays `pending` —
+  for testing the till's "outcome unknown" path end to end.
+
 ## [3.0.20] — 2026-10-24
 
 ### Fixed — Datecs PM: the device serial right after start

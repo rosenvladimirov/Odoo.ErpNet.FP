@@ -168,6 +168,17 @@ def test_reconcile_finds_the_printed_receipt(client):
     assert len(_sales()) == 1
 
 
+def test_reconcile_leaves_pending_when_the_device_does_not_tell(client):
+    # no_status: апаратът не дава 0x4C — сверката не гадае, бонът остава pending
+    tv.set_faults("vfp", ["timeout_on_close", "no_status"])
+    client.post("/printers/vfp/receipt", json=_receipt())
+    decisions = client.post("/printers/vfp/receipt/reconcile").json()
+    assert [d["decision"] for d in decisions] == ["pending"]
+    again = client.post("/printers/vfp/receipt", json=_receipt()).json()
+    assert again["messages"][0]["code"] == "E_RECEIPT_UNKNOWN"
+    assert len(_sales()) == 1
+
+
 def test_reconcile_leaves_a_receipt_still_open_on_the_device(client):
     tv.set_faults("vfp", ["error_on_close"])
     client.post("/printers/vfp/receipt", json=_receipt())
