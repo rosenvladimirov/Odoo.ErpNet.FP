@@ -1,3 +1,15 @@
+## [3.0.22] — 2026-10-24
+
+### Added — virtual pinpad (`driver: virtual`)
+
+- A pinpad without a device or bank, with the API of the DatecsPay facade:
+  modes `approve` (RRN + auth code), `decline`, `immediate_decline` and
+  `timeout` (the purchase hangs until `/cancel` or the timeout). VOID needs
+  the same amount and an approved, not yet voided transaction.
+- Every request (purchase, void, cancel, status, end of day) goes into a
+  journal: `GET /pinpads/{id}/virtual`; `PUT /pinpads/{id}/virtual/mode`;
+  `POST /pinpads/{id}/virtual/reset`. A real pinpad answers 404 there.
+
 ## [3.0.21] — 2026-10-24
 
 ### Added — virtual device: `no_status` fault

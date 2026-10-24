@@ -75,6 +75,7 @@ from ..drivers.customer_displays import (
     DatecsDpd201,
 )
 from ..drivers.pinpad.datecs_pay import DatecsPayPinpad
+from ..drivers.pinpad.virtual import VirtualPinpad
 from ..drivers.readers import (
     BarcodeReader,
     BarcodeScan,
@@ -353,6 +354,8 @@ class PinpadEntry:
 
 _PINPAD_DRIVERS = {
     "datecs_pay": DatecsPayPinpad,
+    # без устройство — за тестове и пясъчник (drivers/pinpad/virtual.py)
+    "virtual": VirtualPinpad,
 }
 
 
@@ -395,6 +398,10 @@ class PinpadRegistry:
     def make_pinpad(self, pinpad_id: str) -> DatecsPayPinpad:
         entry = self.get(pinpad_id)
         cls = _PINPAD_DRIVERS[entry.config.driver]
+        if cls is VirtualPinpad:
+            extras = entry.config.extras or {}
+            return cls(pinpad_id, mode=extras.get("virtual_mode"),
+                       timeout=float(extras.get("virtual_timeout", 30)))
         return cls(port=entry.config.port, baudrate=entry.config.baudrate)
 
     @asynccontextmanager
