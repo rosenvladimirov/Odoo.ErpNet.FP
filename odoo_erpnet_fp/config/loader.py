@@ -839,10 +839,45 @@ class InvoiceConfig:
 
 
 @dataclass
+class LabelsConfig:
+    """Печат на етикети през glabels-qt (секция `labels:` в YAML).
+
+    Изпълнимите файлове се търсят в PATH, ако не е даден път; празен низ
+    значи „подразбиращото се“. `print_via`:
+
+    * `auto` — `lp` на Linux/macOS, `glabels` на Windows;
+    * `lp` — PDF-ът отива в CUPS (`lp -d <принтер>`);
+    * `glabels` — glabels-batch-qt печата сам към принтера на ОС
+      (`-p <принтер>`, през спулера на Windows — там няма вграден печат
+      на PDF);
+    * `sumatra` — PDF-ът се печата със SumatraPDF (`-print-to`).
+
+    `work_dir` — работната папка за временните файлове (празно = системната
+    временна папка + `odoo-erpnet-fp-labels`).
+    """
+
+    enabled: bool = True
+    glabels: str = ""
+    lp: str = ""
+    lpstat: str = ""
+    powershell: str = ""
+    sumatra: str = ""
+    print_via: str = "auto"
+    work_dir: str = ""
+    timeout_seconds: float = 60.0
+    list_timeout_seconds: float = 10.0
+    cache_seconds: float = 30.0
+    max_template_bytes: int = 5_000_000
+    max_records: int = 5000
+    max_copies: int = 999
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     kep: KepConfig = field(default_factory=KepConfig)
     invoice: InvoiceConfig = field(default_factory=InvoiceConfig)
+    labels: LabelsConfig = field(default_factory=LabelsConfig)
     printers: list[PrinterConfig] = field(default_factory=list)
     pinpads: list[PinpadConfig] = field(default_factory=list)
     scales: list[ScaleConfig] = field(default_factory=list)
@@ -1473,10 +1508,36 @@ def _yaml_to_app_config(data: dict) -> AppConfig:
             invoice_data.get("allow_comment_fallback", False)),
     )
 
+    labels_data = data.get("labels", {}) or {}
+    _labels_default = LabelsConfig()
+    labels = LabelsConfig(
+        enabled=bool(labels_data.get("enabled", True)),
+        glabels=str(labels_data.get("glabels", "") or ""),
+        lp=str(labels_data.get("lp", "") or ""),
+        lpstat=str(labels_data.get("lpstat", "") or ""),
+        powershell=str(labels_data.get("powershell", "") or ""),
+        sumatra=str(labels_data.get("sumatra", "") or ""),
+        print_via=str(labels_data.get("print_via", "auto") or "auto"),
+        work_dir=str(labels_data.get("work_dir", "") or ""),
+        timeout_seconds=float(labels_data.get(
+            "timeout_seconds", _labels_default.timeout_seconds)),
+        list_timeout_seconds=float(labels_data.get(
+            "list_timeout_seconds", _labels_default.list_timeout_seconds)),
+        cache_seconds=float(labels_data.get(
+            "cache_seconds", _labels_default.cache_seconds)),
+        max_template_bytes=int(labels_data.get(
+            "max_template_bytes", _labels_default.max_template_bytes)),
+        max_records=int(labels_data.get(
+            "max_records", _labels_default.max_records)),
+        max_copies=int(labels_data.get(
+            "max_copies", _labels_default.max_copies)),
+    )
+
     return AppConfig(
         server=server,
         kep=kep,
         invoice=invoice,
+        labels=labels,
         printers=printers,
         pinpads=pinpads,
         scales=scales,

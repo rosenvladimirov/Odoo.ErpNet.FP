@@ -1,3 +1,27 @@
+## [3.0.23] — 2026-10-24
+
+### Added — label printing through glabels-qt (`/labels`)
+
+- `GET /labels/printers` — the printers the OS sees (CUPS `lpstat -e`/`-d`;
+  on Windows `win32print`, or PowerShell when pywin32 is missing), which one
+  is the default, and the glabels-qt version (`null` when it is not
+  installed).
+- `POST /labels/print` — a `.glabels` template (base64, plain or gzip) and
+  the records: the records become a UTF-8 CSV (first line = the field
+  names), `glabels-batch-qt` merges them into a PDF, and the PDF goes to the
+  printer (`lp -d` on Linux; on Windows glabels prints to the spooler
+  itself, or SumatraPDF). Answers `{"ok": true, "job_id", "pages"}` or
+  `{"ok": false, "error"}` with HTTP 200; 4xx only for a bad request
+  (unknown printer, empty or broken template, no records).
+- The template's `<Merge>` is pointed at the proxy's CSV
+  (`Text/Comma/Line1Keys`): without it glabels prints one label and ignores
+  the records. glabels exits 0 even when it printed nothing, so success is
+  measured by the PDF.
+- Temporary files live in a per-job folder under `labels.work_dir` and are
+  removed after every job. Every process has a timeout; no shell.
+- `/healthz` gets a `labels` key with the OS printer names (cached); the
+  existing keys are unchanged. New `labels:` config section.
+
 ## [3.0.22] — 2026-10-24
 
 ### Added — virtual pinpad (`driver: virtual`)

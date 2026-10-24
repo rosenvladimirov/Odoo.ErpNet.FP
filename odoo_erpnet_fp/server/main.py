@@ -307,6 +307,10 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.europlacer_registry = europlacer_registry
     app.state.shift_registry = shift_registry
     app.state.config = config
+    # Етикети през glabels-qt към принтерите на ОС (`/labels`).
+    from .label_printing import LabelPrinter
+    label_printer = LabelPrinter(config.labels)
+    app.state.label_printer = label_printer
 
     from . import metrics
     metrics.set_proxy_info(_read_version())
@@ -423,6 +427,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     from .routes.zen_sync import router as zen_sync_router
     from .routes.nssi import router as nssi_router
     from .routes.kep import router as kep_router
+    from .routes.labels import router as labels_router
     # дневникът по УНП: най-много един бон на (принтер, вид, УНП) — Ф2
     from .receipt_journal import ReceiptJournal
     app.state.receipt_journal = ReceiptJournal()
@@ -449,6 +454,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(zen_sync_router)
     app.include_router(nssi_router)
     app.include_router(kep_router)
+    app.include_router(labels_router)
     # Native Odoo IoT Box compatibility — same handlers, two prefixes
     # so a single ErpNet.FP instance answers both Odoo 18 (/hw_drivers)
     # and Odoo 19+ (/iot_drivers) clients.
@@ -539,6 +545,12 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
                 .specs.keys()),
         }
 
+    def _label_printer_names(request):
+        lp = _live(request, "label_printer", label_printer)
+        if lp is None or not lp.cfg.enabled:
+            return []
+        return lp.printer_names()
+
     @app.get("/healthz")
     def healthz(request: Request):
         return {
@@ -546,6 +558,10 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "version": _read_version(),
             **_inventory(request),
             "shifts": shift_registry.all_serials(),
+            # Принтерите за етикети = принтерите на ОС (кеширани, за да не
+            # вика `lpstat` на всяко питане). Нов ключ — Odoo пропуска
+            # непознатите (`kinds_from_inventory`), старите не мърдат.
+            "labels": _label_printer_names(request),
             # функционални флагове (не номер на версия): Odoo ги чете, за да
             # знае дали проксито пази от двоен бон по УНП (receipt_journal.py)
             "features": {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True},

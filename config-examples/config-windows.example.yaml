@@ -119,3 +119,12 @@ readers:
 #     retry_backoff: 2.0
 #     max_concurrent: 4
 #     result_url: ""                         # optional durable outcome POST to Odoo
+
+# ─── Labels (GET /labels/printers, POST /labels/print) ──────────────
+# glabels-qt prints straight to the Windows spooler (print_via: glabels);
+# the printers come from win32print (pywin32) or PowerShell Get-Printer.
+# labels:
+#   glabels: "C:\\Program Files\\glabels-qt\\bin\\glabels-batch-qt.exe"
+#   print_via: auto          # auto = glabels on Windows; or sumatra
+#   sumatra: ""              # SumatraPDF.exe, for print_via: sumatra
+#   timeout_seconds: 60

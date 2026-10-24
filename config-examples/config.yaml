@@ -497,6 +497,22 @@ printers:
 invoice:
   allow_comment_fallback: false
 
+# ─── Labels (GET /labels/printers, POST /labels/print) ──────────────
+# Етикети през glabels-qt (нашия форк, `glabels-batch-qt`) към всеки
+# принтер, който ОС вижда (CUPS / спулерът на Windows). Празен път =
+# търси се в PATH (и ~/.local/bin). print_via: auto = lp на Linux,
+# glabels (-p към спулера) на Windows; sumatra = PDF през SumatraPDF.
+labels:
+  enabled: true
+  glabels: ""               # glabels-batch-qt
+  lp: ""                    # lp (CUPS)
+  lpstat: ""                # lpstat (CUPS)
+  print_via: auto           # auto | lp | glabels | sumatra
+  work_dir: ""              # "" = <системна временна папка>/odoo-erpnet-fp-labels
+  timeout_seconds: 60       # таван на glabels и на печата
+  list_timeout_seconds: 10  # таван на lpstat / --version
+  cache_seconds: 30         # кеш на списъка (за /healthz)
+
 # ─── KEP (qualified e-signature token) ──────────────────────────────
 # Хардуерният КЕП токен като устройство — за НОИ ЕРБЛ mutual-TLS
 # (дърпане/качване болнични) + PKCS7 detached подпис (заменя StampIT).
