@@ -270,6 +270,18 @@ class VirtualPmState:
             self._persist()
         return self._ok(f"{self.cash_safe:.2f}", f"{self.cash_in:.2f}", f"{self.cash_out:.2f}")
 
+    def cmd_drawer(self, _f):
+        self.journal.append({"kind": "drawer", "datetime": self._now()})
+        self._persist()
+        return self._ok()
+
+    def cmd_transaction_status(self, _f):
+        # ErrorCode, IsOpen, Number, Items, Amount, Payed (протокол FP-700 §4.34)
+        if self.open:
+            o = self.open
+            return self._ok(1, o["slip"], len(o["lines"]), f"{o['total']:.2f}", f"{o['paid']:.2f}")
+        return self._ok(0, self.slip_no, 0, "0.00", "0.00")
+
     def cmd_duplicate(self, _f):
         last = next((d for d in reversed(self.journal) if d["kind"] in ("sale", "storno")), None)
         if not last:
@@ -295,6 +307,8 @@ _HANDLERS = {
     commands.CMD_REPORTS: VirtualPmState.cmd_report,
     commands.CMD_CASH_IN_OUT: VirtualPmState.cmd_cash,
     commands.CMD_PRINT_DUPLICATE: VirtualPmState.cmd_duplicate,
+    commands.CMD_FISCAL_TRANSACTION_STATUS: VirtualPmState.cmd_transaction_status,
+    commands.CMD_OPEN_DRAWER: VirtualPmState.cmd_drawer,
 }
 
 # ─── регистърът на състоянията (по id на принтера) ──────────────────

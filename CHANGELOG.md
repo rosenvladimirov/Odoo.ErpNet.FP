@@ -1,3 +1,26 @@
+## [3.0.19] — 2026-10-24
+
+### Added — reconcile interrupted receipts with the device; busy status; cash drawer
+
+- The receipt journal keeps the number the device gave when the receipt was
+  opened. `POST /printers/{id}/receipt/reconcile` (and automatically at start)
+  compares each `pending` receipt with the device (Datecs PM, 0x4C): last
+  document ≥ that number and nothing open ⇒ `done`; smaller ⇒ `failed`; a
+  receipt still open, an unreadable answer or an ICP device ⇒ stays `pending`
+  for a manual decision — never a guess.
+- 🚨 The 0x4C answer (IsOpen, Number, Items, Amount, Payed) and the drawer
+  commands (PM 0x6A, ICP 0x2A) follow the protocol description and are NOT yet
+  measured on a device — to be checked on BlueCash/FP-700 and Daisy.
+- `GET /printers/{id}/status` answers `I_BUSY` at once while the device is
+  printing, instead of waiting for the receipt or reporting a false E101.
+- `POST /printers/{id}/drawer` and `/cashbox` (one route, two names: the Odoo
+  backend calls /drawer, the till /cashbox — neither existed).
+- `GET /printers/{id}/lastdocument`; the ICP receipt and invoice answers carry
+  `uniqueSaleNumber` too.
+- Journal rotation at start: `done`/`failed` older than 90 days
+  (`ODOO_ERPNET_FP_RECEIPT_JOURNAL_DAYS`); `pending` is never deleted.
+- `/healthz` features: `cashbox`.
+
 ## [3.0.18] — 2026-10-24
 
 ### Added — one receipt per UNS, even when interrupted (receipt journal)

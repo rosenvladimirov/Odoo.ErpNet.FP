@@ -49,6 +49,17 @@ def mark(stage: str) -> None:
         holder["stage"] = stage
 
 
+def note_slip(slip: int | None) -> None:
+    """Номерът, който апаратът даде при отварянето — бонът ще излезе с него.
+
+    По него сверката разбира дали прекъснат бон е отпечатан: последният
+    документ на апарата е поне този номер и няма отворен бон ⇒ отпечатан.
+    """
+    holder = _STAGE.get()
+    if holder is not None and slip:
+        holder["slip"] = int(slip)
+
+
 class ReceiptJournal:
     def __init__(self, path: str | None = None) -> None:
         self.path = path or DEFAULT_PATH
@@ -69,8 +80,12 @@ class ReceiptJournal:
                 "CREATE TABLE IF NOT EXISTS receipts ("
                 " printer_id TEXT NOT NULL, kind TEXT NOT NULL, uns TEXT NOT NULL,"
                 " state TEXT NOT NULL, stage TEXT, result TEXT,"
-                " created TEXT NOT NULL, updated TEXT NOT NULL,"
+                " created TEXT NOT NULL, updated TEXT NOT NULL, slip INTEGER,"
                 " PRIMARY KEY (printer_id, kind, uns))")
+            # дневник от 3.0.18 е без колоната slip
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(receipts)")}
+            if "slip" not in cols:
+                self._db.execute("ALTER TABLE receipts ADD COLUMN slip INTEGER")
 
     @staticmethod
     def _now() -> str:
@@ -88,22 +103,36 @@ class ReceiptJournal:
         return out
 
     def put(self, printer_id: str, kind: str, uns: str, state: str,
-            stage: str | None = None, result: dict | None = None) -> None:
+            stage: str | None = None, result: dict | None = None, slip: int | None = None) -> None:
         now = self._now()
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO receipts (printer_id, kind, uns, state, stage, result, created, updated)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO receipts (printer_id, kind, uns, state, stage, result, created, updated, slip)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT (printer_id, kind, uns) DO UPDATE SET"
                 " state=excluded.state, stage=excluded.stage, result=excluded.result,"
-                " updated=excluded.updated",
+                " updated=excluded.updated, slip=COALESCE(excluded.slip, receipts.slip)",
                 (printer_id, kind, uns, state, stage,
-                 json.dumps(result, ensure_ascii=False) if result is not None else None, now, now))
+                 json.dumps(result, ensure_ascii=False) if result is not None else None, now, now, slip))
+
+    def prune(self, days: int | None = None) -> int:
+        """Трие приключените записи (done/failed), по-стари от `days` дни.
+
+        pending не се трие никога — той чака решение. По подразбиране 90 дни
+        (ODOO_ERPNET_FP_RECEIPT_JOURNAL_DAYS); вика се при старт.
+        """
+        days = days if days is not None else int(os.environ.get("ODOO_ERPNET_FP_RECEIPT_JOURNAL_DAYS", "90"))
+        from datetime import timedelta
+        limit = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "DELETE FROM receipts WHERE state IN ('done', 'failed') AND updated < ?", (limit,))
+            return cur.rowcount
 
     def pending(self, printer_id: str | None = None) -> list[dict]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT printer_id, kind, uns, stage, updated FROM receipts WHERE state='pending'"
+                "SELECT printer_id, kind, uns, stage, updated, slip FROM receipts WHERE state='pending'"
                 + (" AND printer_id=?" if printer_id else ""),
                 (printer_id,) if printer_id else ()).fetchall()
         return [dict(r) for r in rows]
@@ -159,9 +188,10 @@ async def idempotent_print(
         result = await run()
         data = to_dict(result)
         if data.get("ok"):
-            journal.put(*key, state="done", stage="done", result=data)
+            journal.put(*key, state="done", stage="done", result=data, slip=holder.get("slip"))
         elif holder["stage"] in UNKNOWN_STAGES:
-            journal.put(*key, state="pending", stage=holder["stage"], result=data)
+            journal.put(*key, state="pending", stage=holder["stage"], result=data,
+                        slip=holder.get("slip"))
             unknown = _unknown(uns, holder["stage"])
             unknown["messages"] += data.get("messages") or []
             return from_dict(unknown)
@@ -170,9 +200,29 @@ async def idempotent_print(
         return result
     except BaseException:
         state = "pending" if holder["stage"] in UNKNOWN_STAGES else "failed"
-        journal.put(*key, state=state, stage=holder["stage"])
+        journal.put(*key, state=state, stage=holder["stage"], slip=holder.get("slip"))
         raise
     finally:
         _STAGE.reset(token)
         journal._inflight.pop(key, None)
         event.set()
+
+
+def decide(row: dict, device: dict | None) -> tuple[str, str]:
+    """Сверката на един прекъснат бон с апарата → (ново състояние, защо).
+
+    device е отговорът на 0x4C: {is_open, number}. Без очакван номер или
+    без разбран отговор — остава pending (ръчно решение), никога догадка.
+    """
+    slip = row.get("slip")
+    if not slip:
+        return "pending", "no expected receipt number — resolve by hand"
+    if not device or device.get("is_open") is None or device.get("number") is None:
+        return "pending", "the device status could not be read"
+    if device["is_open"]:
+        if device["number"] == slip:
+            return "pending", "the receipt is still open on the device"
+        return "pending", "another receipt is open on the device"
+    if device["number"] >= slip:
+        return "done", f"the device's last document is {device['number']} ≥ {slip}"
+    return "failed", f"the device's last document is {device['number']} < {slip} — never closed"

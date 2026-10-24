@@ -116,6 +116,21 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
         # Bind reader threads to the live event loop so push events reach
         # WebSocket / SSE / webhook subscribers. Failures are logged
         # per-reader; one bad device doesn't block server startup.
+        # прекъснатите бонове от преди рестарта — сверка с апаратите (Ф2)
+        from .routes.printers import reconcile_pending
+
+        async def _reconcile_at_start():
+            try:
+                pruned = app.state.receipt_journal.prune()
+                if pruned:
+                    _logger.info("Receipt journal: %d old records pruned", pruned)
+                for row in await reconcile_pending(app):
+                    _logger.info("Receipt %s/%s at start: %s (%s)",
+                                 row["printer_id"], row["uns"], row["decision"], row["reason"])
+            except Exception:  # noqa: BLE001 — сверката не спира старта
+                _logger.exception("Receipt reconcile at start failed")
+
+        asyncio.create_task(_reconcile_at_start())
         await reader_registry.start_all()
         await display_registry.start_all()
         await camera_registry.start_all()
@@ -531,7 +546,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "shifts": shift_registry.all_serials(),
             # функционални флагове (не номер на версия): Odoo ги чете, за да
             # знае дали проксито пази от двоен бон по УНП (receipt_journal.py)
-            "features": {"idempotentReceipt": True, "receiptByUns": True},
+            "features": {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True},
         }
 
     @app.get("/server/info")

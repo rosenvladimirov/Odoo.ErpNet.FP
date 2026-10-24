@@ -694,6 +694,34 @@ class PmDevice:
                 continue
         return change, status.FiscalStatus.parse(resp.status)
 
+    def fiscal_transaction_status(self) -> dict:
+        """0x4C — състоянието на фискалната транзакция (бонът сега или последният).
+
+        По протокола на Datecs FP-700 (§4.34) отговорът е
+        ErrorCode, IsOpen, Number, Items, Amount, Payed — Number е номерът на
+        ТЕКУЩИЯ бон, ако е отворен, иначе на ПОСЛЕДНИЯ. Ползва се от сверката
+        на прекъснатите бонове (receipt_journal). 🚨 Форматът е по описанието
+        на протокола, не е мерен на апарат — ДА СЕ ПРОВЕРИ на BlueCash/FP-700;
+        затова разборът е търпелив и непознат отговор дава None, не догадка.
+        """
+        resp = self._exchange(commands.CMD_FISCAL_TRANSACTION_STATUS)
+        code, rest = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
+
+        def num(i, cast=float):
+            try:
+                return cast(rest[i])
+            except (IndexError, ValueError):
+                return None
+
+        return {
+            "is_open": num(0, int),
+            "number": num(1, int),
+            "items": num(2, int),
+            "amount": num(3),
+            "paid": num(4),
+        }
+
     def close_fiscal_receipt(self) -> int:
         """0x38 — Close the open fiscal receipt. Returns the closed slip
         number (echo from open). After this the receipt is committed to
@@ -1034,6 +1062,14 @@ class PmDevice:
         return float(rest[0]), float(rest[1]), float(rest[2])
 
     # ---- Phase 2 — Misc ------------------------------------------------
+
+    def open_drawer(self) -> None:
+        """0x6A — отваря чекмеджето (§4.54). Без параметри апаратът ползва
+        своята продължителност на импулса. 🚨 По протокола, не е мерено на
+        апарат — ДА СЕ ПРОВЕРИ на BlueCash/FP-700 с вързано чекмедже."""
+        resp = self._exchange(commands.CMD_OPEN_DRAWER)
+        code, _ = self._parse_error_code(resp.data)
+        errors.raise_for_code(code)
 
     def print_duplicate(self) -> None:
         """0x6D — Print a duplicate of the last fiscal receipt."""

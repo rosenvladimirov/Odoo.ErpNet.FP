@@ -169,6 +169,16 @@ async def printer_info(id: str, request: Request):
 async def printer_status(id: str, request: Request):
     registry = _require_printer(request, id)
     is_pm = registry.is_pm(id)
+    # Апаратът печата (заключването му е взето) — „зает“ веднага, вместо да
+    # чакаме края на бона или да връщаме фалшиво E101 след таймаута. Заетостта
+    # не е грешка: ok остава true, а заявката за бон ще изчака реда си.
+    if registry.get(id).lock.locked():
+        return DeviceStatusWithDateTime(
+            ok=True,
+            device_date_time=_now_iso(),
+            messages=[StatusMessage(type=MessageType.info, code="I_BUSY",
+                                    text="The device is busy printing.")],
+        )
     # Hard ceiling — status check must always resolve quickly so the
     # Odoo POS UI / backend buttons can react. With a paper-out or
     # otherwise unresponsive device the underlying ICP frame timeout
@@ -430,6 +440,7 @@ async def _icp_print_receipt(registry, id: str, receipt: Receipt) -> PrintReceip
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
                     fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",
+                    unique_sale_number=receipt.unique_sale_number,  # УНП и при ICP — Odoo го пази за сторно
                 )
             except Exception:
                 if opened:
@@ -499,6 +510,7 @@ async def _print_receipt_impl(
                         op_password=receipt.operator_password,
                     )
                 opened = True
+                rj.note_slip(slip_number)
 
                 receipt_amount = 0.0
 
@@ -642,6 +654,83 @@ async def receipt_by_uns(id: str, uns: str, request: Request, kind: str = "sale"
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No receipt with UNS {uns!r}")
     return row
+
+
+async def reconcile_pending(app, printer_id: str | None = None) -> list[dict]:
+    """Сверява прекъснатите бонове (pending) с апарата по номера от отварянето.
+
+    Само Datecs PM (0x4C): последният документ ≥ очаквания и няма отворен бон
+    ⇒ отпечатан; по-малък ⇒ не е. Отворен бон, ICP или неразбран отговор —
+    остава pending за ръчно решение. Вика се при старт и при поискване.
+    """
+    journal = getattr(app.state, "receipt_journal", None)
+    registry = app.state.registry
+    if journal is None:
+        return []
+    out = []
+    for row in journal.pending(printer_id):
+        pid = row["printer_id"]
+        device = None
+        if registry.has(pid) and registry.is_pm(pid) and row.get("slip"):
+            try:
+                async with registry.with_pm(pid) as pm:
+                    device = await asyncio.to_thread(pm.fiscal_transaction_status)
+            except Exception as exc:  # noqa: BLE001 — апаратът не отговаря: остава pending
+                _logger.warning("Reconcile: status of %s failed: %s", pid, exc)
+        state, why = rj.decide(row, device)
+        if state != "pending":
+            result = {"ok": state == "done", "uniqueSaleNumber": row["uns"], "messages": [
+                {"type": "info", "code": "I_RECONCILED", "text": f"Reconciled with the device: {why}."}]}
+            if state == "done":
+                result["receiptNumber"] = str(row["slip"])
+            journal.put(pid, row["kind"], row["uns"], state=state, stage="reconciled", result=result)
+        out.append({**row, "decision": state, "reason": why})
+    return out
+
+
+@router.get("/{id}/lastdocument")
+async def last_document(id: str, request: Request) -> dict:
+    """Последният документ на апарата: PM — 0x4C (номер; дали има отворен бон),
+    ICP — 0x71. За сверка на прекъснат бон по номера от отварянето."""
+    registry = _require_printer(request, id)
+    async with registry.with_driver(id) as drv:
+        if registry.is_pm(id):
+            st = await asyncio.to_thread(drv.fiscal_transaction_status)
+            is_open = st.get("is_open")
+            return {"number": st.get("number"), "isOpen": None if is_open is None else bool(is_open)}
+        number = await asyncio.to_thread(drv.last_document_number)
+        return {"number": int(number) if str(number or "").isdigit() else number, "isOpen": None}
+
+
+@router.post("/{id}/drawer", response_model=DeviceStatusWithDateTime)
+@router.post("/{id}/cashbox", response_model=DeviceStatusWithDateTime)
+async def open_drawer(id: str, request: Request):
+    """Отваря чекмеджето през апарата. Две имена за един маршрут: бекендът на
+    Odoo вика /drawer (fiscal_printer_device.py), касата — /cashbox
+    (erp_net_fp_printer.js); досега нито едното не съществуваше."""
+    registry = _require_printer(request, id)
+    try:
+        async with registry.with_driver(id) as drv:
+            if registry.is_pm(id):
+                await asyncio.to_thread(drv.open_drawer)
+                return DeviceStatusWithDateTime(ok=True, device_date_time=_now_iso())
+            st = await asyncio.to_thread(drv.open_drawer)
+            return DeviceStatusWithDateTime(
+                ok=st.ok, device_date_time=_now_iso(),
+                messages=[StatusMessage(type=MessageType.error, code=e.code, text=e.text)
+                          for e in getattr(st, "errors", [])],
+            )
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Drawer on %s failed: %s", id, exc)
+        return DeviceStatusWithDateTime(ok=False, device_date_time=_now_iso(),
+                                        messages=[msg_adapter.from_fiscal_error(exc)])
+
+
+@router.post("/{id}/receipt/reconcile")
+async def reconcile_receipts(id: str, request: Request) -> list[dict]:
+    """Сверка на прекъснатите бонове на този принтер с апарата (виж reconcile_pending)."""
+    _require_printer(request, id)
+    return await reconcile_pending(request.app, id)
 
 
 @router.post("/{id}/receipt/{uns}/resolve")
@@ -895,6 +984,7 @@ async def _icp_print_invoice(
                     receipt_date_time=_now_iso(),
                     receipt_amount=round(receipt_amount, 2),
                     fiscal_memory_serial_number=icp.info.fiscal_memory_serial_number or "",
+                    unique_sale_number=inv.unique_sale_number,  # УНП и при ICP — Odoo го пази за сторно
                 )
             except Exception:
                 if opened:

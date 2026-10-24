@@ -24,6 +24,7 @@ CMD_CANCEL_FISCAL_RECEIPT = 0x3C  # 60
 CMD_INVOICE_DATA = 0x39  # 57  — fiscal *invoice* receipt
 CMD_FISCAL_TRANSACTION_STATUS = 0x4C  # 76
 CMD_PRINT_DUPLICATE = 0x6D  # 109
+CMD_OPEN_DRAWER = 0x6A  # 106  — отваряне на чекмеджето (§4.54)
 CMD_CASH_IN_OUT = 0x46  # 70
 CMD_REPORTS = 0x45  # 69  — X / Z / D / G / P
 CMD_FM_REPORT_BY_DATE = 0x5E  # 94  — отчет от ФП по дати (0 съкратен / 1 подробен)

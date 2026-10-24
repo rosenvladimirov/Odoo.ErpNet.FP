@@ -618,6 +618,11 @@ class IcpDevice:
         _t, status, _r = self._icp_request(cmd.CMD_PRINT_LAST_RECEIPT_DUPLICATE, "1")
         return status
 
+    def open_drawer(self) -> DeviceStatus:
+        """0x2A — отваря чекмеджето. 🚨 ДА СЕ ПРОВЕРИ на Daisy/Datecs ICP."""
+        _t, status, _r = self._icp_request(cmd.CMD_OPEN_DRAWER, "")
+        return status
+
     def cash_in(self, amount: Decimal | float) -> DeviceStatus:
         amount = Decimal(str(amount))
         _t, status, _r = self._icp_request(cmd.CMD_MONEY_TRANSFER, f"{amount:.2f}")
