@@ -548,7 +548,8 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
             "shifts": shift_registry.all_serials(),
             # функционални флагове (не номер на версия): Odoo ги чете, за да
             # знае дали проксито пази от двоен бон по УНП (receipt_journal.py)
-            "features": {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True},
+            "features": {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True,
+                         "unsFallback": True},
         }
 
     @app.get("/server/info")

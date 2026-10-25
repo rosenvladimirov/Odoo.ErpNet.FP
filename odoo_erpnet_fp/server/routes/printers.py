@@ -690,6 +690,28 @@ async def receipt_by_uns(id: str, uns: str, request: Request, kind: str = "sale"
     return row
 
 
+@router.post("/{id}/uns/fallback")
+async def uns_fallback(id: str, request: Request) -> dict:
+    """Резервен номер за УНП, когато касата няма порция от Odoo (3.0.23).
+
+    Отговорът е ИН на ФУ + пореден номер от зоната 9 000 000–9 999 999;
+    касата добавя кода на оператора. Отказ (409/503) вместо номер, който
+    може да се повтори: без ИН на ФУ или без дневник на диска.
+    """
+    info = await printer_info(id, request)
+    serial = (info.serial_number or "").strip()
+    if not serial:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "E_NO_SERIAL: the device serial number is not known yet")
+    journal = getattr(request.app.state, "receipt_journal", None)
+    number = journal.next_fallback_uns(id) if journal else None
+    if number is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "E_NO_FALLBACK_UNS: the receipt journal is not on disk or the range is used up")
+    _logger.warning("%s: резервен УНП %s-…-%07d (касата няма порция от Odoo)", id, serial, number)
+    return {"serialNumber": serial, "number": number}
+
+
 async def reconcile_pending(app, printer_id: str | None = None) -> list[dict]:
     """Сверява прекъснатите бонове (pending) с апарата по номера от отварянето.
 

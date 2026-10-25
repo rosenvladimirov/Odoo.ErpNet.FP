@@ -148,7 +148,8 @@ def test_interrupted_receipt_stays_unknown_after_restart(app, tmp_path):
 
 def test_healthz_announces_the_features(client):
     features = client.get("/healthz").json()["features"]
-    assert features == {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True}
+    assert features == {"idempotentReceipt": True, "receiptByUns": True, "cashbox": True,
+                        "unsFallback": True}
 
 
 # ─── сверката на прекъснатите бонове с апарата (0x4C) ──────────────

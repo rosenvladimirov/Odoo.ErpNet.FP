@@ -35,6 +35,10 @@ _logger = logging.getLogger(__name__)
 DEFAULT_PATH = os.environ.get(
     "ODOO_ERPNET_FP_RECEIPT_JOURNAL", "/app/data/receipt_journal.sqlite")
 
+# зоната на резервния УНП (броячът на Odoo тръгва от 1 и не я стига)
+FALLBACK_FIRST = 9_000_000
+FALLBACK_LAST = 9_999_999
+
 # етапите, след които неуспехът значи „може би е отпечатан“
 UNKNOWN_STAGES = {"paying", "closing"}
 
@@ -86,6 +90,10 @@ class ReceiptJournal:
             cols = {r[1] for r in self._db.execute("PRAGMA table_info(receipts)")}
             if "slip" not in cols:
                 self._db.execute("ALTER TABLE receipts ADD COLUMN slip INTEGER")
+            # резервният УНП (3.0.23): следващият номер на апарат
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS uns_fallback ("
+                " printer_id TEXT PRIMARY KEY, next INTEGER NOT NULL)")
 
     @staticmethod
     def _now() -> str:
@@ -128,6 +136,43 @@ class ReceiptJournal:
             cur = self._db.execute(
                 "DELETE FROM receipts WHERE state IN ('done', 'failed') AND updated < ?", (limit,))
             return cur.rowcount
+
+    def next_fallback_uns(self, printer_id: str) -> int | None:
+        """Следващият резервен пореден номер за УНП на апарата, или None.
+
+        Касата го иска, когато няма порция номера от Odoo, а апаратът е
+        наличен — бонът излиза, вместо картата да се анулира. Зоната е
+        9 000 000–9 999 999: броячът на Odoo тръгва от 1 и не я стига, затова
+        двата източника не дават еднакъв номер. Проксито е единственият път
+        до апарата, затова броячът тук е единствен за него.
+
+        Само с дневник на диска: в паметта номерът би се повторил след
+        рестарт — повторен УНП е по-лош от отказ (дневникът би върнал чужд
+        бон като „вече отпечатан“). След изчистен дневник броячът тръгва от
+        най-големия резервен номер, останал в записите на бонове.
+        """
+        if self.path == ":memory:":
+            return None
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT next FROM uns_fallback WHERE printer_id=?", (printer_id,)).fetchone()
+            if row is None:
+                start = FALLBACK_FIRST
+                for (uns,) in self._db.execute(
+                        "SELECT uns FROM receipts WHERE printer_id=?", (printer_id,)):
+                    tail = str(uns).rsplit("-", 1)[-1]
+                    if tail.isdigit() and int(tail) >= FALLBACK_FIRST:
+                        start = max(start, int(tail) + 1)
+                number = start
+            else:
+                number = row[0]
+            if number > FALLBACK_LAST:
+                return None
+            self._db.execute(
+                "INSERT INTO uns_fallback (printer_id, next) VALUES (?, ?)"
+                " ON CONFLICT (printer_id) DO UPDATE SET next=excluded.next",
+                (printer_id, number + 1))
+        return number
 
     def pending(self, printer_id: str | None = None) -> list[dict]:
         with self._lock:

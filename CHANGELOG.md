@@ -1,3 +1,18 @@
+## [3.0.23] — 2026-10-25
+
+### Added — fallback unique sale number (`POST /printers/{id}/uns/fallback`)
+
+- When the till has no batch of numbers from Odoo (server unreachable, no
+  device serial in Odoo) but the device is reachable, the till asks the proxy
+  for a fallback number: the device serial plus a sequence from the range
+  9 000 000–9 999 999. Odoo's counter starts at 1 and never reaches it, and
+  the proxy is the only path to the device, so the number never repeats.
+- The counter lives in the receipt journal on disk. A journal kept in memory
+  answers 503 instead of a number that could repeat after a restart; an
+  unknown serial answers 409. After a wiped counter it starts above the
+  highest fallback number still in the receipt records.
+- `/healthz` features: `unsFallback`.
+
 ## [3.0.22] — 2026-10-24
 
 ### Added — virtual pinpad (`driver: virtual`)
