@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from ...drivers.fiscal.datecs_icp.transport import TransportError as IcpTransportError
 from ...drivers.fiscal.datecs_pm.errors import FiscalError
+from ...drivers.fiscal.datecs_pm.transport import TransportError as PmTransportError
 from ...drivers.fiscal.datecs_pm.status import FiscalStatus
 from ..schemas import MessageType, StatusMessage
 
@@ -27,6 +29,16 @@ def from_fiscal_error(exc: Exception) -> StatusMessage:
             type=MessageType.error,
             code=f"E{abs(exc.code):06d}" if exc.code else None,
             text=exc.description or exc.name or str(exc),
+        )
+    if isinstance(exc, (PmTransportError, IcpTransportError, OSError)):
+        # връзката до апарата (TCP, сериен порт) — апаратът е недостъпен.
+        # Неуспех по време на плащането/затварянето дневникът по УНП прави
+        # „неизвестен“ (E_RECEIPT_UNKNOWN), затова този код стига до касата
+        # само когато нищо не е отпечатано (3.0.24).
+        return StatusMessage(
+            type=MessageType.error,
+            code="E_DEVICE_UNAVAILABLE",
+            text=str(exc) or exc.__class__.__name__,
         )
     return StatusMessage(
         type=MessageType.error,

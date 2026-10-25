@@ -273,3 +273,29 @@ def test_last_document(client):
     assert client.get("/printers/vfp/lastdocument").json() == {"number": 0, "isOpen": False}
     client.post("/printers/vfp/receipt", json=_receipt())
     assert client.get("/printers/vfp/lastdocument").json() == {"number": 1, "isOpen": False}
+
+
+# ─── недостъпен апарат (3.0.24) ───────────────────────────────────
+
+
+def test_unreachable_device_says_so_and_allows_a_new_attempt(client):
+    # апаратът не отговаря изобщо: нищо не е отпечатано — кодът казва на
+    # касата да пази картата, а същият УНП по-късно печата нормално
+    tv.set_faults("vfp", ["offline"])
+    body = client.post("/printers/vfp/receipt", json=_receipt()).json()
+    assert body["ok"] is False
+    assert "E_DEVICE_UNAVAILABLE" in _codes(body)
+    assert client.get(f"/printers/vfp/receipt/{UNS}").json()["state"] == "failed"
+    assert not _sales()
+    tv.set_faults("vfp", [])
+    again = client.post("/printers/vfp/receipt", json=_receipt()).json()
+    assert again["ok"] is True
+    assert len(_sales()) == 1
+
+
+def test_device_refusal_is_not_called_unavailable(client):
+    # апаратът отговори и отказа — това НЕ е „недостъпен“
+    tv.set_faults("vfp", ["error_on_open"])
+    body = client.post("/printers/vfp/receipt", json=_receipt()).json()
+    assert body["ok"] is False
+    assert "E_DEVICE_UNAVAILABLE" not in _codes(body)

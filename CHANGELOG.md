@@ -1,3 +1,14 @@
+## [3.0.24] — 2026-10-25
+
+### Added — `E_DEVICE_UNAVAILABLE` on a receipt the device never saw
+
+- When the proxy cannot reach the device at all (TCP connect, serial port),
+  the receipt answers `ok: false` with the code `E_DEVICE_UNAVAILABLE` instead
+  of a bare text. Nothing was printed and the UNS stays free for a new
+  attempt; the till keeps an approved card payment and prints when the device
+  is back. A failure while paying or closing stays `E_RECEIPT_UNKNOWN`.
+- Virtual device fault `offline`: the connection fails before any command.
+
 ## [3.0.23] — 2026-10-25
 
 ### Added — fallback unique sale number (`POST /printers/{id}/uns/fallback`)

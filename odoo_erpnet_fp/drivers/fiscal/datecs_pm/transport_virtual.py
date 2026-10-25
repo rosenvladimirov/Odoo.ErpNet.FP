@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from . import codec, commands, frame
-from .transport import Transport, TransportClosed
+from .transport import Transport, TransportClosed, TransportError
 
 # Буквите на групите в отговора на отчетите (както `PmDevice.REPORT_LETTERS`)
 REPORT_LETTERS = ("A", "B", "C", "D", "E", "F", "G", "H")
@@ -48,7 +48,8 @@ ERR_FP_NO_PAPER = -112006
 ERR_R_OPEN_BON = -111015
 ERR_R_PAY_NOT_STARTED = -111050
 
-KNOWN_FAULTS = {"no_paper", "error_on_open", "error_on_close", "timeout_on_close", "no_status"}
+KNOWN_FAULTS = {"no_paper", "error_on_open", "error_on_close", "timeout_on_close", "no_status",
+                "offline"}
 
 
 @dataclass
@@ -362,6 +363,10 @@ class VirtualPmTransport(Transport):
         self._last: tuple | None = None
 
     def open(self) -> None:
+        # offline: апаратът не отговаря изобщо (изключен, без мрежа) — като
+        # неуспешна TCP връзка, преди да е изпратена каквато и да е команда
+        if "offline" in self.state.faults:
+            raise TransportError("Virtual PM offline (fault)")
         self._opened = True
 
     def close(self) -> None:
