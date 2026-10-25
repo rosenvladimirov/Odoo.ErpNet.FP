@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Клиентски дисплей</title>
+<style>
+/* Клиентският дисплей на касата, сервиран от проксито (не от Odoo).
+   Данните идват по SSE от /customer-display/<канал>/events. Без външни
+   ресурси — работи и без интернет, само в локалната мрежа. */
+:root {
+  --bg: #f6f3f4;
+  --panel: #ffffff;
+  --ink: #1d1a1c;
+  --muted: #6d6468;
+  --line: #e4dde0;
+  --accent: #7a2338;
+  --accent-ink: #ffffff;
+  --ok: #1f7a4a;
+  --font: "Segoe UI", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+  --mono: "DejaVu Sans Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0e1118; --panel: #161b26; --ink: #ecebef; --muted: #9a93a3; --line: #262e3f; --accent: #c25a73; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); overflow: hidden; }
+#app { height: 100%; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;
+  padding: 1.2vh 2.5vw; border-bottom: 3px solid var(--accent); background: var(--panel); }
+#shop { font-size: 2.6vh; font-weight: 700; }
+#status { font-size: 1.6vh; color: var(--muted); }
+#status.off { color: #c0392b; }
+#app.has-header { grid-template-rows: auto 1fr; }
+#lines { overflow: hidden; padding: 2vh 2.5vw; display: flex; flex-direction: column; gap: 0.6vh; }
+.line { display: grid; grid-template-columns: 1fr auto; gap: 0.3vh 1.5vw; padding: 1.2vh 1.2vw;
+  border-radius: 1vh; background: var(--panel); border: 1px solid var(--line); }
+.line.sel { border-color: var(--accent); box-shadow: inset 0.5vw 0 0 var(--accent); }
+.name { font-size: 2.6vh; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.price { font-size: 2.6vh; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.detail { font-size: 1.9vh; color: var(--muted); font-variant-numeric: tabular-nums; }
+.disc { font-size: 1.9vh; color: var(--accent); text-align: right; }
+#side { display: flex; flex-direction: column; justify-content: flex-end; gap: 2vh; padding: 3vh 2.5vw;
+  background: var(--panel); border-left: 1px solid var(--line); }
+.row { display: flex; justify-content: space-between; align-items: baseline; font-size: 2.4vh; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.total { border-top: 2px solid var(--line); padding-top: 2vh; }
+.total .lbl { font-size: 3vh; font-weight: 700; color: var(--ink); }
+.total .amt { font-size: 7vh; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.change { background: var(--accent); color: var(--accent-ink); border-radius: 1.5vh; padding: 2vh 1.5vw; }
+.change .lbl { font-size: 3vh; font-weight: 700; }
+.change .amt { font-size: 6vh; font-weight: 800; font-variant-numeric: tabular-nums; }
+#idle { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh;
+  text-align: center; padding: 4vh; }
+#idle .big { font-size: 9vh; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; }
+#idle .small { font-size: 3vh; color: var(--muted); }
+[hidden] { display: none !important; }
+@media (orientation: portrait) {
+  #app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  #side { border-left: 0; border-top: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<div id="app" class="has-header">
+  <header><span id="shop"></span><span id="status">…</span></header>
+  <section id="lines" hidden></section>
+  <aside id="side" hidden>
+    <div id="payments"></div>
+    <div class="row total"><span class="lbl" id="lbl-total"></span><span class="amt" id="amount"></span></div>
+    <div class="change" id="change-box" hidden><div class="lbl" id="lbl-change"></div><div class="amt" id="change"></div></div>
+  </aside>
+  <section id="idle"><div class="big" id="welcome"></div><div class="small" id="idle-shop"></div></section>
+</div>
+<script>
+(function () {
+  "use strict";
+  // каналът е последният сегмент от адреса: /customer-display/<канал>
+  const parts = location.pathname.replace(/\/+$/, "").split("/");
+  const channel = decodeURIComponent(parts[parts.length - 1] || "default");
+  const base = location.pathname.replace(/\/+$/, "");
+  const LABELS = { welcome: "Добре дошли", total: "ОБЩО", change: "РЕСТО", paid: "ПЛАТЕНО", thanks: "Благодарим ви!" };
+  const $ = (id) => document.getElementById(id);
+  let version = -1;
+
+  function text(el, value) { el.textContent = value == null ? "" : String(value); }
+
+  function render(state) {
+    if (!state || typeof state.version !== "number" || state.version === version) return;
+    version = state.version;
+    const labels = Object.assign({}, LABELS, state.labels || {});
+    const order = state.order || {};
+    const lines = order.lines || [];
+    text($("shop"), state.shop || "");
+    text($("idle-shop"), state.shop || "");
+    text($("lbl-total"), labels.total);
+    text($("lbl-change"), labels.change);
+    const idle = !lines.length;
+    $("idle").hidden = !idle;
+    $("lines").hidden = idle;
+    $("side").hidden = idle;
+    text($("welcome"), order.finalized ? labels.thanks : labels.welcome);
+    if (idle) return;
+    const box = $("lines");
+    box.textContent = "";
+    lines.forEach((l) => {
+      const row = document.createElement("div");
+      row.className = "line" + (l.isSelected ? " sel" : "");
+      const name = document.createElement("div"); name.className = "name"; text(name, l.productName);
+      const price = document.createElement("div"); price.className = "price"; text(price, l.price);
+      const detail = document.createElement("div"); detail.className = "detail";
+      text(detail, [l.qty, l.unit].filter(Boolean).join(" ") + (l.unitPrice ? " × " + l.unitPrice : ""));
+      const disc = document.createElement("div"); disc.className = "disc";
+      text(disc, l.discount && l.discount !== "0" ? "−" + l.discount + "%" : "");
+      row.append(name, price, detail, disc);
+      box.append(row);
+    });
+    // избраният ред — видим (последните редове са долу)
+    const sel = box.querySelector(".sel") || box.lastElementChild;
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+    text($("amount"), order.amount);
+    const pays = $("payments");
+    pays.textContent = "";
+    (order.paymentLines || []).forEach((p) => {
+      const row = document.createElement("div"); row.className = "row";
+      const a = document.createElement("span"); text(a, p.name);
+      const b = document.createElement("span"); text(b, p.amount);
+      row.append(a, b); pays.append(row);
+    });
+    $("change-box").hidden = !order.change;
+    text($("change"), order.change || "");
+  }
+
+  function setOnline(on) {
+    const s = $("status");
+    s.className = on ? "" : "off";
+    text(s, on ? channel : channel + " · няма връзка");
+  }
+
+  // резервно: питане на състоянието, докато SSE липсва
+  let pollTimer = null;
+  function poll() {
+    fetch(base + "/state", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => { if (s) { render(s); setOnline(true); } })
+      .catch(() => setOnline(false));
+  }
+  function startPolling() { if (!pollTimer) pollTimer = setInterval(poll, 2000); }
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  function connect() {
+    if (!window.EventSource) { startPolling(); poll(); return; }
+    const es = new EventSource(base + "/events");
+    es.addEventListener("update", (e) => { try { render(JSON.parse(e.data)); } catch (err) { /* лош пакет */ } });
+    es.onopen = () => { setOnline(true); stopPolling(); };
+    es.onerror = () => { setOnline(false); startPolling(); };  // EventSource сам се свързва отново
+  }
+
+  text($("welcome"), LABELS.welcome);
+  connect();
+})();
+</script>
+</body>
+</html>

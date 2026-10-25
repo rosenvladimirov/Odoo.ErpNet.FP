@@ -1,3 +1,19 @@
+## [3.0.25] — 2026-10-25
+
+### Added — customer display through the proxy (`/customer-display`)
+
+- The till posts the current order to `POST /customer-display/{channel}`; the
+  proxy keeps the last state and pushes it over SSE
+  (`/customer-display/{channel}/events`) to every screen on the channel.
+- The screen page is served by the proxy itself (`/customer-display/{channel}`):
+  a monitor needs only a browser on the local network — no Odoo login, no
+  internet. It falls back to polling `/state` while SSE is down.
+- The same update drives a pole display (VFD 2×20, e.g. Datecs DPD-201) when
+  the till names one (`pole`): the selected line, the total on payment, the
+  change after it, a welcome text on an empty order. The euro sign is spelled
+  out on code pages that have none (cp437) before the line is laid out. A
+  failing pole never fails the update.
+
 ## [3.0.24] — 2026-10-25
 
 ### Added — `E_DEVICE_UNAVAILABLE` on a receipt the device never saw

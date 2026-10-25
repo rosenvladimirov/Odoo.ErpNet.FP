@@ -297,6 +297,9 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.state.scale_registry = scale_registry
     app.state.reader_registry = reader_registry
     app.state.display_registry = display_registry
+    # клиентският дисплей през проксито: каса → прокси → екрани и полюсен дисплей
+    from .customer_display_bus import CustomerDisplayBus
+    app.state.customer_display_bus = CustomerDisplayBus()
     app.state.camera_registry = camera_registry
     app.state.tracker_registry = tracker_registry
     app.state.access_registry = access_registry
@@ -394,6 +397,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
 
     from .routes.admin import router as admin_router
     from .routes.displays import router as displays_router
+    from .routes.customer_display import router as customer_display_router
     from .routes.iot_compat import (
         legacy_router as iot_compat_legacy_router,
         v18_router as iot_compat_v18_router,
@@ -433,6 +437,7 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     app.include_router(scales_router)
     app.include_router(readers_router)
     app.include_router(displays_router)
+    app.include_router(customer_display_router)
     app.include_router(cameras_router)
     app.include_router(gps_router)
     app.include_router(access_router)
