@@ -2,7 +2,9 @@
 # Пред касата: Traefik с *.erpnet.mcpworks.net + certpull (ADR erpnet-kasi-fleet/0005).
 #
 #   браузърът на касата ── https://$EDGE_NAME (→ 127.0.0.1, наш блок в /etc/hosts)
-#        ▼  Traefik на 127.0.0.1:443 (нищо не се отваря към LAN)
+#   ние през WARP ── маршрут по име → тунелът на машината → tunnel_dns: `self`
+#        ▼  Traefik на :443 — пуска само 127.0.0.1 и собствените адреси на машината
+#           (оттам идва cloudflared); всеки друг в LAN-а получава 403
 #        ├─ /pinpads/…  → $PINPAD_UPSTREAM   (APK-то на BlueCash, канал „Pinpad HTTPS“)
 #        └─ останалото  → $PROXY_UPSTREAM    (проксито, фискалният бон)
 #
@@ -71,6 +73,7 @@ if [ -s "$CERTS/wildcard.crt" ] && [ -s "$CERTS/wildcard.key" ]; then
 else
     echo "# waiting for certpull" > "$DYN/tls.yml"
 fi
+python3 -c "import sys; sys.path.insert(0, '$LIB'); import certpull, pathlib; certpull.write_traefik_allow(pathlib.Path('$DYN/allow.yml'), certpull.own_ipv4())"
 cat > "$DYN/routes.yml" <<EOF
 # managed by install-edge.sh
 http:
@@ -78,12 +81,14 @@ http:
     pinpad:
       rule: "Host(\`$EDGE_NAME\`) && PathPrefix(\`/pinpads\`)"
       entryPoints: [websecure]
+      middlewares: [only-local]
       service: pinpad
       tls: {}
       priority: 100
     proxy:
       rule: "Host(\`$EDGE_NAME\`)"
       entryPoints: [websecure]
+      middlewares: [only-local]
       service: proxy
       tls: {}
       priority: 10
@@ -110,6 +115,7 @@ CERTPULL_CF_SECRET_FILE=$( [ -e "$ETC/certpull.cf_secret" ] && echo "$ETC/certpu
 CERTPULL_DIR=$CERTS
 CERTPULL_TRAEFIK_TLS=$DYN/tls.yml
 CERTPULL_TRAEFIK_CERTS=/certs
+CERTPULL_TRAEFIK_ALLOW=$DYN/allow.yml
 EOF
 chmod 600 "$ETC/certpull.env"
 
@@ -138,7 +144,7 @@ Requires=docker.service
 ExecStartPre=-/usr/bin/docker rm -f odoo-erpnet-fp-edge
 ExecStart=/usr/bin/docker run --rm --name odoo-erpnet-fp-edge --network host \\
   -v $DYN:/dynamic:ro -v $CERTS:/certs:ro $TRAEFIK_IMAGE \\
-  --entrypoints.websecure.address=127.0.0.1:443 \\
+  --entrypoints.websecure.address=:443 \\
   --providers.file.directory=/dynamic --providers.file.watch=true \\
   --log.level=INFO
 ExecStop=/usr/bin/docker stop odoo-erpnet-fp-edge

@@ -21,6 +21,9 @@ Env (или файлът от --env, ред `KEY=VALUE`):
                             смяна (той презарежда сертификатите само при нейна промяна);
                             докато сертификат няма, там е празна и Traefik върви със своя
     CERTPULL_TRAEFIK_CERTS  пътят до сертификатите, както ги вижда Traefik (/certs)
+    CERTPULL_TRAEFIK_ALLOW  middleware-ът „only-local“ на Traefik: пуска 127.0.0.1 и
+                            собствените адреси на машината (оттам идва cloudflared на
+                            тунела ѝ); LAN-ът — 403. Обновява се при смяна на адреса (DHCP).
 """
 
 from __future__ import annotations
@@ -113,6 +116,39 @@ def write_traefik_tls(path: Path, certs_dir: str) -> None:
                  f"        certFile: {certs_dir}/wildcard.crt\n        keyFile: {certs_dir}/wildcard.key\n", 0o644)
 
 
+def own_ipv4() -> list[str]:
+    """Глобалните IPv4 адреси на машината (без docker/loopback)."""
+    import socket
+    ips = set()
+    try:
+        for fam, _, _, _, addr in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(addr[0])
+    except OSError:
+        pass
+    try:  # адресът, с който машината излиза навън — без пакет
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            ips.add(s.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith(("127.", "172.17.")))
+
+
+def write_traefik_allow(path: Path, ips: list[str]) -> bool:
+    """True — сменен."""
+    ranges = ["127.0.0.1/32"] + [f"{ip}/32" for ip in ips]
+    body = ("# managed by certpull — само тази машина и тунелът ѝ; LAN-ът получава 403\n"
+            "http:\n  middlewares:\n    only-local:\n      ipAllowList:\n"
+            f"        sourceRange: [{', '.join(repr(x).replace(chr(39), chr(34)) for x in ranges)}]\n")
+    try:
+        if path.read_text() == body:
+            return False
+    except FileNotFoundError:
+        pass
+    _write(path, body, 0o644)
+    return True
+
+
 def once(env: dict) -> int:
     status, body = fetch(env)
     if status != 200:
@@ -137,16 +173,24 @@ def main(argv=None) -> int:
     if not env.get("CERTPULL_URL"):
         log.error("CERTPULL_URL is not set")
         return 2
+    allow = env.get("CERTPULL_TRAEFIK_ALLOW")
     if a.once:
+        if allow:
+            write_traefik_allow(Path(allow), own_ipv4())
         return once(env)
     every = int(env.get("CERTPULL_EVERY_S", "21600"))
+    next_pull = 0.0
     while True:
-        try:
-            rc = once(env)
-        except Exception:  # noqa: BLE001 — следващият опит е след RETRY_S
-            log.exception("certpull failed")
-            rc = 1
-        time.sleep(every if rc == 0 else RETRY_S)
+        if allow and write_traefik_allow(Path(allow), own_ipv4()):
+            log.info("only-local: %s", ", ".join(["127.0.0.1"] + own_ipv4()))
+        if time.time() >= next_pull:
+            try:
+                rc = once(env)
+            except Exception:  # noqa: BLE001 — следващият опит е след RETRY_S
+                log.exception("certpull failed")
+                rc = 1
+            next_pull = time.time() + (every if rc == 0 else RETRY_S)
+        time.sleep(60)  # адресът (DHCP) се гледа всяка минута, сертификатът — по график
 
 
 if __name__ == "__main__":
