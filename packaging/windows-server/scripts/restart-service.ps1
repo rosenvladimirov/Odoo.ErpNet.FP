@@ -5,7 +5,7 @@ param([Parameter(Mandatory = $true)] [string] $Name)
 
 $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
 if (-not $svc) { Write-Output "[restart] $Name is not installed"; exit 0 }
-Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
+Stop-Service -Name $Name -Force -NoWait -ErrorAction SilentlyContinue
 $deadline = (Get-Date).AddSeconds(30)
 while ((Get-Service -Name $Name).Status -ne 'Stopped' -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
 if ((Get-Service -Name $Name).Status -ne 'Stopped') {

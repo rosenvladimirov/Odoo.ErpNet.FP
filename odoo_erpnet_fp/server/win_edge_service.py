@@ -71,7 +71,9 @@ class EdgeService(win32serviceutil.ServiceFramework):
 
     def __init__(self, args):
         super().__init__(args)
-        self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+        # Ръчно нулиране: чакат го ДВЕ нишки (Traefik и certpull). С авто-нулиране
+        # го взима едната и другата не разбира — услугата засядаше в StopPending.
+        self.stop_event = win32event.CreateEvent(None, 1, 0, None)
         self.proc: subprocess.Popen | None = None
 
     def SvcStop(self):
