@@ -136,6 +136,7 @@ Section "OpenSSH Server ${OPENSSH_VERSION}" SEC_OPENSSH
     File "scripts\install-openssh.ps1"
     File "scripts\stop-ours.ps1"
     File "scripts\install-edge.ps1"
+    File "scripts\restart-service.ps1"
 
     DetailPrint "Installing OpenSSH Server ${OPENSSH_VERSION}..."
     nsExec::ExecToLog '${PS} "$INSTDIR\scripts\install-openssh.ps1" -MsiPath "$INSTDIR\deps\OpenSSH-Win64.msi" -MsiVersion "${OPENSSH_VERSION}"'
@@ -288,9 +289,7 @@ Section "Remote access tunnel" SEC_TUNNEL
     ${If} ${FileExists} "$1\${APP_NAME}\edge\edge.json"
         DetailPrint "Fiscal device and CORS from the enrollment code..."
         nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m odoo_erpnet_fp.setup_fiscal --from-enroll'
-        nsExec::ExecToLog '"$SYSDIR\sc.exe" stop ${SERVICE_NAME}'
-        Sleep 3000
-        nsExec::ExecToLog '"$SYSDIR\sc.exe" start ${SERVICE_NAME}'
+        nsExec::ExecToLog '${PS} "$INSTDIR\scripts\restart-service.ps1" -Name ${SERVICE_NAME}'
         DetailPrint "HTTPS in front of the till (Traefik + certificate)..."
         nsExec::ExecToLog '${PS} "$INSTDIR\scripts\install-edge.ps1" -FromEnroll'
         Pop $0
