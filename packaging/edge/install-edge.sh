@@ -7,7 +7,7 @@
 #        └─ останалото  → $PROXY_UPSTREAM    (проксито, фискалният бон)
 #
 # Всичко за конкретния клиент е в /etc/odoo-erpnet-fp/edge.env (само на машината):
-#   EDGE_NAME=<име>.erpnet.mcpworks.net
+#   EDGE_NAME=<каса>.<клиент>.erpnet.mcpworks.net
 #   PINPAD_UPSTREAM=https://<IP на BlueCash>:9443
 #   PROXY_UPSTREAM=http://127.0.0.1:8001
 #   CERTPULL_URL=https://<cert-issuer>
@@ -52,7 +52,10 @@ fi
 for v in EDGE_NAME PINPAD_UPSTREAM PROXY_UPSTREAM CERTPULL_URL; do
     [ -n "${!v:-}" ] || { echo "$ENV_FILE: липсва $v"; exit 1; }
 done
-case "$EDGE_NAME" in *.erpnet.mcpworks.net) ;; *) echo "EDGE_NAME трябва да е под .erpnet.mcpworks.net (едно ниво)"; exit 1;; esac
+# <каса>.<клиент>.erpnet.mcpworks.net (ADR-0002) — сертификатът носи *.<клиент>.erpnet… (ADR-0005)
+if ! [[ "$EDGE_NAME" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)?\.erpnet\.mcpworks\.net$ ]]; then
+    echo "EDGE_NAME трябва да е <каса>.<клиент>.erpnet.mcpworks.net"; exit 1
+fi
 [ -r "$ETC/certpull.secret" ] || { echo "няма $ETC/certpull.secret"; exit 1; }
 chmod 600 "$ETC/certpull.secret" "$ENV_FILE"; [ -e "$ETC/certpull.cf_secret" ] && chmod 600 "$ETC/certpull.cf_secret"
 
