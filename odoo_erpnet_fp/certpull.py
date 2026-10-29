@@ -1,0 +1,145 @@
+"""Тегли сертификата на машината от cert-issuer и го слага пред устройствата (ADR erpnet-kasi-fleet/0005).
+
+Сървърът (cert-issuer) държи един `*.erpnet.mcpworks.net` и сам го подновява;
+машината само го дърпа: `GET <url>/v1/cert` с тайната си (Bearer) и — когато
+името е зад Cloudflare Access — с ключа за услуга (CF-Access-Client-Id/Secret).
+Нов сериен номер ⇒ сертификатът и ключът се записват атомарно в папката, която
+Traefik гледа (file provider с watch), и той ги поема без рестарт.
+
+Само стандартната библиотека — върви и на хоста (Linux .deb), и в услугата на
+Windows, и в контейнер.
+
+    python -m odoo_erpnet_fp.certpull --env /etc/odoo-erpnet-fp/certpull.env [--once]
+
+Env (или файлът от --env, ред `KEY=VALUE`):
+    CERTPULL_URL            https://<сървърът>        (задължително)
+    CERTPULL_SECRET_FILE    файл с тайната на машината (0600)
+    CERTPULL_CF_ID / CERTPULL_CF_SECRET_FILE   ключът за услуга на Cloudflare Access (по избор)
+    CERTPULL_DIR            /var/lib/odoo-erpnet-fp/certs
+    CERTPULL_EVERY_S        21600 (6 ч.); при грешка — след 300 s
+    CERTPULL_TOUCH          файл, който се „докосва“ след смяна (динамичната настройка
+                            на Traefik — той презарежда сертификатите само при нейна промяна)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+log = logging.getLogger("erpnet.certpull")
+
+DEFAULT_DIR = "/var/lib/odoo-erpnet-fp/certs"
+RETRY_S = 300
+
+
+def load_env(path: str | None) -> dict:
+    env = dict(os.environ)
+    if path:
+        for line in Path(path).read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip().strip('"').strip("'")
+    return env
+
+
+def _read_secret(env: dict, file_key: str, value_key: str) -> str:
+    if env.get(file_key):
+        return Path(env[file_key]).read_text().strip()
+    return env.get(value_key, "").strip()
+
+
+def fetch(env: dict, timeout: float = 30) -> tuple[int, dict]:
+    url = env["CERTPULL_URL"].rstrip("/") + "/v1/cert"
+    headers = {"Authorization": "Bearer " + _read_secret(env, "CERTPULL_SECRET_FILE", "CERTPULL_SECRET"),
+               "User-Agent": "odoo-erpnet-fp-certpull/1"}
+    cf_id = env.get("CERTPULL_CF_ID", "").strip()
+    if cf_id:
+        headers["CF-Access-Client-Id"] = cf_id
+        headers["CF-Access-Client-Secret"] = _read_secret(env, "CERTPULL_CF_SECRET_FILE", "CERTPULL_CF_SECRET")
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read())
+        except Exception:  # noqa: BLE001
+            body = {"detail": f"HTTP {e.code}"}
+        return e.code, body
+
+
+def _write(path: Path, data: str, mode: int) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(data)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def install(cert: dict, directory: Path) -> bool:
+    """Записва при нов сериен номер. True — сменен."""
+    directory.mkdir(parents=True, exist_ok=True)
+    state_p = directory / "state.json"
+    try:
+        state = json.loads(state_p.read_text())
+    except (FileNotFoundError, ValueError):
+        state = {}
+    if state.get("serial") == cert["serial"] and (directory / "wildcard.crt").exists():
+        return False
+    if not cert.get("chain", "").startswith("-----BEGIN CERTIFICATE-----") or "PRIVATE KEY-----" not in cert.get("key", ""):
+        raise ValueError("the server returned something that is not a certificate and a key")
+    # Ключът първо: Traefik гледа папката и не бива да види нов сертификат със стар ключ.
+    _write(directory / "wildcard.key", cert["key"], 0o600)
+    _write(directory / "wildcard.crt", cert["chain"], 0o644)
+    _write(directory / "state.json", json.dumps({"serial": cert["serial"], "notAfter": cert["notAfter"],
+                                                 "names": cert.get("names", []), "at": int(time.time())}), 0o644)
+    return True
+
+
+def once(env: dict) -> int:
+    status, body = fetch(env)
+    if status != 200:
+        log.warning("cert-issuer: %s %s", status, body.get("detail", ""))
+        return 1
+    changed = install(body, Path(env.get("CERTPULL_DIR", DEFAULT_DIR)))
+    if changed and env.get("CERTPULL_TOUCH"):
+        Path(env["CERTPULL_TOUCH"]).touch()
+    log.info("%s %s serial=%s until=%s", "installed" if changed else "unchanged",
+             ",".join(body.get("names", [])), body["serial"],
+             time.strftime("%Y-%m-%d", time.gmtime(body["notAfter"])))
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--env", help="file with KEY=VALUE lines")
+    ap.add_argument("--once", action="store_true")
+    a = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    env = load_env(a.env)
+    if not env.get("CERTPULL_URL"):
+        log.error("CERTPULL_URL is not set")
+        return 2
+    if a.once:
+        return once(env)
+    every = int(env.get("CERTPULL_EVERY_S", "21600"))
+    while True:
+        try:
+            rc = once(env)
+        except Exception:  # noqa: BLE001 — следващият опит е след RETRY_S
+            log.exception("certpull failed")
+            rc = 1
+        time.sleep(every if rc == 0 else RETRY_S)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
