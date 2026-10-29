@@ -87,7 +87,9 @@ def fetch(env: dict, timeout: float = 30) -> tuple[int, dict]:
 def _write(path: Path, data: str, mode: int) -> None:
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "w") as f:
+    # Изрично UTF-8: на Windows подразбиращата се е cp1252 и кирилицата в
+    # коментарите чупеше записа по средата (празен .tmp, Traefik без middleware).
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         f.write(data)
     os.chmod(tmp, mode)
     os.replace(tmp, path)

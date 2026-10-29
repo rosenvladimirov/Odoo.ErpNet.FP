@@ -135,3 +135,20 @@ def test_extra_certificate_is_installed_next_to_the_main_one(tmp_path, server):
     state["body"] = {**CERT, "extra": {**extra, "serial": "e2", "chain": extra["chain"].replace("EEE", "GGG")}}
     certpull.once(env)
     assert "GGG" in (d / "extra.crt").read_text()
+
+
+def test_files_are_utf8_whatever_the_locale(tmp_path, monkeypatch):
+    """Windows: подразбиращата се кодировка е cp1252 — кирилицата в коментарите не бива да чупи записа."""
+
+    real_fdopen = certpull.os.fdopen
+
+    def cp1252_fdopen(fd, mode="r", *a, **kw):
+        kw.setdefault("encoding", "cp1252")
+        return real_fdopen(fd, mode, *a, **kw)
+
+    monkeypatch.setattr(certpull.os, "fdopen", cp1252_fdopen)
+    p = tmp_path / "allow.yml"
+    assert certpull.write_traefik_allow(p, ["10.0.0.5"]) is True
+    assert "LAN-ът получава 403" in p.read_text(encoding="utf-8")
+    certpull.write_traefik_tls(tmp_path / "tls.yml", "/c")
+    assert "сменя се" in (tmp_path / "tls.yml").read_text(encoding="utf-8")
