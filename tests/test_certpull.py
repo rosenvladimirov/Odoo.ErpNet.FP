@@ -109,3 +109,12 @@ def test_env_file(tmp_path):
     f.write_text("# c\nCERTPULL_URL='https://x'\nCERTPULL_EVERY_S=60\n")
     env = certpull.load_env(str(f))
     assert env["CERTPULL_URL"] == "https://x" and env["CERTPULL_EVERY_S"] == "60"
+
+
+def test_certificates_mode_for_a_foreign_traefik(tmp_path, server):
+    url, _, _ = server
+    env = _env(tmp_path, url, CERTPULL_TRAEFIK_MODE="certificates", CERTPULL_TRAEFIK_CERTS="/etc/traefik/certs/erpnet")
+    certpull.once(env)
+    t = (tmp_path / "tls.yml").read_text()
+    assert "certificates:" in t and "defaultCertificate" not in t
+    assert "certFile: /etc/traefik/certs/erpnet/wildcard.crt" in t

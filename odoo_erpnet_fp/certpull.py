@@ -21,6 +21,9 @@ Env (или файлът от --env, ред `KEY=VALUE`):
                             смяна (той презарежда сертификатите само при нейна промяна);
                             докато сертификат няма, там е празна и Traefik върви със своя
     CERTPULL_TRAEFIK_CERTS  пътят до сертификатите, както ги вижда Traefik (/certs)
+    CERTPULL_TRAEFIK_MODE   default (сертификатът по подразбиране — наш Traefik) или
+                            certificates (един ред в tls.certificates — чужд Traefik със
+                            свои сертификати; файлът е само наш, неговите не се пипат)
     CERTPULL_TRAEFIK_ALLOW  middleware-ът „only-local“ на Traefik: пуска 127.0.0.1 и
                             собствените адреси на машината (оттам идва cloudflared на
                             тунела ѝ); LAN-ът — 403. Обновява се при смяна на адреса (DHCP).
@@ -110,10 +113,15 @@ def install(cert: dict, directory: Path) -> bool:
     return True
 
 
-def write_traefik_tls(path: Path, certs_dir: str) -> None:
-    _write(path, "# managed by certpull — сменя се при нов сертификат\n"
-                 "tls:\n  stores:\n    default:\n      defaultCertificate:\n"
-                 f"        certFile: {certs_dir}/wildcard.crt\n        keyFile: {certs_dir}/wildcard.key\n", 0o644)
+def write_traefik_tls(path: Path, certs_dir: str, mode: str = "default") -> None:
+    head = "# managed by certpull — сменя се при нов сертификат\n"
+    if mode == "certificates":
+        body = (f"tls:\n  certificates:\n    - certFile: {certs_dir}/wildcard.crt\n"
+                f"      keyFile: {certs_dir}/wildcard.key\n")
+    else:
+        body = ("tls:\n  stores:\n    default:\n      defaultCertificate:\n"
+                f"        certFile: {certs_dir}/wildcard.crt\n        keyFile: {certs_dir}/wildcard.key\n")
+    _write(path, head + body, 0o644)
 
 
 def own_ipv4() -> list[str]:
@@ -156,7 +164,8 @@ def once(env: dict) -> int:
         return 1
     changed = install(body, Path(env.get("CERTPULL_DIR", DEFAULT_DIR)))
     if changed and env.get("CERTPULL_TRAEFIK_TLS"):
-        write_traefik_tls(Path(env["CERTPULL_TRAEFIK_TLS"]), env.get("CERTPULL_TRAEFIK_CERTS", "/certs"))
+        write_traefik_tls(Path(env["CERTPULL_TRAEFIK_TLS"]), env.get("CERTPULL_TRAEFIK_CERTS", "/certs"),
+                          env.get("CERTPULL_TRAEFIK_MODE", "default"))
     log.info("%s %s serial=%s until=%s", "installed" if changed else "unchanged",
              ",".join(body.get("names", [])), body["serial"],
              time.strftime("%Y-%m-%d", time.gmtime(body["notAfter"])))
