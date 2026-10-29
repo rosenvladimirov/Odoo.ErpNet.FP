@@ -101,25 +101,35 @@ def install(cert: dict, directory: Path) -> bool:
         state = json.loads(state_p.read_text())
     except (FileNotFoundError, ValueError):
         state = {}
-    if state.get("serial") == cert["serial"] and (directory / "wildcard.crt").exists():
+    extra = cert.get("extra")  # допълнителните (публични) имена — само на тази машина
+    if (state.get("serial") == cert["serial"] and (directory / "wildcard.crt").exists()
+            and state.get("extra_serial") == (extra or {}).get("serial")):
         return False
-    if not cert.get("chain", "").startswith("-----BEGIN CERTIFICATE-----") or "PRIVATE KEY-----" not in cert.get("key", ""):
-        raise ValueError("the server returned something that is not a certificate and a key")
+    for c in [cert] + ([extra] if extra else []):
+        if not c.get("chain", "").startswith("-----BEGIN CERTIFICATE-----") or "PRIVATE KEY-----" not in c.get("key", ""):
+            raise ValueError("the server returned something that is not a certificate and a key")
     # Ключът първо: Traefik гледа папката и не бива да види нов сертификат със стар ключ.
     _write(directory / "wildcard.key", cert["key"], 0o600)
     _write(directory / "wildcard.crt", cert["chain"], 0o644)
-    _write(directory / "state.json", json.dumps({"serial": cert["serial"], "notAfter": cert["notAfter"],
-                                                 "names": cert.get("names", []), "at": int(time.time())}), 0o644)
+    if extra:
+        _write(directory / "extra.key", extra["key"], 0o600)
+        _write(directory / "extra.crt", extra["chain"], 0o644)
+    _write(directory / "state.json", json.dumps({
+        "serial": cert["serial"], "notAfter": cert["notAfter"], "names": cert.get("names", []),
+        "extra_serial": (extra or {}).get("serial"), "extra_names": (extra or {}).get("names", []),
+        "at": int(time.time())}), 0o644)
     return True
 
 
-def write_traefik_tls(path: Path, certs_dir: str, mode: str = "default") -> None:
+def write_traefik_tls(path: Path, certs_dir: str, mode: str = "default", extra: bool = False) -> None:
     head = "# managed by certpull — сменя се при нов сертификат\n"
+    extra_item = (f"    - certFile: {certs_dir}/extra.crt\n      keyFile: {certs_dir}/extra.key\n" if extra else "")
     if mode == "certificates":
         body = (f"tls:\n  certificates:\n    - certFile: {certs_dir}/wildcard.crt\n"
-                f"      keyFile: {certs_dir}/wildcard.key\n")
+                f"      keyFile: {certs_dir}/wildcard.key\n" + extra_item)
     else:
-        body = ("tls:\n  stores:\n    default:\n      defaultCertificate:\n"
+        body = ("tls:\n" + ("  certificates:\n" + extra_item if extra else "")
+                + "  stores:\n    default:\n      defaultCertificate:\n"
                 f"        certFile: {certs_dir}/wildcard.crt\n        keyFile: {certs_dir}/wildcard.key\n")
     _write(path, head + body, 0o644)
 
@@ -165,7 +175,7 @@ def once(env: dict) -> int:
     changed = install(body, Path(env.get("CERTPULL_DIR", DEFAULT_DIR)))
     if changed and env.get("CERTPULL_TRAEFIK_TLS"):
         write_traefik_tls(Path(env["CERTPULL_TRAEFIK_TLS"]), env.get("CERTPULL_TRAEFIK_CERTS", "/certs"),
-                          env.get("CERTPULL_TRAEFIK_MODE", "default"))
+                          env.get("CERTPULL_TRAEFIK_MODE", "default"), extra=bool(body.get("extra")))
     log.info("%s %s serial=%s until=%s", "installed" if changed else "unchanged",
              ",".join(body.get("names", [])), body["serial"],
              time.strftime("%Y-%m-%d", time.gmtime(body["notAfter"])))

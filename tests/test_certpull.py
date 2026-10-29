@@ -118,3 +118,20 @@ def test_certificates_mode_for_a_foreign_traefik(tmp_path, server):
     t = (tmp_path / "tls.yml").read_text()
     assert "certificates:" in t and "defaultCertificate" not in t
     assert "certFile: /etc/traefik/certs/erpnet/wildcard.crt" in t
+
+
+def test_extra_certificate_is_installed_next_to_the_main_one(tmp_path, server):
+    url, _, state = server
+    extra = {"names": ["shop1.example-shell.space"], "serial": "e1", "notAfter": 1900000000,
+             "chain": CERT["chain"].replace("AAA", "EEE"), "key": CERT["key"].replace("BBB", "FFF")}
+    state["body"] = {**CERT, "extra": extra}
+    env = _env(tmp_path, url, CERTPULL_TRAEFIK_MODE="certificates", CERTPULL_TRAEFIK_CERTS="/c")
+    certpull.once(env)
+    d = tmp_path / "certs"
+    assert "EEE" in (d / "extra.crt").read_text() and oct((d / "extra.key").stat().st_mode)[-3:] == "600"
+    t = (tmp_path / "tls.yml").read_text()
+    assert "/c/wildcard.crt" in t and "/c/extra.crt" in t
+    # нов сериен само на допълнителния ⇒ пак се записва
+    state["body"] = {**CERT, "extra": {**extra, "serial": "e2", "chain": extra["chain"].replace("EEE", "GGG")}}
+    certpull.once(env)
+    assert "GGG" in (d / "extra.crt").read_text()
