@@ -42,7 +42,7 @@ def _env(tmp_path, url, **kw):
     (tmp_path / "tls.yml").write_text("x")
     return {"CERTPULL_URL": url, "CERTPULL_SECRET_FILE": str(tmp_path / "secret"),
             "CERTPULL_CF_ID": "cfid.access", "CERTPULL_CF_SECRET_FILE": str(tmp_path / "cf"),
-            "CERTPULL_DIR": str(tmp_path / "certs"), "CERTPULL_TOUCH": str(tmp_path / "tls.yml"), **kw}
+            "CERTPULL_DIR": str(tmp_path / "certs"), "CERTPULL_TRAEFIK_TLS": str(tmp_path / "tls.yml"), **kw}
 
 
 def test_pulls_with_the_machine_secret_and_the_access_token(tmp_path, server):
@@ -58,13 +58,14 @@ def test_installs_key_0600_and_touches_traefik(tmp_path, server):
     url, _, _ = server
     import os
     env = _env(tmp_path, url)
-    os.utime(env["CERTPULL_TOUCH"], (1, 1))
+    os.utime(env["CERTPULL_TRAEFIK_TLS"], (1, 1))
     assert certpull.once(env) == 0
     d = tmp_path / "certs"
     assert (d / "wildcard.crt").read_text() == CERT["chain"]
     assert (d / "wildcard.key").read_text() == CERT["key"]
     assert oct((d / "wildcard.key").stat().st_mode)[-3:] == "600"
-    assert os.stat(env["CERTPULL_TOUCH"]).st_mtime > 1
+    assert os.stat(env["CERTPULL_TRAEFIK_TLS"]).st_mtime > 1
+    assert "certFile: /certs/wildcard.crt" in (tmp_path / "tls.yml").read_text()
 
 
 def test_same_serial_changes_nothing(tmp_path, server):
@@ -72,9 +73,9 @@ def test_same_serial_changes_nothing(tmp_path, server):
     import os
     env = _env(tmp_path, url)
     certpull.once(env)
-    os.utime(env["CERTPULL_TOUCH"], (1, 1))
+    os.utime(env["CERTPULL_TRAEFIK_TLS"], (1, 1))
     assert certpull.once(env) == 0
-    assert os.stat(env["CERTPULL_TOUCH"]).st_mtime == 1
+    assert os.stat(env["CERTPULL_TRAEFIK_TLS"]).st_mtime == 1
 
 
 def test_new_serial_replaces(tmp_path, server):

@@ -17,8 +17,10 @@ Env (или файлът от --env, ред `KEY=VALUE`):
     CERTPULL_CF_ID / CERTPULL_CF_SECRET_FILE   ключът за услуга на Cloudflare Access (по избор)
     CERTPULL_DIR            /var/lib/odoo-erpnet-fp/certs
     CERTPULL_EVERY_S        21600 (6 ч.); при грешка — след 300 s
-    CERTPULL_TOUCH          файл, който се „докосва“ след смяна (динамичната настройка
-                            на Traefik — той презарежда сертификатите само при нейна промяна)
+    CERTPULL_TRAEFIK_TLS    динамичната TLS настройка на Traefik, която certpull пише след
+                            смяна (той презарежда сертификатите само при нейна промяна);
+                            докато сертификат няма, там е празна и Traefik върви със своя
+    CERTPULL_TRAEFIK_CERTS  пътят до сертификатите, както ги вижда Traefik (/certs)
 """
 
 from __future__ import annotations
@@ -105,14 +107,20 @@ def install(cert: dict, directory: Path) -> bool:
     return True
 
 
+def write_traefik_tls(path: Path, certs_dir: str) -> None:
+    _write(path, "# managed by certpull — сменя се при нов сертификат\n"
+                 "tls:\n  stores:\n    default:\n      defaultCertificate:\n"
+                 f"        certFile: {certs_dir}/wildcard.crt\n        keyFile: {certs_dir}/wildcard.key\n", 0o644)
+
+
 def once(env: dict) -> int:
     status, body = fetch(env)
     if status != 200:
         log.warning("cert-issuer: %s %s", status, body.get("detail", ""))
         return 1
     changed = install(body, Path(env.get("CERTPULL_DIR", DEFAULT_DIR)))
-    if changed and env.get("CERTPULL_TOUCH"):
-        Path(env["CERTPULL_TOUCH"]).touch()
+    if changed and env.get("CERTPULL_TRAEFIK_TLS"):
+        write_traefik_tls(Path(env["CERTPULL_TRAEFIK_TLS"]), env.get("CERTPULL_TRAEFIK_CERTS", "/certs"))
     log.info("%s %s serial=%s until=%s", "installed" if changed else "unchanged",
              ",".join(body.get("names", [])), body["serial"],
              time.strftime("%Y-%m-%d", time.gmtime(body["notAfter"])))

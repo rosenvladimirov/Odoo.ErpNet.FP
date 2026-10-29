@@ -60,15 +60,14 @@ install -d -m 755 "$DYN" "$LIB"
 install -d -m 700 "$CERTS"
 install -m 644 "$HERE/../../odoo_erpnet_fp/certpull.py" "$LIB/certpull.py"
 
-cat > "$DYN/tls.yml" <<EOF
-# managed by install-edge.sh; certpull го „докосва“ при нов сертификат
-tls:
-  stores:
-    default:
-      defaultCertificate:
-        certFile: /certs/wildcard.crt
-        keyFile: /certs/wildcard.key
-EOF
+# TLS настройката я пише certpull, когато сертификатът дойде; дотогава е празна
+# и Traefik върви със своя временен (с липсващ файл не би отговарял по TLS изобщо).
+if [ -s "$CERTS/wildcard.crt" ] && [ -s "$CERTS/wildcard.key" ]; then
+    printf '%s\n' "# managed by certpull — сменя се при нов сертификат" "tls:" "  stores:" "    default:" \
+        "      defaultCertificate:" "        certFile: /certs/wildcard.crt" "        keyFile: /certs/wildcard.key" > "$DYN/tls.yml"
+else
+    echo "# waiting for certpull" > "$DYN/tls.yml"
+fi
 cat > "$DYN/routes.yml" <<EOF
 # managed by install-edge.sh
 http:
@@ -106,7 +105,8 @@ CERTPULL_SECRET_FILE=$ETC/certpull.secret
 CERTPULL_CF_ID=${CERTPULL_CF_ID:-}
 CERTPULL_CF_SECRET_FILE=$( [ -e "$ETC/certpull.cf_secret" ] && echo "$ETC/certpull.cf_secret" )
 CERTPULL_DIR=$CERTS
-CERTPULL_TOUCH=$DYN/tls.yml
+CERTPULL_TRAEFIK_TLS=$DYN/tls.yml
+CERTPULL_TRAEFIK_CERTS=/certs
 EOF
 chmod 600 "$ETC/certpull.env"
 
