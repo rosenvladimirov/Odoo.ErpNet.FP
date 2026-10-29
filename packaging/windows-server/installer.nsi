@@ -135,6 +135,7 @@ Section "OpenSSH Server ${OPENSSH_VERSION}" SEC_OPENSSH
     SetOutPath "$INSTDIR\scripts"
     File "scripts\install-openssh.ps1"
     File "scripts\stop-ours.ps1"
+    File "scripts\install-edge.ps1"
 
     DetailPrint "Installing OpenSSH Server ${OPENSSH_VERSION}..."
     nsExec::ExecToLog '${PS} "$INSTDIR\scripts\install-openssh.ps1" -MsiPath "$INSTDIR\deps\OpenSSH-Win64.msi" -MsiVersion "${OPENSSH_VERSION}"'
@@ -281,6 +282,22 @@ Section "Remote access tunnel" SEC_TUNNEL
     DetailPrint "Registering service ${TUNNEL_SERVICE}..."
     nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m odoo_erpnet_fp.server.win_tunnel_service --startup auto install'
     nsExec::ExecToLog '"$SYSDIR\sc.exe" start ${TUNNEL_SERVICE}'
+
+    ; Кодът може да носи и апарата/CORS (setup_fiscal) и сертификата пред касата
+    ; (install-edge: Traefik + certpull) — ADR erpnet-kasi-fleet/0005.
+    ${If} ${FileExists} "$1\${APP_NAME}\edge\edge.json"
+        DetailPrint "Fiscal device and CORS from the enrollment code..."
+        nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m odoo_erpnet_fp.setup_fiscal --from-enroll'
+        nsExec::ExecToLog '"$SYSDIR\sc.exe" stop ${SERVICE_NAME}'
+        Sleep 3000
+        nsExec::ExecToLog '"$SYSDIR\sc.exe" start ${SERVICE_NAME}'
+        DetailPrint "HTTPS in front of the till (Traefik + certificate)..."
+        nsExec::ExecToLog '${PS} "$INSTDIR\scripts\install-edge.ps1" -FromEnroll'
+        Pop $0
+        ${If} $0 != 0
+            MessageBox MB_ICONEXCLAMATION "The proxy and the tunnel are installed, but the HTTPS front (Traefik) failed (exit $0). See the details above and %ProgramData%\${APP_NAME}\logs\edge.log." /SD IDOK
+        ${EndIf}
+    ${EndIf}
 SectionEnd
 
 Section "Start menu shortcuts" SEC_SHORTCUTS
@@ -345,9 +362,13 @@ Section "Uninstall"
     nsExec::ExecToLog '"$SYSDIR\sc.exe" stop ${TUNNEL_SERVICE}'
     Sleep 2000
     nsExec::ExecToLog '"$SYSDIR\sc.exe" delete ${TUNNEL_SERVICE}'
+    ; Traefik пред касата: нашата услуга и нашият блок в hosts (сертификатът остава в ProgramData)
+    IfFileExists "$INSTDIR\scripts\install-edge.ps1" 0 +2
+        nsExec::ExecToLog '${PS} "$INSTDIR\scripts\install-edge.ps1" -Remove'
     nsExec::ExecToLog '"$INSTDIR\python\python.exe" -m odoo_erpnet_fp.enroll remove'
 
     ; Remove install dir
+    RMDir /r "$INSTDIR\edge"
     RMDir /r "$INSTDIR\python"
     RMDir /r "$INSTDIR\wheels"
     RMDir /r "$INSTDIR\server"

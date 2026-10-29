@@ -4,6 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File install-edge.ps1 `
 #       -EdgeName kasa.<клиент>.erpnet.mcpworks.net -PinpadUpstream https://<BlueCash>:9443 `
 #       -CertpullUrl https://<сървърът> -SecretFile <файл с тайната на машината> [-SourceDir <папка с .py>]
+#   powershell -ExecutionPolicy Bypass -File install-edge.ps1 -FromEnroll   # от кода EFP1. (инсталаторът)
 #   powershell -ExecutionPolicy Bypass -File install-edge.ps1 -Remove
 #
 # Идемпотентно. Пипа само нашето: своя услуга, свой блок в hosts, свои папки.
@@ -14,6 +15,7 @@ param(
     [string]$CertpullUrl,
     [string]$SecretFile,
     [string]$SourceDir,
+    [switch]$FromEnroll,
     [switch]$Remove
 )
 $ErrorActionPreference = "Stop"
@@ -65,6 +67,15 @@ if ($Remove) {
     exit 0
 }
 
+if ($FromEnroll) {
+    # enroll apply е оставил edge.json (без тайни) и certpull.secret (само админи) в $Data
+    $j = Get-Content -LiteralPath (Join-Path $Data "edge.json") -Raw | ConvertFrom-Json
+    if (-not $j.name -or -not $j.cert_url) { Write-Host "edge: the enrollment code has no edge data - skipped"; exit 0 }
+    $EdgeName = $j.name
+    $CertpullUrl = $j.cert_url
+    $PinpadUpstream = if ($j.pinpad) { $j.pinpad } else { $ProxyUpstream }
+    $SecretFile = Join-Path $Data "certpull.secret"
+}
 foreach ($p in "EdgeName","PinpadUpstream","CertpullUrl","SecretFile") {
     if (-not (Get-Variable $p -ValueOnly)) { throw "missing -$p" }
 }
@@ -102,7 +113,7 @@ Protect-AdminOnly $Certs
 $CertsFwd = $Certs -replace '\\', '/'
 $DynFwd = $Dyn -replace '\\', '/'
 $Secret = Join-Path $Data "certpull.secret"
-Copy-Item -LiteralPath $SecretFile -Destination $Secret -Force
+if ((Resolve-Path $SecretFile).Path -ne $Secret) { Copy-Item -LiteralPath $SecretFile -Destination $Secret -Force }
 Protect-AdminOnly $Secret
 Write-Text (Join-Path $Data "certpull.env") @"
 CERTPULL_URL=$CertpullUrl

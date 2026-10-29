@@ -1,5 +1,6 @@
 """Записването на касата пипа само своето (ADR erpnet-kasi-fleet/0003)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -97,3 +98,27 @@ def test_legacy_hosts_block_is_cleaned_on_apply(tmp_path):
     assert "BEGIN erpnet-fp" in p["hosts"].read_text()
     enroll.apply(enroll.encode(DATA), p)
     assert p["hosts"].read_bytes().decode() == FOREIGN_HOSTS
+
+
+def test_edge_block_in_hosts_survives_reenroll(tmp_path):
+    """„# BEGIN erpnet-fp-edge“ (Traefik пред касата) не е стар блок на enroll — остава."""
+    p = _paths(tmp_path)
+    edge = ("# BEGIN erpnet-fp-edge (managed by Odoo.ErpNet.FP - do not edit inside)\n"
+            "127.0.0.1 kasa.demo.erpnet.mcpworks.net\n# END erpnet-fp-edge\n")
+    p["hosts"].write_bytes((FOREIGN_HOSTS + edge).encode())
+    enroll.apply(enroll.encode(DATA), p)
+    assert edge in p["hosts"].read_bytes().decode()
+
+
+def test_code_can_carry_the_certificate_secret_for_the_edge(tmp_path):
+    p = _paths(tmp_path)
+    p["edge"] = tmp_path / "edge"
+    data = {**DATA, "crt": "s3cret-for-cert-issuer", "cu": "https://certs.example",
+            "e": {"n": "kasa.demo.erpnet.mcpworks.net", "p": ""}}
+    st = enroll.apply(enroll.encode(data), p)
+    assert (p["edge"] / "certpull.secret").read_text() == "s3cret-for-cert-issuer"
+    assert oct((p["edge"] / "certpull.secret").stat().st_mode & 0o777) == "0o600"
+    edge = json.loads((p["edge"] / "edge.json").read_text())
+    assert edge == {"name": "kasa.demo.erpnet.mcpworks.net", "pinpad": "", "cert_url": "https://certs.example"}
+    assert "s3cret" not in (p["edge"] / "edge.json").read_text() and "s3cret" not in p["state"].read_text()
+    assert st["edge"]["name"] == "kasa.demo.erpnet.mcpworks.net"

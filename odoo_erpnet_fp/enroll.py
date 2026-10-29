@@ -5,7 +5,10 @@
 
     EFP1.<base64url(zlib(JSON))>
     {"v":1, "c":клиент, "k":каса, "h":име, "t":tunnel_id, "tok":токен на тунела,
-     "d":{устройство: LAN IP}, "ssh":[публични ключове]}
+     "d":{устройство: LAN IP}, "ssh":[публични ключове],
+     "crt":тайната за cert-issuer, "cu":адресът му, "e":{"n":име пред касата, "p":пинпадът},
+     "fp":{"id","driver","usb":"VID:PID","op","pw"} — апаратът, "cors":[Odoo]}  (setup_fiscal)
+    (последните три — по избор, ADR erpnet-kasi-fleet/0005: пред касата е Traefik)
 
 `apply` прави на касата само НАШИТЕ неща и е идемпотентно (ADR-0003):
   - токенът → файл, четим само от администратора/root;
@@ -114,10 +117,11 @@ def _strip_block(lines: list[str]) -> list[str]:
     out, inside = [], False
     for line in lines:
         s = line.strip()
-        if s.startswith("# BEGIN erpnet-fp"):
+        # Само НАШИЯТ блок — не и „# BEGIN erpnet-fp-edge“ на Traefik пред касата.
+        if s == BEGIN or s == "# BEGIN erpnet-fp":
             inside = True
             continue
-        if inside and s.startswith(END):
+        if inside and s == END:
             inside = False
             continue
         if not inside:
@@ -160,7 +164,10 @@ def remove_hosts_block(path: Path) -> bool:
     text, nl = _read_text(path)
     if BEGIN.split(" (")[0] not in text:
         return False
-    kept = _strip_block(text.splitlines())
+    lines = text.splitlines()
+    kept = _strip_block(lines)
+    if kept == lines:
+        return False  # нашият блок го няма (напр. само „erpnet-fp-edge“) — файлът не се пипа
     while kept and not kept[-1].strip():
         kept.pop()
     _write_text(path, nl.join(kept) + (nl if kept else ""))
@@ -212,6 +219,7 @@ def paths() -> dict[str, Path]:
             # само за махане на блок от по-ранна версия
             "hosts": Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "drivers" / "etc" / "hosts",
             "keys": pd / "ssh" / "administrators_authorized_keys",
+            "edge": root / "edge",
         }
     root = Path(os.environ.get("ERPNET_FP_HOME", "/opt/erpnet-fp"))
     return {
@@ -220,6 +228,7 @@ def paths() -> dict[str, Path]:
         "names": root / "tunnel" / "names",
         "hosts": Path("/etc/hosts"),  # само за махане на стар блок; нов не се пише
         "keys": Path(os.environ.get("ERPNET_FP_KEYS", "/root/.ssh/authorized_keys")),
+        "edge": Path(os.environ.get("ERPNET_FP_ETC", "/etc/odoo-erpnet-fp")),
     }
 
 
@@ -256,12 +265,27 @@ def apply(code: str, p: dict[str, Path] | None = None) -> dict:
         keys_changed = set_keys(p["keys"], keys, data.get("c") or "rosen")
         if IS_WINDOWS:
             _restrict(p["keys"])  # иначе sshd на Windows отказва файла
+    edge = None
+    if data.get("crt"):
+        # Сертификатът пред касата (Traefik + certpull) — тайната отделно, 0600/админи;
+        # в edge.json само каквото не е тайна. Инсталаторът (install-edge) чете оттам.
+        _write_secret(p["edge"] / "certpull.secret", data["crt"])
+        e = data.get("e") or {}
+        edge = {"name": e.get("n") or data["h"], "pinpad": e.get("p") or "", "cert_url": data.get("cu") or ""}
+    if data.get("fp") or data.get("cors"):
+        edge = edge or {}
+        edge["fiscal"] = data.get("fp") or None
+        edge["cors"] = data.get("cors") or []
+    if edge is not None:
+        p["edge"].mkdir(parents=True, exist_ok=True)
+        (p["edge"] / "edge.json").write_text(json.dumps(edge, indent=2), encoding="utf-8")
     state = {
         "enrolled_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "client": data.get("c"), "kasa": data.get("k"),
         "hostname": data["h"], "tunnel_id": data["t"],
         "names": [f"{ip} {name}" for name, ip in entries],
         "ssh_keys": len(keys),
+        "edge": edge,
     }
     p["state"].parent.mkdir(parents=True, exist_ok=True)
     p["state"].write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -301,6 +325,12 @@ def _cli(argv: list[str] | None = None) -> int:
     e.add_argument("--token-file", required=True, type=Path)
     e.add_argument("--device", action="append", default=[], metavar="NAME=IP")
     e.add_argument("--ssh-key-file", action="append", default=[], type=Path)
+    e.add_argument("--cert-secret-file", type=Path, help="тайната на машината в cert-issuer")
+    e.add_argument("--cert-url", default="https://erpnet-certs.mcpworks.net")
+    e.add_argument("--edge-name", help="името пред касата (по подразбиране --hostname)")
+    e.add_argument("--edge-pinpad", default="", help="накъде отиват /pinpads (празно = проксито)")
+    e.add_argument("--fiscal", metavar="ID:DRIVER:VID:PID:OP:PW", help="апаратът, напр. daisy:daisy.icp:0483:5740:1:1")
+    e.add_argument("--cors", action="append", default=[], metavar="ORIGIN", help="Odoo-то, напр. https://x.odoo.com")
     args = ap.parse_args(argv)
 
     try:
@@ -320,6 +350,8 @@ def _cli(argv: list[str] | None = None) -> int:
         elif args.cmd == "show":
             d = decode(args.code or os.environ.get("ERPNET_ENROLL_CODE", ""))
             d["tok"] = d["tok"][:6] + "…"
+            if d.get("crt"):
+                d["crt"] = d["crt"][:4] + "…"
             print(json.dumps(d, indent=2))
         elif args.cmd == "encode":
             devices = dict(x.split("=", 1) for x in args.device)
@@ -327,6 +359,15 @@ def _cli(argv: list[str] | None = None) -> int:
             data = {"v": 1, "c": args.client, "k": args.kasa, "h": args.hostname,
                     "t": args.tunnel_id, "tok": args.token_file.read_text().strip(),
                     "d": devices, "ssh": keys}
+            if args.cert_secret_file:
+                data["crt"] = args.cert_secret_file.read_text().strip()
+                data["cu"] = args.cert_url
+                data["e"] = {"n": args.edge_name or args.hostname, "p": args.edge_pinpad}
+            if args.fiscal:
+                fid, drv, vid, pid, op, pw = args.fiscal.split(":")
+                data["fp"] = {"id": fid, "driver": drv, "usb": f"{vid}:{pid}", "op": op, "pw": pw}
+            if args.cors:
+                data["cors"] = args.cors
             host_entries(data)
             print(encode(data))
     except EnrollError as exc:
