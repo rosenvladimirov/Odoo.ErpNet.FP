@@ -1,0 +1,17 @@
+# Имената на касата за собствения тунел (ADR erpnet-kasi-fleet/0002):
+# cloudflared ги пита тук с --dns-resolver-addrs; /etc/hosts и резолверът не се пипат.
+[Unit]
+Description=Odoo.ErpNet.FP tunnel names responder
+ConditionPathExists=/opt/erpnet-fp/tunnel/names
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=PYTHONPATH=/opt/erpnet-fp/lib
+ExecStart=/usr/bin/python3 -m odoo_erpnet_fp.tunnel_dns --names /opt/erpnet-fp/tunnel/names --port 53535
+Restart=always
+RestartSec=5
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

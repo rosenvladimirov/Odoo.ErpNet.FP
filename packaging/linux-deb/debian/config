@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+. /usr/share/debconf/confmodule
+# Кодът може да дойде и от средата (автоматично инсталиране) — тогава не питаме
+if [ -n "$ERPNET_ENROLL_CODE" ]; then
+    db_set odoo-erpnet-fp/enroll_code "$ERPNET_ENROLL_CODE"
+else
+    db_input medium odoo-erpnet-fp/enroll_code || true
+    db_go || true
+fi

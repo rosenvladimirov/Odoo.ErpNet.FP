@@ -1,0 +1,15 @@
+Package: odoo-erpnet-fp
+Version: @VERSION@-1
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Rosen Vladimirov <vladimirov.rosen@gmail.com>
+Depends: python3 (>= 3.8), docker.io | docker-ce, ca-certificates, debconf (>= 0.5) | debconf-2.0
+Recommends: openssh-server
+Homepage: https://github.com/rosenvladimirov/Odoo.ErpNet.FP
+Description: Odoo.ErpNet.FP fiscal printer proxy (Docker) with its own remote access tunnel
+ Runs the Odoo.ErpNet.FP proxy (ErpNet.FP-compatible HTTP API for Bulgarian
+ fiscal devices, pinpads, scales) as a Docker container under systemd, and
+ optionally connects this machine to its own private Cloudflare tunnel from an
+ EFP1. enrollment code. Nothing is published, no firewall port is opened, and
+ another cloudflared installation on the machine is not touched.

@@ -1,0 +1,8 @@
+Template: odoo-erpnet-fp/enroll_code
+Type: string
+Default:
+Description: Enrollment code for remote access (optional):
+ Paste the enrollment code you received for this machine (it starts with
+ EFP1.). It connects this machine to its own private Cloudflare tunnel.
+ Leave it empty for a local-only install; on an upgrade an existing
+ enrollment is kept. You can enroll later with: sudo erpnet-fp-enroll apply

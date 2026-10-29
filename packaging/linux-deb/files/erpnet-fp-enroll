@@ -1,0 +1,20 @@
+#!/bin/sh
+# Записване на машината във флота (кодът EFP1.… от лаптопа) и включване на тунела.
+#   sudo erpnet-fp-enroll apply --code EFP1....    (или ERPNET_ENROLL_CODE=...)
+#   sudo erpnet-fp-enroll remove | show
+set -e
+export PYTHONPATH=/opt/erpnet-fp/lib
+export ERPNET_FP_HOME=/opt/erpnet-fp
+python3 -m odoo_erpnet_fp.enroll "$@"
+case "$1" in
+    apply)
+        systemctl daemon-reload
+        systemctl enable --now odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp-tunnel.service
+        systemctl restart odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp-tunnel.service
+        echo "Remote access tunnel is running."
+        ;;
+    remove)
+        systemctl disable --now odoo-erpnet-fp-tunnel.service odoo-erpnet-fp-tunnel-dns.service || true
+        echo "Remote access tunnel is removed."
+        ;;
+esac

@@ -1,0 +1,18 @@
+# Собственото копие на cloudflared за тунела на касата (ADR erpnet-kasi-fleet/0003):
+# отделна услуга, отделен бинарен файл — чужда инсталация на cloudflared не се пипа.
+[Unit]
+Description=Odoo.ErpNet.FP remote access tunnel (cloudflared)
+ConditionPathExists=/opt/erpnet-fp/tunnel/token
+Requires=odoo-erpnet-fp-tunnel-dns.service
+After=odoo-erpnet-fp-tunnel-dns.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/erpnet-fp/bin/cloudflared tunnel --no-autoupdate run \
+    --token-file /opt/erpnet-fp/tunnel/token \
+    --dns-resolver-addrs 127.0.0.1:53535
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

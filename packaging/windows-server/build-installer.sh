@@ -10,6 +10,10 @@
 #   build/win/server/        Our source tree (odoo_erpnet_fp/)
 #   build/win/config/        Default config-windows.example.yaml
 #   build/win/static/        Dashboard HTML/CSS/JS (already inside source)
+#   build/win/deps/          OpenSSH-Win64.msi + cloudflared.exe
+#                            (последните издания от GitHub, сверени по sha256;
+#                            заковаване: OPENSSH_TAG=... CLOUDFLARED_TAG=...)
+#   build/win/scripts/       install-openssh.ps1
 #
 # What the installer does on the target machine:
 #   1. Lays the above out under C:\Program Files\Odoo.ErpNet.FP\
@@ -50,6 +54,9 @@ docker run --rm \
     -v "${BUILD_DIR}":/out \
     -e PY_VERSION="${PY_VERSION}" \
     -e PY_EMBED_URL="${PY_EMBED_URL}" \
+    -e OPENSSH_TAG="${OPENSSH_TAG:-}" \
+    -e CLOUDFLARED_TAG="${CLOUDFLARED_TAG:-}" \
+    -e GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
     "${IMG}" bash -ec '
         set -e
         cd /out
@@ -77,11 +84,20 @@ docker run --rm \
         cp -r /work/odoo_erpnet_fp server/
         cp /work/pyproject.toml server/
         cp /work/README.md server/
+        # Без локалния кеш от лаптопа: __pycache__ за чужди версии на
+        # Python и кеш на вече махнати модули (видяно: datecs_isl).
+        find server -name __pycache__ -type d -prune -exec rm -rf {} +
+        find server -name "*.pyc" -delete
+        find server -type d -empty -delete
 
         echo "  ▸ build the ErpNet.FP wheel"
-        rm -rf wheels
+        # Колелото се строи от отделно копие: setuptools оставя build/ и
+        # *.egg-info в изходната папка, а server/ отива в инсталатора.
+        rm -rf wheels wheel-src
         mkdir -p wheels
-        python3 -m pip wheel --no-deps -w wheels ./server
+        cp -r server wheel-src
+        python3 -m pip wheel --no-deps -w wheels ./wheel-src
+        rm -rf wheel-src
 
         echo "  ▸ download Windows wheels — resolved from our own metadata"
         # Никакъв ръчен списък. pip оценява маркерите спрямо СВОЯ
@@ -150,6 +166,18 @@ PYCHECK
         mkdir -p config
         cp /work/config-examples/config-windows.example.yaml config/config.yaml
 
+        echo "  ▸ download OpenSSH Server + cloudflared MSI (latest, sha256-checked)"
+        rm -rf deps
+        python3 /work/packaging/windows-server/fetch_bundled_msi.py deps
+        . deps/versions.env
+
+        echo "  ▸ stage PowerShell scripts (UTF-8 with BOM for Windows PowerShell 5.1)"
+        rm -rf scripts
+        mkdir -p scripts
+        for f in /work/packaging/windows-server/scripts/*.ps1; do
+            { printf "\xEF\xBB\xBF"; sed "1s/^\xEF\xBB\xBF//" "$f"; } > "scripts/$(basename "$f")"
+        done
+
         echo "  ▸ stage NSIS installer script"
         cp /work/packaging/windows-server/installer.nsi installer.nsi
 
@@ -157,6 +185,8 @@ PYCHECK
         makensis -V2 \
             -DAPP_VERSION="'"${VERSION}"'" \
             -DOUTFILE="erpnet-fp-server-'"${VERSION}"'-setup.exe" \
+            -DOPENSSH_VERSION="${OPENSSH_VERSION}" \
+            -DCLOUDFLARED_VERSION="${CLOUDFLARED_VERSION}" \
             installer.nsi
 
         echo "  ▸ done"
@@ -178,3 +208,5 @@ echo "  - Service:   sc query OdooErpNetFP"
 echo "  - Dashboard: http://127.0.0.1:8001/"
 echo "  - Logs:      C:\\ProgramData\\Odoo.ErpNet.FP\\logs\\service.log"
 echo "  - Config:    C:\\ProgramData\\Odoo.ErpNet.FP\\config.yaml"
+echo "  - Remote:    C:\\ProgramData\\Odoo.ErpNet.FP\\enroll.json + logs\\tunnel.log"
+echo "  - Bundled:   $(tr '\n' ' ' < "${BUILD_DIR}/deps/versions.env" | grep -o '[A-Z]*_VERSION=[^ ]*' | tr '\n' ' ')"

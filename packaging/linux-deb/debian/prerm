@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ] && { [ "$1" = remove ] || [ "$1" = upgrade ]; }; then
+    systemctl stop odoo-erpnet-fp-tunnel.service odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp.service || true
+fi
+if [ "$1" = remove ]; then
+    # Деинсталирането маха и отдалечения достъп: само нашите неща (токен, имена,
+    # SSH ключове с белег erpnet-fp:) — докато enroll.py още е на диска
+    if [ -d /run/systemd/system ]; then
+        systemctl disable odoo-erpnet-fp-tunnel.service odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp.service || true
+    fi
+    PYTHONPATH=/opt/erpnet-fp/lib ERPNET_FP_HOME=/opt/erpnet-fp python3 -m odoo_erpnet_fp.enroll remove || true
+fi
+exit 0

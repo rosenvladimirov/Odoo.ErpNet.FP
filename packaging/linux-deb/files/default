@@ -1,0 +1,2 @@
+# Образът на проксито. При смяна: sudo systemctl restart odoo-erpnet-fp
+ERPNET_FP_IMAGE=vladimirovrosen/odoo-erpnet-fp:@VERSION@

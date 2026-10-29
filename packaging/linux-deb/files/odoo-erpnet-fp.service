@@ -1,0 +1,25 @@
+# Odoo.ErpNet.FP — проксито за касови апарати, в Docker (пакет odoo-erpnet-fp)
+[Unit]
+Description=Odoo.ErpNet.FP fiscal printer proxy (Docker)
+Documentation=https://github.com/rosenvladimirov/Odoo.ErpNet.FP
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/default/odoo-erpnet-fp
+# остатък от предишно пускане (срив, рестарт на docker) не бива да спре старта
+ExecStartPre=-/usr/bin/docker rm -f odoo-erpnet-fp
+ExecStart=/usr/bin/docker run --rm --name odoo-erpnet-fp \
+    --network host --privileged --group-add dialout \
+    -v /dev:/dev \
+    -v /etc/odoo-erpnet-fp:/app/config:ro \
+    -v /var/lib/odoo-erpnet-fp:/app/data \
+    ${ERPNET_FP_IMAGE}
+ExecStop=/usr/bin/docker stop -t 20 odoo-erpnet-fp
+Restart=always
+RestartSec=5
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

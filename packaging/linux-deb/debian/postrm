@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+case "$1" in
+remove)
+    [ -d /run/systemd/system ] && systemctl daemon-reload || true
+    ;;
+purge)
+    rm -rf /opt/erpnet-fp /var/lib/odoo-erpnet-fp /etc/odoo-erpnet-fp
+    if [ -e /usr/share/debconf/confmodule ]; then
+        . /usr/share/debconf/confmodule
+        db_purge || true
+    fi
+    [ -d /run/systemd/system ] && systemctl daemon-reload || true
+    ;;
+esac
+exit 0

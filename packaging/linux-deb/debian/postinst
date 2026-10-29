@@ -1,0 +1,43 @@
+#!/bin/sh
+set -e
+. /usr/share/debconf/confmodule
+
+case "$1" in
+configure)
+    install -d -m 755 /opt/erpnet-fp/tunnel /var/lib/odoo-erpnet-fp /etc/odoo-erpnet-fp
+
+    # Записване: кодът носи тайната на тунела — използва се веднъж и се трие от debconf
+    db_get odoo-erpnet-fp/enroll_code || true
+    CODE="$RET"
+    db_set odoo-erpnet-fp/enroll_code "" || true
+    if [ -n "$CODE" ]; then
+        if ERPNET_ENROLL_CODE="$CODE" PYTHONPATH=/opt/erpnet-fp/lib ERPNET_FP_HOME=/opt/erpnet-fp \
+                python3 -m odoo_erpnet_fp.enroll apply; then
+            echo "odoo-erpnet-fp: enrolled for remote access."
+        else
+            echo "odoo-erpnet-fp: WARNING - enrollment failed; the proxy is installed, rerun: sudo erpnet-fp-enroll apply --code ..." >&2
+        fi
+    fi
+    unset CODE
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        # Образът се тегли тук, за да не чака първият старт; при липса на мрежа — при старта
+        . /etc/default/odoo-erpnet-fp
+        docker pull "$ERPNET_FP_IMAGE" >/dev/null 2>&1 || \
+            echo "odoo-erpnet-fp: could not pull $ERPNET_FP_IMAGE now; the service will pull it on start." >&2
+        systemctl enable odoo-erpnet-fp.service
+        systemctl restart odoo-erpnet-fp.service || true
+        if [ -f /opt/erpnet-fp/tunnel/token ]; then
+            systemctl enable odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp-tunnel.service
+            systemctl restart odoo-erpnet-fp-tunnel-dns.service odoo-erpnet-fp-tunnel.service || true
+        else
+            echo "odoo-erpnet-fp: no enrollment - remote access is not set up."
+        fi
+    fi
+    echo "odoo-erpnet-fp: config /etc/odoo-erpnet-fp/config.yaml, dashboard http://127.0.0.1:8001/"
+    ;;
+esac
+
+db_stop || true
+exit 0

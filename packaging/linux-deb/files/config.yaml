@@ -1,0 +1,22 @@
+# Odoo.ErpNet.FP — конфигурация (пакет odoo-erpnet-fp). Пазена при обновяване.
+# След промяна: sudo systemctl restart odoo-erpnet-fp
+server:
+  host: "127.0.0.1"          # 0.0.0.0 ако касата в браузъра е на друга машина
+  port: 8001
+  log_level: INFO
+  tls:
+    enabled: false
+
+# Касови апарати — пример за Datecs BlueCash по Wi-Fi:
+#  - id: bluecash50
+#    driver: datecs.pm
+#    transport: tcp
+#    tcp_host: "192.0.2.12"
+#    tcp_port: 9100
+#    operator: "1"
+#    till_number: 1
+printers: []
+displays: []
+scales: []
+pinpads: []
+readers: []
