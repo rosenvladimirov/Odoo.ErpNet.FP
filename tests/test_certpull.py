@@ -152,3 +152,23 @@ def test_files_are_utf8_whatever_the_locale(tmp_path, monkeypatch):
     assert "LAN-ът получава 403" in p.read_text(encoding="utf-8")
     certpull.write_traefik_tls(tmp_path / "tls.yml", "/c")
     assert "сменя се" in (tmp_path / "tls.yml").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("locale_enc", ["cp1251", "cp1252"])
+def test_second_pass_reads_utf8_whatever_the_locale(tmp_path, monkeypatch, locale_enc):
+    """Каса с Windows на български (30.10) чете с cp1251 — всяка минута
+    UnicodeDecodeError и сертификатът не се тегли. С cp1252 четенето „минаваше“ с
+    маймуница и файлът се презаписваше всяка минута."""
+    p = tmp_path / "allow.yml"
+    assert certpull.write_traefik_allow(p, ["10.0.0.5"]) is True
+    env_file = tmp_path / "certpull.env"
+    env_file.write_text("# бележка — кирилица\nCERTPULL_URL=https://x\n", encoding="utf-8")
+
+    real_read_text = certpull.Path.read_text
+
+    def locale_read_text(self, encoding=None, errors=None, **kw):
+        return real_read_text(self, encoding=encoding or locale_enc, errors=errors, **kw)
+
+    monkeypatch.setattr(certpull.Path, "read_text", locale_read_text)
+    assert certpull.write_traefik_allow(p, ["10.0.0.5"]) is False
+    assert certpull.load_env(str(env_file))["CERTPULL_URL"] == "https://x"

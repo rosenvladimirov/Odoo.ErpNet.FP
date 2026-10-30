@@ -50,7 +50,7 @@ RETRY_S = 300
 def load_env(path: str | None) -> dict:
     env = dict(os.environ)
     if path:
-        for line in Path(path).read_text().splitlines():
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
@@ -60,7 +60,7 @@ def load_env(path: str | None) -> dict:
 
 def _read_secret(env: dict, file_key: str, value_key: str) -> str:
     if env.get(file_key):
-        return Path(env[file_key]).read_text().strip()
+        return Path(env[file_key]).read_text(encoding="utf-8").strip()
     return env.get(value_key, "").strip()
 
 
@@ -100,7 +100,7 @@ def install(cert: dict, directory: Path) -> bool:
     directory.mkdir(parents=True, exist_ok=True)
     state_p = directory / "state.json"
     try:
-        state = json.loads(state_p.read_text())
+        state = json.loads(state_p.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         state = {}
     extra = cert.get("extra")  # допълнителните (публични) имена — само на тази машина
@@ -161,7 +161,7 @@ def write_traefik_allow(path: Path, ips: list[str]) -> bool:
             "http:\n  middlewares:\n    only-local:\n      ipAllowList:\n"
             f"        sourceRange: [{', '.join(repr(x).replace(chr(39), chr(34)) for x in ranges)}]\n")
     try:
-        if path.read_text() == body:
+        if path.read_text(encoding="utf-8") == body:
             return False
     except FileNotFoundError:
         pass

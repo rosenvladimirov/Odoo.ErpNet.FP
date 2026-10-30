@@ -35,6 +35,16 @@ cd "$(dirname "$0")/../.."
 VERSION="$(python3 -c 'import tomllib; print(tomllib.loads(open("pyproject.toml").read())["project"]["version"])')"
 echo "→ ErpNet.FP server installer build, version=${VERSION}"
 
+# Пинпадът на Datecs иска собствения DLL; той не е в git (.gitignore) и се слага на ръка.
+# 3.0.26 излезе без него от работна дир., в която го нямаше — обновяването спря картите
+# на една каса (30.10.2026). Без DLL не се сглобява, освен изрично.
+PINPAD_DLL="odoo_erpnet_fp/drivers/pinpad/datecs_pay/lib/datecs_pinpad.dll"
+if [ ! -s "${PINPAD_DLL}" ] && [ "${ALLOW_NO_PINPAD_DLL:-}" != "1" ]; then
+    echo "✗ ${PINPAD_DLL} липсва — инсталаторът ще спре пинпада при обновяване." >&2
+    echo "  Сложи го (виж INSTALL_PINPAD.md) или пусни с ALLOW_NO_PINPAD_DLL=1 за машина без пинпад." >&2
+    exit 1
+fi
+
 PY_VERSION="3.12.7"
 PY_EMBED_URL="https://www.python.org/ftp/python/${PY_VERSION}/python-${PY_VERSION}-embed-amd64.zip"
 
