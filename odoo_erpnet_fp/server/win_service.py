@@ -160,7 +160,10 @@ class ErpNetFpService(win32serviceutil.ServiceFramework):
                 f"sample from config-examples/config-windows.example.yaml"
             )
         config = load_config(cfg_path)
-        app = create_app(config)
+        # пътят е нужен на флота (тайната при сдвояване) и на CORS от
+        # флота (fleet_cors.json до config.yaml) — без него отиват в
+        # работната папка на услугата
+        app = create_app(config, config_path=cfg_path)
 
         import uvicorn
         uvicorn_cfg = uvicorn.Config(

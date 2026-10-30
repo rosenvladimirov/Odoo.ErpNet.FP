@@ -362,11 +362,15 @@ def create_app(config: AppConfig, config_path: Path | None = None) -> FastAPI:
     # само ако config.server.cors_origins/regex е зададено; иначе (Traefik
     # прави CORS/PNA през cors-pna middleware) остава изключено — нула
     # промяна за класическия фискален deploy.
+    # С включен флот middleware-ът се слага винаги: адресите могат да
+    # дойдат по-късно с heartbeat-а (ADR erpnet-kasi-fleet/0006).
     _srv = config.server
-    if _srv.cors_origins or _srv.cors_origin_regex:
+    if _srv.cors_origins or _srv.cors_origin_regex or _srv.registry.enabled:
         import inspect
 
-        from starlette.middleware.cors import CORSMiddleware
+        from . import fleet_cors
+        from .fleet_cors import FleetCORSMiddleware as CORSMiddleware
+        fleet_cors.load((config_path or Path("config.yaml")).parent / "fleet_cors.json")
         cors_kwargs = dict(
             allow_origins=_srv.cors_origins,
             allow_origin_regex=_srv.cors_origin_regex,

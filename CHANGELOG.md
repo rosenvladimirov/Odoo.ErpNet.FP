@@ -1,3 +1,14 @@
+## [Unreleased]
+
+- **CORS от флота и на Windows (ADR erpnet-kasi-fleet/0006):** адресите от „CORS Origins“
+  на записа на касата във флота (`l10n_bg_erp_net_fp_fleet`) идват с heartbeat-а и проксито
+  ги прилага само, без рестарт; пазят се в `fleet_cors.json` до config.yaml. Нов staging или
+  нова база вече не иска влизане в касата. Статичният списък от config.yaml остава.
+- **Кодът за записване включва флота:** `enroll encode --registry <Odoo>` → `server.registry`
+  в config.yaml (заварен блок не се пипа).
+- Windows услугата подава пътя до config.yaml на приложението — флотът пишеше в работната
+  папка на услугата.
+
 ## [3.0.27] — 2026-10-30
 
 - **certpull на Windows на български:** файловете се четат в UTF-8 — с cp1251 второто

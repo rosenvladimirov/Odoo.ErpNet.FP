@@ -593,11 +593,16 @@ async def _heartbeat(client: httpx.AsyncClient, cfg: RegistryConfig,
         # Fleet-driven CORS allow-list: rewrite Traefik dynamic.yml
         # in place if the list changed. Best-effort — never block the
         # heartbeat path on writer failure.
+        # Двата пътя: Traefik (Docker) и самото прокси (Windows) —
+        # ADR erpnet-kasi-fleet/0006.
         try:
+            from . import fleet_cors
             from .cors_writer import apply_cors_origins
             origins = data.get("cors_origins") if isinstance(data, dict) else []
             if isinstance(origins, list):
-                apply_cors_origins([str(o) for o in origins if o])
+                origins = [str(o) for o in origins if o]
+                apply_cors_origins(origins)
+                fleet_cors.apply(origins)
         except Exception:  # noqa: BLE001
             _logger.exception("CORS writer raised — ignoring")
         return HeartbeatResult.OK, list(commands or [])

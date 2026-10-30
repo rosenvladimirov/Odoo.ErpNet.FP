@@ -122,3 +122,13 @@ def test_code_can_carry_the_certificate_secret_for_the_edge(tmp_path):
     assert edge == {"name": "kasa.demo.erpnet.mcpworks.net", "pinpad": "", "cert_url": "https://certs.example"}
     assert "s3cret" not in (p["edge"] / "edge.json").read_text() and "s3cret" not in p["state"].read_text()
     assert st["edge"]["name"] == "kasa.demo.erpnet.mcpworks.net"
+
+
+def test_code_can_switch_on_the_fleet(tmp_path):
+    """ADR erpnet-kasi-fleet/0006: `--registry` стига до edge.json за setup_fiscal."""
+    p = _paths(tmp_path)
+    p["edge"] = tmp_path / "edge"
+    enroll.apply(enroll.encode({**DATA, "cors": ["https://demo.odoo.com"], "reg": "https://demo.odoo.com"}), p)
+    edge = json.loads((p["edge"] / "edge.json").read_text())
+    assert edge["registry"] == {"url": "https://demo.odoo.com", "name": "kasa9.demo.erpnet.mcpworks.net"}
+    assert edge["cors"] == ["https://demo.odoo.com"]

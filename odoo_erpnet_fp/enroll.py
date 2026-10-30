@@ -7,7 +7,8 @@
     {"v":1, "c":клиент, "k":каса, "h":име, "t":tunnel_id, "tok":токен на тунела,
      "d":{устройство: LAN IP}, "ssh":[публични ключове],
      "crt":тайната за cert-issuer, "cu":адресът му, "e":{"n":име пред касата, "p":пинпадът},
-     "fp":{"id","driver","usb":"VID:PID","op","pw"} — апаратът, "cors":[Odoo]}  (setup_fiscal)
+     "fp":{"id","driver","usb":"VID:PID","op","pw"} — апаратът, "cors":[Odoo],
+     "reg":"<Odoo с флота>"}  (setup_fiscal; ADR erpnet-kasi-fleet/0006)
     (последните три — по избор, ADR erpnet-kasi-fleet/0005: пред касата е Traefik)
 
 `apply` прави на касата само НАШИТЕ неща и е идемпотентно (ADR-0003):
@@ -272,10 +273,13 @@ def apply(code: str, p: dict[str, Path] | None = None) -> dict:
         _write_secret(p["edge"] / "certpull.secret", data["crt"])
         e = data.get("e") or {}
         edge = {"name": e.get("n") or data["h"], "pinpad": e.get("p") or "", "cert_url": data.get("cu") or ""}
-    if data.get("fp") or data.get("cors"):
+    if data.get("fp") or data.get("cors") or data.get("reg"):
         edge = edge or {}
         edge["fiscal"] = data.get("fp") or None
         edge["cors"] = data.get("cors") or []
+        if data.get("reg"):
+            # флотът: оттам идват и CORS адресите (ADR erpnet-kasi-fleet/0006)
+            edge["registry"] = {"url": data["reg"], "name": data["h"]}
     if edge is not None:
         p["edge"].mkdir(parents=True, exist_ok=True)
         (p["edge"] / "edge.json").write_text(json.dumps(edge, indent=2), encoding="utf-8")
@@ -331,6 +335,7 @@ def _cli(argv: list[str] | None = None) -> int:
     e.add_argument("--edge-pinpad", default="", help="накъде отиват /pinpads (празно = проксито)")
     e.add_argument("--fiscal", metavar="ID:DRIVER:VID:PID:OP:PW", help="апаратът, напр. daisy:daisy.icp:0483:5740:1:1")
     e.add_argument("--cors", action="append", default=[], metavar="ORIGIN", help="Odoo-то, напр. https://x.odoo.com")
+    e.add_argument("--registry", metavar="URL", help="Odoo с флота (l10n_bg_erp_net_fp_fleet), напр. https://x.odoo.com")
     args = ap.parse_args(argv)
 
     try:
@@ -368,6 +373,8 @@ def _cli(argv: list[str] | None = None) -> int:
                 data["fp"] = {"id": fid, "driver": drv, "usb": f"{vid}:{pid}", "op": op, "pw": pw}
             if args.cors:
                 data["cors"] = args.cors
+            if args.registry:
+                data["reg"] = args.registry.rstrip("/")
             host_entries(data)
             print(encode(data))
     except EnrollError as exc:

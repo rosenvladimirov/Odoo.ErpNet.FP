@@ -29,6 +29,7 @@ _DYN_PATH = Path(os.getenv(
     "ERPNET_FP_TRAEFIK_DYNAMIC", "/app/traefik/dynamic.yml"))
 
 _last_hash: str = ""
+_missing_warned: bool = False
 
 
 def _hash_origins(origins: list[str]) -> str:
@@ -70,10 +71,15 @@ def apply_cors_origins(origins: list[str]) -> bool:
     if not origins:
         return False
     if not _DYN_PATH.exists():
-        _logger.warning(
-            "CORS writer: %s missing — bind mount the host's "
-            "docker/traefik/dynamic.yml at this path to enable "
-            "fleet-driven CORS sync.", _DYN_PATH)
+        # На Windows файлът го няма по замисъл — там CORS от флота го
+        # прилага самото прокси (fleet_cors). Казва се веднъж, не на
+        # всеки heartbeat.
+        global _missing_warned
+        if not _missing_warned:
+            _missing_warned = True
+            _logger.info(
+                "CORS writer: %s missing — Traefik sync off; fleet "
+                "origins are applied in-process (fleet_cors).", _DYN_PATH)
         return False
     h = _hash_origins(origins)
     if h == _last_hash:

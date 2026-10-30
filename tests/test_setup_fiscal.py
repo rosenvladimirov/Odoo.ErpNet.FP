@@ -55,3 +55,23 @@ def test_existing_cors_list_is_extended_not_replaced(tmp_path):
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert data["server"]["cors_origins"] == ["https://shop1.odoo.com", "https://old.example"]
     assert data["printers"][0]["port"] == "COM7"
+
+
+def test_fleet_registry_is_switched_on_from_the_code(tmp_path):
+    """ADR erpnet-kasi-fleet/0006: с флота CORS адресите идват от Odoo."""
+    p = _cfg(tmp_path)
+    edge = {**EDGE, "registry": {"url": "https://shop1.odoo.com", "name": "kasa1.shop1.erpnet.mcpworks.net"}}
+    out = sf.configure(p, edge, PORTS)
+    assert "fleet registry on (https://shop1.odoo.com)" in out
+    reg = yaml.safe_load(p.read_text(encoding="utf-8"))["server"]["registry"]
+    assert reg == {"enabled": True, "url": "https://shop1.odoo.com", "name": "kasa1.shop1.erpnet.mcpworks.net"}
+    assert sf.configure(p, edge, PORTS)[-1] == "config.yaml unchanged"
+
+
+def test_existing_registry_block_is_left_alone(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("server:\n  port: 8001\n  registry:\n    enabled: false\n    url: \"https://iot.example\"\nprinters: []\n",
+                 encoding="utf-8")
+    sf.configure(p, {"registry": {"url": "https://shop1.odoo.com", "name": "k"}}, PORTS)
+    reg = yaml.safe_load(p.read_text(encoding="utf-8"))["server"]["registry"]
+    assert reg == {"enabled": False, "url": "https://iot.example"}

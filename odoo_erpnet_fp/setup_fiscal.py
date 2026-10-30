@@ -3,6 +3,7 @@
 Кодът `EFP1.` (enroll) може да носи и:
     "fp":   {"id": "daisy", "driver": "daisy.icp", "usb": "0483:5740", "op": "1", "pw": "1"}
     "cors": ["https://<база>.odoo.com"]
+    "reg":  "https://<база>.odoo.com"   # флотът → server.registry (ADR erpnet-kasi-fleet/0006)
 enroll ги оставя в `<edge>/edge.json`; тук:
   - COM портът се намира по USB идентификатора (pyserial) — човекът не търси
     номера в Device Manager; ако апаратът не е включен, не се пише нищо и
@@ -86,10 +87,35 @@ def add_cors(text: str, origins: list[str]) -> str:
     return text[:m.end()] + "  cors_origins:\n" + lines + text[m.end():]
 
 
+def add_registry(text: str, reg: dict | None) -> str:
+    """`server.registry` — включва флота, ако блок още няма.
+
+    Заварен блок не се пипа (ADR erpnet-kasi-fleet/0003): който го е писал
+    на ръка, знае защо.
+    """
+    if not reg or not reg.get("url"):
+        return text
+    data = yaml.safe_load(text) or {}
+    if "registry" in (data.get("server") or {}):
+        return text
+    block = ("  registry:\n"
+             "    enabled: true\n"
+             f"    url: \"{reg['url']}\"\n"
+             f"    name: \"{reg.get('name') or ''}\"\n")
+    m = re.search(r"(?m)^server:[ \t]*\n", text)
+    if not m:
+        return text.rstrip("\n") + "\n\nserver:\n" + block
+    return text[:m.end()] + block + text[m.end():]
+
+
 def configure(config: Path, edge: dict, ports=None) -> list[str]:
     done: list[str] = []
     text = config.read_text(encoding="utf-8") if config.exists() else ""
     new = add_cors(text, edge.get("cors") or [])
+    new2 = add_registry(new, edge.get("registry"))
+    if new2 != new:
+        done.append(f"fleet registry on ({edge['registry']['url']})")
+    new = new2
     fp = edge.get("fiscal")
     if fp:
         port = find_port(fp["usb"], ports)
