@@ -1,4 +1,4 @@
-## [Unreleased]
+## [3.0.28] — 2026-10-30
 
 - **CORS от флота и на Windows (ADR erpnet-kasi-fleet/0006):** адресите от „CORS Origins“
   на записа на касата във флота (`l10n_bg_erp_net_fp_fleet`) идват с heartbeat-а и проксито
